@@ -1,0 +1,5 @@
+#!/bin/bash
+visnek    $1
+visnek avg$1
+visnek rms$1
+visnek rm2$1
