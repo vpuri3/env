@@ -1,6 +1,7 @@
 alias     ls='ls -lGh'
 alias     la='ls -lGha'
 alias     lt='ls -lGtar'
+alias      s='ls -ltr'
 alias     cp='cp -r'
 alias    scp='scp -r'
 alias   mtlb='matlab -nodesktop'
