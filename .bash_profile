@@ -1,8 +1,9 @@
 #export PATH='/usr/bin:/bin:/usr/sbin:/sbin:/Library/TeX/texbin'
+
 # PS1
 export PS1='[\[\e[0;32m\]\u\[\e[1;36m\]@\h\[\e[0m\] \W]:'
 
-# Load .bashrc if it exists
+# Load .bashrc (if exists)
 test -f ~/.bashrc && source ~/.bashrc
 
 # Ensure user-installed binaries take precedence
@@ -16,7 +17,7 @@ ln -shf /usr/local/bin/gfortran-8 /usr/local/bin/gfortran
 # MPICH
 export PATH=$HOME/software/mpich-3.2.1/mpich-install/bin:$PATH
 
-#PETSc
+# PETSc
 export PETSC_DIR=/Users/vedantpuri/software/petsc
 export PETSC_ARCH=arch-darwin-c-debug
 
@@ -26,7 +27,7 @@ export PATH=$HOME/Nek5000/bin:$PATH
 # Visit
 export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
 
-# misc scripts
+# misc
 export PATH=$HOME/bin:$PATH
 
 # clusters
