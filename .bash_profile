@@ -35,4 +35,4 @@ export BWD='vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
 export VWD='vpuri@vesta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
 export MWD='vpuri@login.mcs.anl.gov:/homes/vpuri'
 
-export  WD='~/Nek5000/run'
+export  WD=$HOME'/Nek5000/run'
