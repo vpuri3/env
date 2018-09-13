@@ -1,1 +1,1 @@
-grep -Irni --color=tty "$1" *.f | grep -i PARAM
+grep -Irni $1 *.f | grep -i PARAM

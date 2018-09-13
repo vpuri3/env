@@ -1,0 +1,26 @@
+#!/bin/bash
+######### cpnek $1 $2 $3
+#### $1 : old path
+#### $2 : case
+#### $3 : new path
+mkdir -pv              $3
+#
+cp -pi $1/$2.usr       $3/$2.usr
+cp -pi $1/$2.par       $3/$2.par
+cp -pi $1/$2.rea       $3/$2.rea
+cp -pi $1/$2.re2       $3/$2.re2
+cp -pi $1/$2.map       $3/$2.map
+cp -pi $1/$2.ma2       $3/$2.ma2
+cp -pi $1/$2.box       $3/$2.box
+cp -pi $1/SIZE         $3
+#
+cp -pi $1/*log*        $3
+cp -pi $1/*out*        $3
+cp -pi $1/*start*      $3
+cp -pi $1/*START*      $3
+#
+cp -pi $1/nek5000      $3
+cp -pi $1/makenek      $3
+cp -pi $1/makefile     $3
+cp -pi $1/SESSION.NAME $3
+cp -pi $1/compiler.out $3

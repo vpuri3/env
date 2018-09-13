@@ -1,2 +1,2 @@
-grep -Irni --color=tty "$1" ~/Nek5000/core/
-grep -Irni --color=tty "$1" ~/Nek5000/bin/
+grep -Irni "$1" ~/Nek5000/core/
+grep -Irni "$1" ~/Nek5000/bin/

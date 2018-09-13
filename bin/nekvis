@@ -1,0 +1,26 @@
+#!/bin/bash
+visnek    $1
+visnek ave$1
+visnek avg$1
+visnek bu1$1
+visnek bu2$1
+visnek cn1$1
+visnek cn2$1
+visnek cov$1
+visnek ep1$1
+visnek ep2$1
+visnek pd1$1
+visnek pd2$1
+visnek pr1$1
+visnek pr2$1
+visnek ps1$1
+visnek ps2$1
+visnek pt1$1
+visnek pt2$1
+visnek rm2$1
+visnek rms$1
+visnek td1$1
+visnek td2$1
+visnek var$1
+visnek vd1$1
+visnek wsh$1

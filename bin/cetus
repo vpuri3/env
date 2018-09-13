@@ -1,1 +1,1 @@
-ssh -X vpuri@cetus.alcf.anl.gov
+ssh vpuri@cetus.alcf.anl.gov

@@ -1,1 +1,1 @@
-ssh -X vpuri@blues.lcrc.anl.gov
+ssh vpuri@blues.lcrc.anl.gov
