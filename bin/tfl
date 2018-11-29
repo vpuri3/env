@@ -1,8 +1,10 @@
 #!/bin/bash
 
-until [ -f logfile ]; do
+file='logfile'
+
+until [ -f $file ]; do
       echo $(date -R)
       sleep 1
 done
 
-tail -f logfile
+tail -f $file
