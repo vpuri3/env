@@ -1,0 +1,8 @@
+#!/bin/bash
+
+until [ -f logfile ]; do
+      echo $(date -R)
+      sleep 1
+done
+
+tail -f logfile

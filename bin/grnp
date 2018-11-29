@@ -1,1 +1,2 @@
-grep -Irni $1 *.f | grep -i PARAM
+grep -Irn
+i $1 *.f | grep -i PARAM

@@ -1,5 +1,8 @@
 #export PATH='/usr/bin:/bin:/usr/sbin:/sbin:/Library/TeX/texbin'
 
+# brew
+export PATH=/usr/local/sbin:$PATH
+
 # PS1
 export PS1='[\[\e[0;32m\]\u\[\e[1;36m\]@\T\[\e[0m\] \W]:'
 
@@ -29,6 +32,9 @@ export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
 
 # misc
 export PATH=$HOME/bin:$PATH
+
+# email
+export email="vpuri3@illinois.edu"
 
 # clusters
 export BWD='vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'

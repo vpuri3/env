@@ -4,6 +4,13 @@
 
 (set-face-foreground 'font-lock-comment-face "red")
 
+(global-set-key [24 C-backspace] ; C-x C-backspace
+                (lambda () (interactive)
+                  (save-excursion
+                    (backward-word)
+                    (kill-word 1)
+                    (yank))))
+
 (global-set-key "\C-h" (lambda () (interactive) (forward-line -10) (scroll-down 10)) )
 (global-set-key "\C-j" (lambda () (interactive) (forward-line  10) (scroll-up   10)) )
 
