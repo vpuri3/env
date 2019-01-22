@@ -1,1 +1,1 @@
-ssh -XY vpuri@login.mcs.anl.gov
+ssh -XYA vpuri@login.mcs.anl.gov
