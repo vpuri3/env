@@ -4,10 +4,9 @@
 test -f ~/.bashrc && source ~/.bashrc
 
 # PS1
-export PS1='[\[\e[0;32m\]\u\[\e[1;36m\]@\T\[\e[0m\] \W]:'
-
-# Ensure user-installed binaries take precedence
-export PATH=/usr/local/bin:$PATH
+machine=$(hostname)
+[ "$uname" = "Darwin" ] && machine="MacBookPro"
+export PS1='[\[\e[0;32m\]vp\[\e[1;36m\]@$machine\[\e[0m\] \W]:'
 
 # Nek5000
 export PATH=$HOME/Nek5000/bin:$PATH
@@ -17,7 +16,6 @@ export PATH=$HOME/bin:$PATH
 
 # email
 export email="vpuri3@illinois.edu"
-export WD=$HOME'/Nek5000/run'
 export QSTAT_HEADER="JobId:User:RunTime:WallTime:State:Location:Nodes"
 
 # clusters
@@ -27,7 +25,9 @@ export MWD='vpuri@login.mcs.anl.gov:/homes/vpuri'
 
 case `uname` in
 Darwin)
-# brew
+	#Ensure user-installed binaries take precedence
+	export PATH=/usr/local/bin:$PATH
+	# brew
 	export PATH=/usr/local/sbin:$PATH
 	# MPICH
 	export PATH=$HOME/software/mpich-3.2.1/mpich-install/bin:$PATH
@@ -36,7 +36,14 @@ Darwin)
 	export PETSC_ARCH=arch-darwin-c-debug
 	# Visit
 	export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
+	#
+	export WD=$HOME'/Nek5000/run'
 	;;
 Linux)
+	case `hostname` in
+	vesta*)
+		export WD='/projects/wall_turb_dd/vpuri/'
+		''
+	esac
 	;;
 esac
