@@ -1,11 +1,11 @@
 #export PATH='/usr/bin:/bin:/usr/sbin:/sbin:/Library/TeX/texbin'
 
 # Load .bashrc (if exists)
-test -f ~/.bashrc && source ~/.bashrc
+[ -f ~/.bashrc ] && source ~/.bashrc
 
 # PS1
 machine=$(hostname)
-[ "$uname" = "Darwin" ] && machine="MacBookPro"
+[ $(uname) = "Darwin" ] && machine="MacBookPro"
 export PS1='[\[\e[0;32m\]vp\[\e[1;36m\]@$machine\[\e[0m\] \W]:'
 
 # Nek5000
