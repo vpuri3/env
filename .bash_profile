@@ -14,9 +14,11 @@ export PATH=$HOME/Nek5000/bin:$PATH
 # misc
 export PATH=$HOME/bin:$PATH
 
-# email
+# vars
 export email="vpuri3@illinois.edu"
 export QSTAT_HEADER="JobId:User:RunTime:WallTime:State:Location:Nodes"
+export TZ="America/Chicago"
+export WD=$HOME'/Nek5000/run'
 
 # clusters
 export BWD='vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
@@ -36,8 +38,6 @@ Darwin)
 	export PETSC_ARCH=arch-darwin-c-debug
 	# Visit
 	export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
-	#
-	export WD=$HOME'/Nek5000/run'
 	;;
 Linux)
 	case `hostname` in
