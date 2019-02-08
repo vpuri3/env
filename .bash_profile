@@ -18,7 +18,6 @@ export PATH=$HOME/bin:$PATH
 export email="vpuri3@illinois.edu"
 export QSTAT_HEADER="JobId:User:RunTime:WallTime:State:Location:Nodes"
 export TZ="America/Chicago"
-export WD=$HOME'/Nek5000/run'
 
 # clusters
 export BWD='vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
@@ -38,6 +37,12 @@ Darwin)
 	export PETSC_ARCH=arch-darwin-c-debug
 	# Visit
 	export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
+	# MATLAB
+	ln -fs /Applications/MATLAB_R2018b.app/bin/matlab /usr/local/bin/matlab
+	# NEK
+	export WD=$HOME'/Nek5000/run'
+	# ME 470
+	export HL=$HOME'/hl'
 	;;
 Linux)
 	case `hostname` in
