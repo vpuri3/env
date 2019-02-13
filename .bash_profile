@@ -48,7 +48,11 @@ Linux)
 	case `hostname` in
 	vesta*)
 		export WD='/projects/wall_turb_dd/vpuri/'
-		''
+		;;
+	bebop*)
+		export WD='/lcrc/project/waall_bounded_flows/vpuri/'
+		;;
 	esac
 	;;
 esac
+
