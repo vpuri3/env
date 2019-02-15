@@ -8,6 +8,7 @@ alias    cdv='cd $WD; s'
 #alias     gr='grep -Irni --color=tty'
 alias     pb='pbcopy'
 alias     bc='pbpaste'
+alias     kk='kill'
 alias     ka='killall'
 alias     k9='kill -9'
 # 
