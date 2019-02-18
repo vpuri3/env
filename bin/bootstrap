@@ -1,0 +1,30 @@
+#!/bin/bash
+
+cd $HOME
+
+[ !-d ~/env ] git clone https://github.com/vpuri3/env.git
+
+ln -s ~/env/.bash_profile .
+ln -s ~/env/.bashrc .
+ln -s ~/env/.emacs .
+ln -s ~/env/.vimrc .
+ln -s ~/env/.tmux.conf .
+
+source ~/.bash_profile
+
+chmod +x ~/env/bin/*
+
+case 'uname' in
+Darwin)
+	xcode-select -p
+
+#[ $? ] && xcode-select --install
+#gccbeclang=$(gcc -v)
+#if echo "$gccbeclang" | grep -Fq "clang"; then
+#    ln -fs 
+#fi
+
+	/usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+		
+	;;
+esac
