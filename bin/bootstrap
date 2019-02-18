@@ -17,7 +17,7 @@ chmod +x ~/env/bin/*
 
 case `uname` in
 Darwin)
-	echo "installing xcode"
+	echo "xcode"
 	xcode-select -p
 	[ $? ] && xcode-select --install
 
@@ -26,8 +26,8 @@ Darwin)
 	if echo "$gccbeclang" | grep -Fq "clang"; then
 		echo "gcc be clang"
 	fi
-
-	#/usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
-		
+	;;
+Linux)
+	echo "todo"
 	;;
 esac
