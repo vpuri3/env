@@ -8,16 +8,17 @@ machine=$(hostname)
 [ $(uname) = "Darwin" ] && machine="MacBookPro"
 export PS1='[\[\e[0;32m\]vp\[\e[1;36m\]@$machine\[\e[0m\] \W]:'
 
-# Nek5000
+# Nek
 export PATH=$HOME/Nek5000/bin:$PATH
 
-# misc
+# scripts
 export PATH=$HOME/bin:$PATH
 
 # vars
 export email="vpuri3@illinois.edu"
 export QSTAT_HEADER="JobId:User:RunTime:WallTime:State:Location:Nodes"
 export TZ="America/Chicago"
+export EDITOR="vi"
 
 # clusters
 export BWD='vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
@@ -31,7 +32,7 @@ Darwin)
 	# brew
 	export PATH=/usr/local/sbin:$PATH
 	# MPICH
-	export PATH=$HOME/software/mpich-3.2.1/mpich-install/bin:$PATH
+	#export PATH=$HOME/software/mpich-3.2.1/mpich-install/bin:$PATH
 	# PETSc
 	export PETSC_DIR=/Users/vedantpuri/software/petsc
 	export PETSC_ARCH=arch-darwin-c-debug
@@ -42,13 +43,16 @@ Darwin)
 	# NEK
 	export WD=$HOME'/Nek5000/run'
 	# ME 470
-	export HL=$HOME'/hl'
+	export HL=$HOME'/matlab/hl'
 	;;
 Linux)
 	case `hostname` in
 	vesta*)
 		export WD='/projects/wall_turb_dd/vpuri/'
 		;;
+	login*)
+		export WD="/homes/vpuri"
+
 	bebop*)
 		export WD='/lcrc/project/waall_bounded_flows/vpuri/'
 		;;
