@@ -52,7 +52,7 @@ Linux)
 		;;
 	login*)
 		export WD="/homes/vpuri"
-
+		;;
 	bebop*)
 		export WD='/lcrc/project/waall_bounded_flows/vpuri/'
 		;;
