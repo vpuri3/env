@@ -21,9 +21,10 @@ export TZ="America/Chicago"
 export EDITOR="vi"
 
 # clusters
-export BWD='vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
-export VWD='vpuri@vesta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
 export MWD='vpuri@login.mcs.anl.gov:/homes/vpuri'
+export CWD='vpuri@cetus.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
+export VWD='vpuri@vesta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
+export BWD='vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
 
 case `uname` in
 Darwin)
