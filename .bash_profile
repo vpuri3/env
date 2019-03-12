@@ -3,11 +3,6 @@
 # Load .bashrc (if exists)
 [ -f ~/.bashrc ] && source ~/.bashrc
 
-# PS1
-machine=$(hostname)
-[ $(uname) = "Darwin" ] && machine="MacBookPro"
-export PS1='[\[\e[0;32m\]vp\[\e[1;36m\]@$machine\[\e[0m\] \W]:'
-
 # Nek
 export PATH=$HOME/Nek5000/bin:$PATH
 
@@ -45,8 +40,11 @@ Darwin)
 	export WD=$HOME'/Nek5000/run'
 	# ME 470
 	export HL=$HOME'/matlab/hl'
+	# PS1
+	machine="MacBookPro"
 	;;
 Linux)
+	machine=$(hostname)
 	case `hostname` in
 	vesta*)
 		export WD='/projects/wall_turb_dd/vpuri/'
@@ -57,7 +55,11 @@ Linux)
 	bebop*)
 		export WD='/lcrc/project/waall_bounded_flows/vpuri/'
 		;;
+	*ews.illinois.edu)
+		machine="ews"
 	esac
 	;;
 esac
 
+# PS1
+export PS1='[\[\e[0;32m\]vp\[\e[1;36m\]@$machine\[\e[0m\] \W]:'
