@@ -1,7 +1,9 @@
 #!/bin/bash
 
 # converts symbolic link into a regular file
+echo "$1"
 [ ! -L "$1" ] && echo "ABORT: $1 is not a link"; exit 1;
-#[ -L "$1" ] && cp -v --remove-destination "$(readlink "$1")" "$1"
-[ -L "$1" ] && echo "link is real"
+[   -L "$1" ] && echo "link is real"
 
+
+#[ -L "$1" ] && cp -v --remove-destination "$(readlink "$1")" "$1"
