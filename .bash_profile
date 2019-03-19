@@ -46,6 +46,9 @@ Darwin)
 Linux)
 	machine=$(hostname)
 	case `hostname` in
+	cetus*)
+		export WD='/projects/wall_turb_dd/vpuri'
+		;;
 	vesta*)
 		export WD='/projects/wall_turb_dd/vpuri/'
 		;;
