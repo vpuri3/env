@@ -18,7 +18,7 @@ alias   mtlb='matlab -nodesktop'
 alias  julia='/Applications/Julia-1.0.app/Contents/Resources/julia/bin/julia'
 alias     hs='hugo server'
 alias chrome='/Applications/Google\ Chrome.app/'
-alias     qs='qstat --header JobId:User:RunTime:WallTime:State:Location:Nodes'
+alias     qs='qstat -u $(whoami)' 
 # tail
 alias     tl='tail'
 alias     tf='tail -f'
