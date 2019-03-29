@@ -14,7 +14,7 @@ alias     k9='kill -9'
 # 
 alias     em='emacs -nw'
 alias     tm='tmux -new'
-alias   mtlb='matlab -nodesktop'
+alias   mtlb='$MTLB_BIN/matlab -nodesktop'
 alias  julia='/Applications/Julia-1.0.app/Contents/Resources/julia/bin/julia'
 alias     hs='hugo server'
 alias chrome='/Applications/Google\ Chrome.app/'

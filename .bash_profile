@@ -20,6 +20,7 @@ export MWD='vpuri@login.mcs.anl.gov:/homes/vpuri'
 export CWD='vpuri@cetus.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
 export VWD='vpuri@vesta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
 export BWD='vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
+export EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 
 case `uname` in
 Darwin)
@@ -35,7 +36,7 @@ Darwin)
 	# Visit
 	export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
 	# MATLAB
-	ln -fs /Applications/MATLAB_R2018b.app/bin/matlab /usr/local/bin/matlab
+	export MTLB_BIN="/Applications/MATLAB_R2018b.app/bin"
 	# NEK
 	export WD=$HOME'/Nek5000/run'
 	# ME 470
@@ -60,6 +61,7 @@ Linux)
 		;;
 	*ews.illinois.edu)
 		machine="ews"
+	        export MTLB_BIN="/software/matlab-R2017b/bin"
 	esac
 	;;
 esac
