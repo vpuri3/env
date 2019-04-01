@@ -17,17 +17,12 @@ alias     tm='tmux -new'
 alias   mtlb='$MTLB_BIN/matlab -nodesktop'
 alias  julia='/Applications/Julia-1.0.app/Contents/Resources/julia/bin/julia'
 alias     hs='hugo server'
-alias chrome='/Applications/Google\ Chrome.app/'
 alias     qs='qstat -u $(whoami)' 
 # tail
 alias     tl='tail'
 alias     tf='tail -f'
-# alias    tfl='tail -f logfile'
 alias     le='less'
 alias    lel='less logfile'
-# brew
-alias     bu='brew upgrade; brew update'
-alias   bdep='brew deps --tree'
 # git
 alias     gs='git status'
 alias  gdiff='git diff'
@@ -38,10 +33,15 @@ alias    sdr='screen -dr'
 
 case `uname` in
 Darwin)
-	alias   s='ls -lGh'
-	alias  la='ls -lGa'
-	alias  lt='ls -lGtr'
-	alias cdh='cd $HL; s'
+	alias      s='ls -lGh'
+	alias     la='ls -lGa'
+	alias     lt='ls -lGtr'
+	alias    cdh='cd $HL; s'
+        alias   disp='open /System/Library/PreferencePanes/Displays.prefPane'
+        alias   opcr='open -a /Applications/Google\ Chrome.app/'
+        # brew
+        alias     bu='brew upgrade; brew update'
+        alias   bdep='brew deps --tree'
 	;;
 Linux)
 	alias  s='ls -lGh --color=tty'
