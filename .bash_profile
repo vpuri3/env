@@ -1,13 +1,11 @@
-#export PATH='/usr/bin:/bin:/usr/sbin:/sbin:/Library/TeX/texbin'
-
 # Load .bashrc (if exists)
 [ -f ~/.bashrc ] && source ~/.bashrc
 
-# Nek
-export PATH=$HOME/Nek5000/bin:$PATH
-
 # scripts
 export PATH=$HOME/bin:$PATH
+
+# Nek
+export PATH=$HOME/Nek5000/bin:$PATH
 
 # vars
 export email="vpuri3@illinois.edu"
@@ -17,7 +15,7 @@ export EDITOR="vi"
 
 # clusters
 export MWD='vpuri@login.mcs.anl.gov:/homes/vpuri'
-export CWD='vpuri@cetus.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
+export CWD='vpuri@cetus.alcf.anl.gov:/projects/PANDAVal/vpuri'
 export VWD='vpuri@vesta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
 export BWD='vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
 export EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
@@ -36,7 +34,7 @@ Darwin)
 	# Visit
 	export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
 	# MATLAB
-	export MTLB_BIN="/Applications/MATLAB_R2018b.app/bin"
+	export MTLB_BIN="/Applications/MATLAB_R2019a.app/bin"
 	# NEK
 	export WD=$HOME'/Nek5000/run'
 	# ME 470
@@ -48,7 +46,7 @@ Linux)
 	machine=$(hostname)
 	case `hostname` in
 	cetus*)
-		export WD='/projects/wall_turb_dd/vpuri'
+		export WD='/projects/PANDAVal/vpuri'
 		;;
 	vesta*)
 		export WD='/projects/wall_turb_dd/vpuri/'

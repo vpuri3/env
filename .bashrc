@@ -1,13 +1,12 @@
-# utilities
+# util
 alias     cp='cp -r'
 alias    scp='scp -r'
 alias    ssh='ssh -Y'
 alias     ..='cd ..'
 alias     .-='cd -'
 alias    cdv='cd $WD; s'
-#alias     gr='grep -Irni --color=tty'
 alias     pb='pbcopy'
-alias     bc='pbpaste'
+#alias     bc='pbpaste'
 alias     kk='kill'
 alias     ka='killall'
 alias     k9='kill -9'
@@ -16,9 +15,7 @@ alias     em='emacs -nw'
 alias     tm='tmux -new'
 alias   mtlb='$MTLB_BIN/matlab -nodesktop'
 alias  julia='/Applications/Julia-1.0.app/Contents/Resources/julia/bin/julia'
-alias     hs='hugo server'
 alias     qs='qstat -u $(whoami)' 
-# tail
 alias     tl='tail'
 alias     tf='tail -f'
 alias     le='less'
@@ -33,10 +30,12 @@ alias    sdr='screen -dr'
 
 case `uname` in
 Darwin)
+	# util
 	alias      s='ls -lGh'
 	alias     la='ls -lGa'
 	alias     lt='ls -lGtr'
 	alias    cdh='cd $HL; s'
+	# osx
         alias   disp='open /System/Library/PreferencePanes/Displays.prefPane'
         alias   opcr='open -a /Applications/Google\ Chrome.app/'
         # brew
@@ -44,6 +43,7 @@ Darwin)
         alias   bdep='brew deps --tree'
 	;;
 Linux)
+	# util
 	alias  s='ls -lGh --color=tty'
 	alias la='ls -lGa --color=tty'
 	alias lt='ls -lGtr --color=tty'
