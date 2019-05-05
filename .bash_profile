@@ -9,7 +9,7 @@ export PATH=$HOME/Nek5000/bin:$PATH
 
 # vars
 export email="vpuri3@illinois.edu"
-export QSTAT_HEADER="JobId:User:RunTime:WallTime:State:Location:Nodes"
+export QSTAT_HEADER="JobId:User:QueuedTime:RunTime:WallTime:State:Location:Nodes"
 export TZ="America/Chicago"
 export EDITOR="vi"
 
