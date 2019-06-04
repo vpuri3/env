@@ -37,8 +37,6 @@ Darwin)
 	export MTLB_BIN="/Applications/MATLAB_R2019a.app/bin"
 	# NEK
 	export WD=$HOME'/Nek5000/run'
-	# ME 470
-	export HL=$HOME'/matlab/hl'
 	# PS1
 	machine="MacBookPro"
 	;;
