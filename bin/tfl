@@ -3,6 +3,10 @@
 l='logfile'
 
 until [ -f $l ]; do
+<<<<<<< HEAD
+=======
+	sleep 10
+>>>>>>> 222bcb131370881f0bd0872cfa1f8666699b6b7d
 	echo 'waiting for logfile'
 	sleep 5
 done
