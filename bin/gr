@@ -1,3 +1,2 @@
 #!/bin/bash
-
-grep -Irni --color=tty "$1" $2
+grep -IRni --color=tty $1 $2

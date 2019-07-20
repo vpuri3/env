@@ -1,17 +1,17 @@
-grep -Irn "$1" ~/Nek5000/core/DXYZ
-grep -Irn "$1" ~/Nek5000/core/DEALIAS
-grep -Irn "$1" ~/Nek5000/core/EIGEN
-grep -Irn "$1" ~/Nek5000/core/GEOM
-grep -Irni "$1" ~/Nek5000/core/INPUT
-grep -Irni "$1" ~/Nek5000/core/IXYZ
-grep -Irni "$1" ~/Nek5000/core/MASS
-grep -Irni "$1" ~/Nek5000/core/MVGEOM
-grep -Irni "$1" ~/Nek5000/core/PARALLEL
-grep -Irni "$1" ~/Nek5000/core/SOLN
-grep -Irni "$1" ~/Nek5000/core/STEADY
-grep -Irni "$1" ~/Nek5000/core/TOPOL
-grep -Irni "$1" ~/Nek5000/core/TSTEP
-grep -Irni "$1" ~/Nek5000/core/ESOLV
-grep -Irni "$1" ~/Nek5000/core/WZ
-grep -Irni "$1" ~/Nek5000/core/WZF
+grep -Irni --color=tty "$1" ~/Nek5000/core/DXYZ
+grep -Irni --color=tty "$1" ~/Nek5000/core/DEALIAS
+grep -Irni --color=tty "$1" ~/Nek5000/core/EIGEN
+grep -Irni --color=tty "$1" ~/Nek5000/core/GEOM
+grep -Irni --color=tty "$1" ~/Nek5000/core/INPUT
+grep -Irni --color=tty "$1" ~/Nek5000/core/IXYZ
+grep -Irni --color=tty "$1" ~/Nek5000/core/MASS
+grep -Irni --color=tty "$1" ~/Nek5000/core/MVGEOM
+grep -Irni --color=tty "$1" ~/Nek5000/core/PARALLEL
+grep -Irni --color=tty "$1" ~/Nek5000/core/SOLN
+grep -Irni --color=tty "$1" ~/Nek5000/core/STEADY
+grep -Irni --color=tty "$1" ~/Nek5000/core/TOPOL
+grep -Irni --color=tty "$1" ~/Nek5000/core/TSTEP
+grep -Irni --color=tty "$1" ~/Nek5000/core/ESOLV
+grep -Irni --color=tty "$1" ~/Nek5000/core/WZ
+grep -Irni --color=tty "$1" ~/Nek5000/core/WZF
 
