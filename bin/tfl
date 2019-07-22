@@ -3,8 +3,8 @@
 l='logfile'
 
 until [ -f $l ]; do
-	sleep 10
 	echo 'waiting for logfile'
+	sleep 5
 done
 
 tail -f $l
