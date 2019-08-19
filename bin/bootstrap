@@ -4,16 +4,22 @@ cd $HOME
 
 [ ! -d ~/env ] && git clone https://github.com/vpuri3/env.git
 
-ln -s ~/env/bin .
-ln -s ~/env/.bash_profile .
-ln -s ~/env/.bashrc .
-ln -s ~/env/.emacs .
-ln -s ~/env/.vimrc .
-ln -s ~/env/.tmux.conf .
+touch ~/.bash_profile
+
+echo "[ -f ~/.bashrc ] && source ~/.bashrc" >> ~/.bash_profile
+echo "source ~/env/bash_vars"               >> ~/.bash_profile
+echo "source ~/env/bash_alias"              >> ~/.bash_profile
+
 
 source ~/.bash_profile
 
+ln -sf ~/env/emacs.conf  ~/.emacs
+ln -sf ~/env/vimrc       ~/.vimrc
+ln -sf ~/env/gitconfig   ~/.gitconfig
+ln -sf ~/env/tmux.conf   ~/.tmux.conf
+
 chmod +x ~/env/bin/*
+ln -sf ~/env/bin ~/bin
 
 case `uname` in
 Darwin)
