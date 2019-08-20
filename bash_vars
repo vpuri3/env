@@ -23,6 +23,8 @@ Darwin)
 	export PATH=/usr/local/bin:$PATH
 	# brew
 	export PATH=/usr/local/sbin:$PATH
+	export HOMEBREW_CC=gcc-9
+	export HOMEBREW_CXX=g++-9
 	# MPICH
 	#export PATH=$HOME/software/mpich-3.2.1/mpich-install/bin:$PATH
 	# PETSc

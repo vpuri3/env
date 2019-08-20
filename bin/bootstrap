@@ -23,14 +23,21 @@ ln -sf ~/env/bin ~/bin
 
 case `uname` in
 Darwin)
-	echo "xcode"
-	xcode-select -p
-	[ $? ] && xcode-select --install
+	echo "XCODE"
+	xcode-select -p > /dev/null
+	[ "$?" == "0" ] || xcode-select --install
 
-	echo "gcc"
-	gccbeclang=$(gcc -v)
-	if echo "$gccbeclang" | grep -Fq "clang"; then
-		echo "gcc be clang"
+	echo "GCC"
+	gccbeclang=$(gcc --version)
+	if [[ "$gccbeclang" =~ "clang" ]]; then
+		echo "gcc is linked to clang"
+		if [[ -x $(which gcc-9) ]]; then
+			echo "linking gcc to homebrew gcc-9"
+			cd /usr/local/bin
+			ln -sf $(which gcc-9)      gcc
+			ln -sf $(which g++-9)      g++
+			ln -sf $(which gfortran-9) gfortran
+		fi
 	fi
 	;;
 Linux)
