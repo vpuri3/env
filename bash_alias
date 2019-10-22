@@ -13,7 +13,7 @@ alias     k9='kill -9'
 # 
 alias     em='emacs -nw'
 alias     tm='tmux -new'
-alias   mtlb='$MTLB_BIN/matlab -nodesktop'
+alias   mtlb='matlab -nodesktop'
 alias  julia='/Applications/Julia-1.0.app/Contents/Resources/julia/bin/julia'
 alias     qs='qstat -u $(whoami)' 
 alias     tl='tail'
@@ -22,7 +22,7 @@ alias     le='less'
 alias    lel='less logfile'
 # git
 alias     gs='git status'
-alias  gdiff='git diff'
+alias    gdf='git diff'
 # screen
 alias    sls='screen -ls'
 alias    sdr='screen -dr'
