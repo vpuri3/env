@@ -18,8 +18,8 @@ ln -sf ~/env/vimrc       ~/.vimrc
 ln -sf ~/env/gitconfig   ~/.gitconfig
 ln -sf ~/env/tmux.conf   ~/.tmux.conf
 
-chmod +x ~/env/bin/*
 ln -sf ~/env/bin ~/bin
+chmod +x ~/bin/*
 
 case `uname` in
 Darwin)
