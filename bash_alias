@@ -10,6 +10,8 @@ alias     pb='pbcopy'
 alias     kk='kill'
 alias     ka='killall'
 alias     k9='kill -9'
+alias     tc='tar -cvf'
+alias     tx='tar -xvf'
 # 
 alias     em='emacs -nw'
 alias     tm='tmux -new'
@@ -22,7 +24,7 @@ alias     le='less'
 alias    lel='less logfile'
 # git
 alias     gs='git status'
-alias    gdf='git diff'
+alias    gdf='git difftool'
 # screen
 alias    sls='screen -ls'
 alias    sdr='screen -dr'
