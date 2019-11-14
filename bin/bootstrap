@@ -10,7 +10,6 @@ echo "[ -f ~/.bashrc ] && source ~/.bashrc" >> ~/.bash_profile
 echo "source ~/env/bash_vars"               >> ~/.bash_profile
 echo "source ~/env/bash_alias"              >> ~/.bash_profile
 
-
 source ~/.bash_profile
 
 ln -sf ~/env/emacs.conf  ~/.emacs
@@ -23,7 +22,7 @@ chmod +x ~/bin/*
 
 case `uname` in
 Darwin)
-	echo "XCODE"
+	echo "xcode"
 	xcode-select -p > /dev/null
 	[ "$?" == "0" ] || xcode-select --install
 
@@ -44,3 +43,15 @@ Linux)
 	echo "todo"
 	;;
 esac
+
+cd $HOME
+source $HOME/.bash_profile
+
+[ ! -d $HOME/matlab ] && mkdir matlab &&
+cd matlab
+[ ! -d spec ] && git clone https://github.com/vpuri3/spec.git
+ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
+
+cd $HOME
+# download nek
+
