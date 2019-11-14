@@ -1,7 +1,9 @@
 %
+addpath('~/matlab/spec/semhat');
+addpath('~/matlab/spec/fft');
 addpath('~/matlab/spec/plt');
-addpath('~/matlab/spec/sem/semhat');
-addpath('~/Nek5000/run/NekRoutines/mtlb');
+addpath('~/matlab/spec/geom');
+addpath('~/matlab/spec/tstep');
 addpath('~/Nek5000/run/NekRoutines/mtlb');
 
 set(groot, 'DefaultAxesFontSize',14);
