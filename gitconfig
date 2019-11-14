@@ -1,2 +1,4 @@
 [user]
 	email = vpuri3@illinois.edu
+[diff]
+	tool = vimdiff
