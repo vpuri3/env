@@ -30,7 +30,7 @@ autocmd FileType fortran set tabstop=3 shiftwidth=3 softtabstop=3
 map <C-E> 2w
 map <C-B> 2b
 
-map k gk
-map j gj
+"map k gk
+"map j gj
 
 nnoremap Y y$
