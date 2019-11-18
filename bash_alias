@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # util
 alias     cp='cp -r'
 alias    scp='scp -r'
@@ -36,7 +38,6 @@ Darwin)
 	alias      s='ls -lGh'
 	alias     la='ls -lGa'
 	alias     lt='ls -lGtr'
-	alias    cdh='cd $HL; s'
 	# osx
         alias   disp='open /System/Library/PreferencePanes/Displays.prefPane'
         alias   opcr='open -a /Applications/Google\ Chrome.app/'
