@@ -45,7 +45,6 @@ Linux)
 esac
 
 cd $HOME
-source $HOME/.bash_profile
 
 [ ! -d $HOME/matlab ] && mkdir matlab &&
 cd matlab

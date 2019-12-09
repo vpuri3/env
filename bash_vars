@@ -21,6 +21,8 @@ export EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 
 case `uname` in
 Darwin)
+	# PS1
+	machine="MacBookPro"
 	#Ensure user-installed binaries take precedence
 	export PATH=/usr/local/bin:$PATH
 	# compilers
@@ -36,15 +38,13 @@ Darwin)
 	export HOMEBREW_F77=gfortran
 	# PETSc
 	#export PETSC_DIR=/Users/vp/software/petsc
-	export PETSC_ARCH=arch-darwin-c-debug
+	#export PETSC_ARCH=arch-darwin-c-debug
 	# Visit
 	export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
 	# MATLAB
 	export MTLB_BIN=/Applications/MATLAB_R2019b.app/bin
 	# NEK
 	export WD=$HOME'/Nek5000/run'
-	# PS1
-	machine="MacBookPro"
 	;;
 Linux)
 	machine=$(hostname)
