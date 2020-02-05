@@ -1,1 +1,1 @@
-sets environment variables
+Don't look at my dirty laundry!
