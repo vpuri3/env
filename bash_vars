@@ -50,6 +50,9 @@ Darwin)
 Linux)
 	machine=$(hostname)
 	case `hostname` in
+	theta*)
+		export WD='/projects/AlainHymeres/vpuri'
+		;;
 	cetus*)
 		export WD='/projects/PANDAVal/vpuri'
 		;;
