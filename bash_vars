@@ -63,7 +63,7 @@ Linux)
 		export WD="/homes/vpuri"
 		;;
 	bebop*)
-		export WD='/lcrc/project/waall_bounded_flows/vpuri/'
+		export WD='/lcrc/project/wall_bounded_flows/vpuri/'
 		;;
 	*ews.illinois.edu)
 		machine="ews"
