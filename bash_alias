@@ -37,9 +37,9 @@ alias    sdr='screen -dr'
 case `uname` in
 Darwin)
 	# util
-	alias      s='ls -lGh'
-	alias     la='ls -lGa'
-	alias     lt='ls -lGtr'
+	alias      s='ls -lh  -G'
+	alias     la='ls -lA  -G'
+	alias     lt='ls -ltr -G'
 	alias    cdv='cd $HOME/vedant; s'
 	# osx
     alias   disp='open /System/Library/PreferencePanes/Displays.prefPane'
@@ -50,8 +50,8 @@ Darwin)
 	;;
 Linux)
 	# util
-	alias  s='ls -lh --color=tty'
-	alias la='ls -la --color=tty'
+	alias  s='ls -lh  --color=tty'
+	alias la='ls -lA  --color=tty'
 	alias lt='ls -ltr --color=tty'
 	;;
 esac
