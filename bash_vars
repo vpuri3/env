@@ -52,7 +52,7 @@ Linux)
 	case `hostname` in
 	theta*)
 		export WD='/projects/wall_turb_dd/vpuri'
-		export PATH=$WD/Nek5000/bin:$PATH
+		export PATH=$WD/Nek5000-v19/bin:$PATH
 		;;
 	cetus*)
 		export WD='/projects/PANDAVal/vpuri'
