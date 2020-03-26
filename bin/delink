@@ -3,9 +3,13 @@
 # converts symbolic link into a regular file
 #[   -L "$1" ] && cp --remove-destination "$(readlink "$1")" "$1" 
 
-[ !  -L "$1" ] && echo "ABORT: $1 is not a link" && exit 1;
-if [ -L "$1" ]; then
-    P=$(readlink "$1")
-    rm "$1"
-    cp "$P" .
-fi
+for file in "$@"
+do
+	#[ !  -L "$file" ] && echo "ABORT: $file is not a link";
+	if [ -L "$file" ]; then
+	    P=$(readlink "$file")
+	    rm "$file"
+	    cp -v "$P" .
+	fi
+done
+
