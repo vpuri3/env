@@ -1,9 +1,14 @@
 #!/bin/bash
 
 l='logfile'
+me='vpuri'
 
+i=1
 until [ -f $l ]; do
 	echo 'waiting for logfile'
+	[ $(($i % 5)) -eq 0 ] && qstat -u $me
+	i=$(($i + 1))
+
 	sleep 5
 done
 
