@@ -17,12 +17,16 @@ set tabstop=4
 set splitright
 set splitbelow
 
+" split-screen
 nnoremap <C-J> <C-W><C-J>
 nnoremap <C-K> <C-W><C-K>
 nnoremap <C-L> <C-W><C-L>
 nnoremap <C-H> <C-W><C-H>
 
-"nnoremap <C-t><L> :tabn<cr>
+" tabs
+:command T tabe
+map <C-P> :tabp<cr>
+map <C-N> :tabn<cr>
 
 set  timeoutlen=1000
 set ttimeoutlen=0

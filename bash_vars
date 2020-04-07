@@ -43,7 +43,7 @@ Darwin)
 	# Visit
 	export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
 	# MATLAB
-	export MTLB_BIN=/Applications/MATLAB_R2019b.app/bin
+	export MTLB_BIN=/Applications/MATLAB_R2020a.app/bin
 	# NEK
 	export WD=$HOME'/Nek5000/run'
 	;;

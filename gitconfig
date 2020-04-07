@@ -1,8 +1,12 @@
 [user]
+	name  = Vedant Puri
 	email = vpuri3@illinois.edu
-	name = Vedant Puri
+[core]
+	editor = vim
 [diff]
 	tool = vimdiff
+[alias]
+	alog = "log --graph --oneline --all --decorate"
 [filter "lfs"]
 	clean = git-lfs clean -- %f
 	smudge = git-lfs smudge -- %f
