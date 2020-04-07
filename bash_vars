@@ -62,6 +62,7 @@ Linux)
 		;;
 	login*)
 		export WD="/homes/vpuri"
+		export PATH=$WD/Nek5000-v19/bin:$PATH
 		;;
 	bebop*)
 		export WD='/lcrc/project/wall_bounded_flows/vpuri/'
