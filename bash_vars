@@ -17,7 +17,7 @@ export MWD='vpuri@login.mcs.anl.gov:/homes/vpuri'
 export CWD='vpuri@cetus.alcf.anl.gov:/projects/PANDAVal/vpuri'
 #export VWD='vpuri@vesta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
 export TWD='vpuri@theta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
-#export BWD='vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
+export BWD='vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
 export EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 
 case `uname` in
@@ -50,6 +50,10 @@ Darwin)
 Linux)
 	machine=$(hostname)
 	case `hostname` in
+	cooley*)
+		export WD='/lus/theta-fs0/projects/wall_turb_dd/vpuri'
+		export PATH=$WD/Nek5000-v19/bin:$PATH
+		;;
 	theta*)
 		export WD='/projects/wall_turb_dd/vpuri'
 		export PATH=$WD/Nek5000-v19/bin:$PATH
@@ -65,6 +69,9 @@ Linux)
 		export PATH=$WD/Nek5000-v19/bin:$PATH
 		;;
 	bebop*)
+		export WD='/lcrc/project/wall_bounded_flows/vpuri/'
+		;;
+	blues*)
 		export WD='/lcrc/project/wall_bounded_flows/vpuri/'
 		;;
 	*ews.illinois.edu)
