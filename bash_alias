@@ -15,8 +15,10 @@ alias    cdm='cd $HOME/matlab; s'
 alias     kk='kill'
 alias     ka='killall'
 alias     k9='kill -9'
-alias     tc='tar -cvf' # tar create
-alias     tx='tar -xvf' # tar extract
+alias     tc='tar -cvf'  # tar create
+alias     tx='tar -xvf'  # tar extract
+alias     hn='head -n'   #
+alias    hn1='head -n 1' # tar extract
 # 
 alias     em='emacs -nw'
 alias     tm='tmux -new'

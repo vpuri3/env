@@ -4,6 +4,7 @@ addpath('~/matlab/spec/fft');
 addpath('~/matlab/spec/plt');
 addpath('~/matlab/spec/geom');
 addpath('~/matlab/spec/tstep');
+addpath('~/matlab/spec/misc');
 addpath('~/Nek5000/run/wavyWallDNS/mtlb');
 
 set(groot,'DefaultAxesFontSize',14);

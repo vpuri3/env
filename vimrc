@@ -17,6 +17,8 @@ set tabstop=4
 set splitright
 set splitbelow
 
+set autochdir
+
 " split-screen
 nnoremap <C-J> <C-W><C-J>
 nnoremap <C-K> <C-W><C-K>
