@@ -46,6 +46,8 @@ Darwin)
 	export MTLB_BIN=/Applications/MATLAB_R2020a.app/bin
 	# NEK
 	export WD=$HOME'/Nek5000/run'
+	# julia
+	export JULIA_LOAD_PATH=${JULIA_LOAD_PATH}:/usr/local/Cellar/gmsh/4.6.0/lib
 	;;
 Linux)
 	machine=$(hostname)

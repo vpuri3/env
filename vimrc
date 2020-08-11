@@ -1,5 +1,3 @@
-syntax on
-
 set autoread
 
 set ignorecase
@@ -36,6 +34,9 @@ set ttimeoutlen=0
 au BufRead .gitconfig,gitconfig setf make
 au BufRead *.usr setf fortran
 au BufRead SIZE setf fortran
+au BufRead *.jl setf python
+
+syntax on
 
 autocmd FileType make set noexpandtab shiftwidth=8 softtabstop=0
 autocmd FileType fortran set tabstop=3 shiftwidth=3 softtabstop=3
@@ -47,3 +48,8 @@ map <C-B> 2b
 "map j gj
 
 nnoremap Y y$
+
+" Julia
+call plug#begin('~/.vim/plugged')
+Plug 'JuliaEditorSupport/julia-vim'
+call plug#end()

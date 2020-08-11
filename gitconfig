@@ -7,6 +7,16 @@
 	tool = vimdiff
 [alias]
 	alog = "log --graph --oneline --all --decorate"
+    last = log -1 HEAD
+	co = checkout
+	unstage = reset HEAD --
+	ls = ls-tree --full-name --name-only -r HEAD
+	vis = log --graph --decorate --oneline --all
+	today = log --since "yesterday"
+	squash = "!_git_squash() { git rebase -i HEAD~$1; }; _git_squash"
+	stashed = stash list --pretty=format:'%gd: %h [%ar] %s'
+	history = log -p
+
 [filter "lfs"]
 	clean = git-lfs clean -- %f
 	smudge = git-lfs smudge -- %f
