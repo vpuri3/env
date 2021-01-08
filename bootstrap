@@ -22,6 +22,8 @@ chmod +x ~/bin/*
 
 case `uname` in
 Darwin)
+	#echo "python = python3"
+	#ln -sf $(which python3) /usr/local/bin/python
 	echo "xcode"
 	xcode-select -p > /dev/null
 	[ "$?" == "0" ] || xcode-select --install
@@ -40,17 +42,19 @@ Darwin)
 	fi
 	;;
 Linux)
-	echo "todo"
+	sudo apt-get update
+	sudo apt-get install install git unzip wget
 	;;
 esac
 
 cd $HOME
 
-[ ! -d $HOME/matlab ] && mkdir matlab &&
-cd matlab
-[ ! -d spec ] && git clone https://github.com/vpuri3/spec.git
-ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
+## nek
+
+## matlab
+#[ ! -d $HOME/matlab ] && mkdir matlab &&
+#cd matlab
+#[ ! -d spec ] && git clone https://github.com/vpuri3/spec.git
+#ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
 
 cd $HOME
-# download nek
-

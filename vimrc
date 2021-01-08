@@ -32,9 +32,10 @@ set  timeoutlen=1000
 set ttimeoutlen=0
 
 au BufRead .gitconfig,gitconfig setf make
+au BufRead SIZE  setf fortran
 au BufRead *.usr setf fortran
-au BufRead SIZE setf fortran
-au BufRead *.jl setf python
+au BufRead *.jl  setf python
+au BufRead *.geo setf c
 
 syntax on
 
@@ -49,7 +50,7 @@ map <C-B> 2b
 
 nnoremap Y y$
 
-" Julia
-call plug#begin('~/.vim/plugged')
-Plug 'JuliaEditorSupport/julia-vim'
-call plug#end()
+"" Julia
+"call plug#begin('~/.vim/plugged')
+"Plug 'JuliaEditorSupport/julia-vim'
+"call plug#end()
