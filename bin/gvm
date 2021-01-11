@@ -1,8 +1,8 @@
 #!/bin/bash
 
+INSTANCE_NAME=$1
 IMAGE_FAMILY="tf2-ent-latest-cpu"
 ZONE="us-east4-a"
-INSTANCE_NAME=$1
 
 gcloud compute instances create $INSTANCE_NAME \
 	--zone=$ZONE \
