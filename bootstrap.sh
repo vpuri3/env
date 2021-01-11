@@ -6,11 +6,10 @@ cd $HOME
 
 touch ~/.bash_profile
 
-echo "# from"											 >> ~/.bash_profile
-echo "# //github.com/vpuri3/env/blob/master/bootstrap.sh">> ~/.bash_profile
-echo "[ -f ~/.bashrc ] && source ~/.bashrc"              >> ~/.bash_profile
-echo "source ~/env/bash_vars"                            >> ~/.bash_profile
-echo "source ~/env/bash_alias"                           >> ~/.bash_profile
+echo "# https://github.com/vpuri3/env/blob/master/bootstrap.sh">>~/.bash_profile
+echo "[ -f ~/.bashrc ] && source ~/.bashrc"                    >>~/.bash_profile
+echo "source ~/env/bash_vars"                                  >>~/.bash_profile
+echo "source ~/env/bash_alias"                                 >>~/.bash_profile
 
 source ~/.bash_profile
 
