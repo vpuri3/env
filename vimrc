@@ -28,6 +28,15 @@ nnoremap <C-H> <C-W><C-H>
 map <C-P> :tabp<cr>
 map <C-N> :tabn<cr>
 
+" open/close parentheses
+inoremap "" ""<left>
+inoremap ' ''<left>
+inoremap ( ()<left>
+inoremap [ []<left>
+inoremap { {}<left>
+inoremap {<CR> {<CR>}<ESC>O
+inoremap {;<CR> {<CR>};<ESC>O))
+
 set  timeoutlen=1000
 set ttimeoutlen=0
 

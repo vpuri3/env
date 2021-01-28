@@ -23,7 +23,7 @@ export EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 case `uname` in
 Darwin)
 	# PS1
-	machine="MacBookPro"
+	machine="MBP"
 	#Ensure user-installed binaries take precedence
 	export PATH=/usr/local/bin:$PATH
 	# mpich
@@ -93,3 +93,4 @@ if [ -f '/Users/vp/Downloads/google-cloud-sdk/path.bash.inc' ]; then . '/Users/v
 # The next line enables shell command completion for gcloud.
 if [ -f '/Users/vp/Downloads/google-cloud-sdk/completion.bash.inc' ]; then . '/Users/vp/Downloads/google-cloud-sdk/completion.bash.inc'; fi
 #
+#export GOOGLE_APPLICATION_CREDENTIALS="$HOME/cc/my-key-fil.json"
