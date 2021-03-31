@@ -1,3 +1,12 @@
+"
+execute pathogen#infect()
+
+syntax on
+filetype plugin indent on
+
+set omnifunc=syntaxcomplete#Complete
+
+set nocompatible
 set autoread
 
 set ignorecase
@@ -7,15 +16,20 @@ set autoindent
 set noerrorbells
 
 set ruler
+" set number
+
 set incsearch
 set hlsearch
 set showmatch
 
-set tabstop=4
 set splitright
 set splitbelow
 
 set autochdir
+
+set fileformat=unix
+set encoding=utf-8
+set fileencoding=utf-8
 
 " split-screen
 nnoremap <C-J> <C-W><C-J>
@@ -23,13 +37,21 @@ nnoremap <C-K> <C-W><C-K>
 nnoremap <C-L> <C-W><C-L>
 nnoremap <C-H> <C-W><C-H>
 
-" tabs
+" vim tabs
 :command T tabe
 map <C-P> :tabp<cr>
 map <C-N> :tabn<cr>
 
+map <C-E> 2w
+map <C-B> 2b
+
+"map k gk
+"map j gj
+
+nnoremap Y y$
+
 " open/close parentheses
-inoremap "" ""<left>
+inoremap " ""<left>
 inoremap ' ''<left>
 inoremap ( ()<left>
 inoremap [ []<left>
@@ -41,25 +63,22 @@ set  timeoutlen=1000
 set ttimeoutlen=0
 
 au BufRead .gitconfig,gitconfig setf make
-au BufRead SIZE  setf fortran
-au BufRead *.usr setf fortran
-au BufRead *.jl  setf python
-au BufRead *.geo setf c
+au BufRead SIZE  setf fortran " nek
+au BufRead *.usr setf fortran " nek
+au BufRead *.geo setf c       " gmsh
 
-syntax on
+set tabstop=4
+set shiftwidth=4
+set softtabstop=4
+set expandtab
 
-autocmd FileType make set noexpandtab shiftwidth=8 softtabstop=0
-autocmd FileType fortran set tabstop=3 shiftwidth=3 softtabstop=3
+autocmd FileType make    set tabstop=2 shiftwidth=8 softtabstop=0
+autocmd FileType fortran set tabstop=2 shiftwidth=2 softtabstop=2
 
-map <C-E> 2w
-map <C-B> 2b
+set path+=**
+set wildmenu
 
-"map k gk
-"map j gj
 
-nnoremap Y y$
+colorscheme default "desert,peachpuff
 
-"" Julia
-"call plug#begin('~/.vim/plugged')
-"Plug 'JuliaEditorSupport/julia-vim'
-"call plug#end()
+

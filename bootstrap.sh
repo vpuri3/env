@@ -1,5 +1,8 @@
 #!/bin/bash
 
+echo "bash script to load environment variables. Don't forget to"
+echo "$ source ~/.bash_profile afterwards"
+
 cd $HOME
 
 case `uname` in
@@ -8,18 +11,36 @@ Darwin)
 	xcode-select -p > /dev/null
 	[ "$?" == "0" ] || xcode-select --install
 
-	echo "GCC"
-	gccbeclang=$(gcc --version)
-	if [[ "$gccbeclang" =~ "clang" ]]; then
-		echo "gcc is linked to clang"
-		if [[ -x $(which gcc-9) ]]; then
-			echo "linking gcc to homebrew gcc-9"
-			cd /usr/local/bin
-			ln -sf $(which gcc-9)      gcc
-			ln -sf $(which g++-9)      g++
-			ln -sf $(which gfortran-9) gfortran
-		fi
+	# homebrew
+	if [ -f /usr/local/bin/brew ]; then
+		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"")"
+
+	    # get essentials
+        brew install python
+        brew install python@3.7
+
+        # link python, pip to homebrew's python@3.7
+        ln -sf $(which python3.7) /usr/local/bin/python
+        ln -sf $(which pip.7)     /usr/local/bin/pip
+
+	    brew install vim
+
+	    echo "Ensure gcc is not linked to clang"
+
+	    gccbeclang=$(gcc --version)
+	    if [[ "$gccbeclang" =~ "clang" ]]; then
+	    	echo "gcc is linked to clang"
+	    	if [[ -x $(which gcc) ]]; then
+	    		echo "linking gcc to homebrew's gcc"
+	    		cd /usr/local/bin
+	    		ln -sf $(which gcc)      gcc
+	    		ln -sf $(which g++)      g++
+	    		ln -sf $(which gfortran) gfortran
+	    	fi
+	    fi
+
 	fi
+
 	;;
 Linux)
 	sudo apt-get update
@@ -47,6 +68,21 @@ ln -sf ~/env/bin ~/bin
 chmod +x ~/bin/*
 
 cd $HOME
+
+# vim
+[ ! -d ~/.vim ] && mkdir $HOME/.vim
+
+# install pathogen
+if [ ! -d ~/.vim/autoloaded/pathogen.vim ]; then
+	mkdir -p ~/.vim/autoload ~/.vim/bundle && \
+	curl -LSso ~/.vim/autoload/pathogen.vim https://tpo.pe/pathogen.vim
+
+	# Julia vim
+	git clone git://github.com/JuliaEditorSupport/julia-vim.git \
+	~/.vim/bundle/julia-vim
+
+fi
+
 
 ## nek
 

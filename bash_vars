@@ -49,6 +49,8 @@ Darwin)
 	export WD=$HOME'/Nek5000/run'
 	# julia
 	export JULIA_LOAD_PATH=${JULIA_LOAD_PATH}:/usr/local/Cellar/gmsh/4.6.0/lib
+    # python
+    #export PYTHONPATH=$PYTHONPATH:/usr/local/lib/python3.7/site-packages
 	;;
 Linux)
 	MACHINE=$(hostname)
