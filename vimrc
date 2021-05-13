@@ -39,6 +39,7 @@ nnoremap <C-H> <C-W><C-H>
 
 " vim tabs
 :command T tabe
+:command TT tab terminal
 map <C-P> :tabp<cr>
 map <C-N> :tabn<cr>
 
@@ -81,4 +82,24 @@ set wildmenu
 
 colorscheme default "desert,peachpuff
 
+" youcompleteme
+au bufenter *jl let g:ycm_auto_trigger=0
 
+
+"
+" TERMINAL navigation help
+"
+" Use ctrl-w N to switch to "terminal-normal mode", which will let you
+" navigate around. It could be useful to then copy content to the clipboard.
+" Then return to regular terminal mode, simply type i just like how you'd
+" enter insert mode from a regular window.
+"
+"ctrl-w : will open command mode like in regular Vim.
+"
+"ctrl-w "" will paste, which is useful if you want to enter something from a
+"file in another window. More generally, you can paste recent or saved
+"clipboard contents using :ctrl-w " {reg}, where reg identifies the register
+"to paste. Type ctrl-w :display (or ctrl-w :dis) to see all available
+"registers and their content.
+"
+"
