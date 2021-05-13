@@ -83,11 +83,15 @@ if [ ! -d ~/.vim/autoloaded/pathogen.vim ]; then
 
 fi
 
+## julia
+#[ ! -d $HOME/.julia/config ] && mkdir $HOME/.julia/config
+#ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
+
 
 ## nek
 
 ## matlab
-#[ ! -d $HOME/matlab ] && mkdir matlab &&
+#[ ! -d $HOME/matlab ] && mkdir matlab
 #cd matlab
 #[ ! -d spec ] && git clone https://github.com/vpuri3/spec.git
 #ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
