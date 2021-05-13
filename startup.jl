@@ -6,6 +6,7 @@ push!(LOAD_PATH, "/Users/vp/julia")
 #sum(A::AbstractArray, n::Int) = Base.sum(A, dims=n)
 #sum(A) = Base.sum(A)
 
-ceil(z::Number)  = Base.ceil(Int,z)
-floor(z::Number) = Base.floor(Int,z)
+#ceil(z::Number)  = Base.ceil(Int,z)
+#floor(z::Number) = Base.floor(Int,z)
 
+#JULIA_NUM_THREADS = 2
