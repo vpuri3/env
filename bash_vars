@@ -83,6 +83,10 @@ Linux)
 		MACHINE="ews"
 	        export MTLB_BIN="/software/matlab-R2017b/bin"
 	esac
+
+    # python tooling
+	export PATH=$HOME/.local/bin:$PATH
+
 	;;
 esac
 

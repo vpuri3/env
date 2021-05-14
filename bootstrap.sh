@@ -44,7 +44,7 @@ Darwin)
 	;;
 Linux)
 	sudo apt-get update
-	sudo apt-get install git unzip wget
+	sudo apt-get install git unzip wget vim
 	;;
 esac
 
