@@ -20,10 +20,13 @@ export TWD='vpuri@theta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
 export BWD='ac.vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
 export EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 
+# get the number of logical CPU cores
+export NTHREADS=$(python -c 'import multiprocessing as mp; print(mp.cpu_count())')
+
 ME=$(whoami)
 case `uname` in
 Darwin)
-	# PS1
+    export NTHREADS=$(sysctl -n hw.ncpu)
 	MACHINE="MBP"
 	#Ensure user-installed binaries take precedence
 	export PATH=/usr/local/bin:$PATH
@@ -48,7 +51,9 @@ Darwin)
 	# NEK
 	export WD=$HOME'/Nek5000/run'
 	# julia
-	export JULIA_LOAD_PATH=${JULIA_LOAD_PATH}:/usr/local/Cellar/gmsh/4.6.0/lib
+
+	export JULIA_NUM_THREADS=$NTHREADS
+    export JULIA_NUM_PRECOMPILE_TASKS=$NTHREADS
     # python
     #export PYTHONPATH=$PYTHONPATH:/usr/local/lib/python3.7/site-packages
 	;;

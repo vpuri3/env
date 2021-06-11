@@ -52,8 +52,8 @@ map <C-B> 2b
 nnoremap Y y$
 
 " open/close parentheses
-inoremap " ""<left>
-inoremap ' ''<left>
+"inoremap " ""<left>
+"inoremap ' ''<left>
 inoremap ( ()<left>
 inoremap [ []<left>
 inoremap { {}<left>
