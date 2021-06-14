@@ -1,27 +1,27 @@
 #!/bin/bash
 
-# scripts
+## misc scripts
 export PATH=$HOME/bin:$PATH
 
-# Nek
+## Nek
 export PATH=$HOME/Nek5000/bin:$PATH
 
-# vars
-export email="vpuri3@illinois.edu"
+## vars
+export email="vedantpuri@gmail.com"
 export QSTAT_HEADER="JobId:User:QueuedTime:RunTime:WallTime:State:Location:Nodes"
-export TZ="America/Chicago"
+export TZ="America/New_York"
 export EDITOR="vi"
 
-# clusters
+## ANL clusters
 export MWD='vpuri@login.mcs.anl.gov:/homes/vpuri'
 export CWD='vpuri@cetus.alcf.anl.gov:/projects/PANDAVal/vpuri'
-#export VWD='vpuri@vesta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
+export VWD='vpuri@vesta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
 export TWD='vpuri@theta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
 export BWD='ac.vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
 export EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 
-# get the number of logical CPU cores
-export NTHREADS=$(python -c 'import multiprocessing as mp; print(mp.cpu_count())')
+## # of logical CPU cores
+export NTHREADS=$(python3 -c 'import multiprocessing as mp; print(mp.cpu_count())')
 
 ME=$(whoami)
 case `uname` in
@@ -30,18 +30,18 @@ Darwin)
 	MACHINE="MBP"
 	#Ensure user-installed binaries take precedence
 	export PATH=/usr/local/bin:$PATH
-	# mpich
-	export CC=gcc-4.9
-	export CXX=g++-4.9
-	export FC=gfortran-4.9
-	export F77=gfortran-4.9
-	# brew
+	## mpich
+	#export CC=gcc-4.9
+	#export CXX=g++-4.9
+	#export FC=gfortran-4.9
+	#export F77=gfortran-4.9
+	## homebrew
 	export PATH=/usr/local/sbin:$PATH
-	export HOMEBREW_CC=gcc-4.9
-	export HOMEBREW_CXX=g++-4.9
-	export HOMEBREW_FC=gfortran-4.9
-	export HOMEBREW_F77=gfortran-4.9
-	# PETSc
+	#export HOMEBREW_CC=gcc-4.9
+	#export HOMEBREW_CXX=g++-4.9
+	#export HOMEBREW_FC=gfortran-4.9
+	#export HOMEBREW_F77=gfortran-4.9
+	## PETSc
 	#export PETSC_DIR=/Users/vp/software/petsc
 	#export PETSC_ARCH=arch-darwin-c-debug
 	# Visit
@@ -51,7 +51,7 @@ Darwin)
 	# NEK
 	export WD=$HOME'/Nek5000/run'
 	# julia
-
+    export JULIA_DEPOT_PATH="$HOME/.julia"
 	export JULIA_NUM_THREADS=$NTHREADS
     export JULIA_NUM_PRECOMPILE_TASKS=$NTHREADS
     # python
@@ -86,23 +86,17 @@ Linux)
 		;;
 	*ews.illinois.edu)
 		MACHINE="ews"
-	        export MTLB_BIN="/software/matlab-R2017b/bin"
+	    export MTLB_BIN="/software/matlab-R2017b/bin"
 	esac
 
     # python tooling
 	export PATH=$HOME/.local/bin:$PATH
+
+    # julia
+    export JULIA_DEPOT_PATH="$HOME/julia-1.6.1/.julia"
 
 	;;
 esac
 
 # PS1
 export PS1='[\[\e[0;32m\]$ME\[\e[1;36m\]@$MACHINE\[\e[0m\] \W]:'
-
-# Google cloud
-# The next line updates PATH for the Google Cloud SDK.
-if [ -f '/Users/vp/Downloads/google-cloud-sdk/path.bash.inc' ]; then . '/Users/vp/Downloads/google-cloud-sdk/path.bash.inc'; fi
-
-# The next line enables shell command completion for gcloud.
-if [ -f '/Users/vp/Downloads/google-cloud-sdk/completion.bash.inc' ]; then . '/Users/vp/Downloads/google-cloud-sdk/completion.bash.inc'; fi
-#
-#export GOOGLE_APPLICATION_CREDENTIALS="$HOME/cc/my-key-fil.json"
