@@ -52,8 +52,6 @@ Darwin)
 	export WD=$HOME'/Nek5000/run'
 	# julia
     export JULIA_DEPOT_PATH="$HOME/.julia"
-	export JULIA_NUM_THREADS=$NTHREADS
-    export JULIA_NUM_PRECOMPILE_TASKS=$NTHREADS
     # python
     #export PYTHONPATH=$PYTHONPATH:/usr/local/lib/python3.7/site-packages
 	;;
@@ -93,10 +91,15 @@ Linux)
 	export PATH=$HOME/.local/bin:$PATH
 
     # julia
+    export PATH=$HOME/julia-1.6.1/bin:$PATH
     export JULIA_DEPOT_PATH="$HOME/julia-1.6.1/.julia"
 
 	;;
 esac
+
+# julia
+export JULIA_NUM_THREADS=$NTHREADS
+export JULIA_NUM_PRECOMPILE_TASKS=$NTHREADS
 
 # PS1
 export PS1='[\[\e[0;32m\]$ME\[\e[1;36m\]@$MACHINE\[\e[0m\] \W]:'
