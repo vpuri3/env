@@ -47,10 +47,11 @@ Darwin)
 	# Visit
 	export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
 	# MATLAB
-	export MTLB_BIN=/Applications/MATLAB_R2019b.app/bin
+	export MTLB_BIN=/Applications/MATLAB_R2021a.app/bin
 	# NEK
 	export WD=$HOME'/Nek5000/run'
 	# julia
+    export PATH=/Applications/Julia-1.7.app/Contents/Resources/julia/bin:$PATH
     export JULIA_DEPOT_PATH="$HOME/.julia"
     # python
     #export PYTHONPATH=$PYTHONPATH:/usr/local/lib/python3.7/site-packages

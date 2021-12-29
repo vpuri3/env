@@ -1,1 +1,1 @@
-ssh -X ac.vpuri@bebop.lcrc.anl.gov
+ssh -XYA ac.vnpuri@bebop.lcrc.anl.gov

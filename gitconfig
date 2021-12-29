@@ -16,7 +16,7 @@
 	squash = "!_git_squash() { git rebase -i HEAD~$1; }; _git_squash"
 	stashed = stash list --pretty=format:'%gd: %h [%ar] %s'
 	history = log -p
-
+	cat = "!git show \"$1:$2\" #"
 [filter "lfs"]
 	clean = git-lfs clean -- %f
 	smudge = git-lfs smudge -- %f
@@ -24,5 +24,3 @@
 	required = true
 [init]
 	defaultBranch = master
-[credential]
-    helper = store
