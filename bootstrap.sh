@@ -5,6 +5,27 @@ echo "$ source ~/.bash_profile afterwards"
 
 cd $HOME
 
+[ ! -d ~/env ] && git clone https://github.com/vpuri3/env.git
+
+touch ~/.bash_profile
+
+echo "# https://github.com/vpuri3/env/bootstrap.sh" >>~/.bash_profile
+echo "[ -f ~/.bashrc ] && source ~/.bashrc"         >>~/.bash_profile
+echo "source ~/env/bash_vars"                       >>~/.bash_profile
+echo "source ~/env/bash_alias"                      >>~/.bash_profile
+
+source ~/.bash_profile
+
+ln -sf ~/env/emacs.conf  ~/.emacs
+ln -sf ~/env/vimrc       ~/.vimrc
+ln -sf ~/env/gitconfig   ~/.gitconfig
+ln -sf ~/env/tmux.conf   ~/.tmux.conf
+
+ln -sf ~/env/bin ~/bin
+chmod +x ~/bin/*
+
+cd $HOME
+
 case `uname` in
 Darwin)
 	echo "xcode"
@@ -42,32 +63,11 @@ Darwin)
 	fi
 
 	;;
-Linux)
-	sudo apt-get update
-	sudo apt-get install git unzip wget vim
+Linux) # make cases for yum (redheat), apt
+	#sudo apt-get update
+	#sudo apt-get install git unzip wget vim
 	;;
 esac
-
-[ ! -d ~/env ] && git clone https://github.com/vpuri3/env.git
-
-touch ~/.bash_profile
-
-echo "# https://github.com/vpuri3/env/blob/master/bootstrap.sh">>~/.bash_profile
-echo "[ -f ~/.bashrc ] && source ~/.bashrc"                    >>~/.bash_profile
-echo "source ~/env/bash_vars"                                  >>~/.bash_profile
-echo "source ~/env/bash_alias"                                 >>~/.bash_profile
-
-source ~/.bash_profile
-
-ln -sf ~/env/emacs.conf  ~/.emacs
-ln -sf ~/env/vimrc       ~/.vimrc
-ln -sf ~/env/gitconfig   ~/.gitconfig
-ln -sf ~/env/tmux.conf   ~/.tmux.conf
-
-ln -sf ~/env/bin ~/bin
-chmod +x ~/bin/*
-
-cd $HOME
 
 # vim
 [ ! -d ~/.vim ] && mkdir $HOME/.vim
@@ -88,6 +88,8 @@ fi
 ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
 
 ## nek
+
+## python
 
 ## matlab
 #[ ! -d $HOME/matlab ] && mkdir matlab
