@@ -14,8 +14,6 @@ echo "[ -f ~/.bashrc ] && source ~/.bashrc"         >>~/.bash_profile
 echo "source ~/env/bash_vars"                       >>~/.bash_profile
 echo "source ~/env/bash_alias"                      >>~/.bash_profile
 
-source ~/.bash_profile
-
 ln -sf ~/env/emacs.conf  ~/.emacs
 ln -sf ~/env/vimrc       ~/.vimrc
 ln -sf ~/env/gitconfig   ~/.gitconfig
@@ -97,4 +95,6 @@ ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
 #[ ! -d spec ] && git clone https://github.com/vpuri3/spec.git
 #ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
 
+## end
+source ~/.bash_profile
 cd $HOME
