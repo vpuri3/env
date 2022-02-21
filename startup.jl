@@ -14,3 +14,9 @@ macro run(file)
     return :(include($fn))
 end
 
+#--------------------------------------#
+export linspace
+linspace(zi::Number,ze::Number,n::Integer) = Array(range(zi,stop=ze,length=n))
+#--------------------------------------#
+export iscallable
+iscallable(op) = !isempty(methods(op))

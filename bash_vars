@@ -9,7 +9,7 @@ export PATH=$HOME/Nek5000/bin:$PATH
 ## vars
 export email="vedantpuri@gmail.com"
 export QSTAT_HEADER="JobId:User:QueuedTime:RunTime:WallTime:State:Location:Nodes"
-export TZ="America/New_York"
+#export TZ="America/New_York"
 export EDITOR="vi"
 
 ## ANL clusters

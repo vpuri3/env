@@ -10,6 +10,7 @@ alias    cdn='cd $WD; s'
 alias    cdg='cd $HOME/Google\ Drive; s'
 alias    cdd='cd $HOME/Downloads; s'
 alias    cdm='cd $HOME/matlab; s'
+alias    cdp='cd $HOME/python; s'
 alias    cdj='cd $JULIA_DEPOT_PATH/../.julia/dev; s'
 #alias     pb='pbcopy'
 #alias     bc='pbpaste'
@@ -20,6 +21,7 @@ alias     tc='tar -cvf'  # tar create
 alias     tx='tar -xvf'  # tar extract
 alias     hn='head -n'   #
 alias    hn1='head -n 1' # tar extract
+alias whereami='hostname'
 # 
 alias     em='emacs -nw'
 alias     tm='tmux -new'

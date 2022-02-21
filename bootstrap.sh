@@ -72,7 +72,7 @@ cd $HOME
 # vim
 [ ! -d ~/.vim ] && mkdir $HOME/.vim
 
-# install pathogen
+# vim pathogen
 if [ ! -d ~/.vim/autoloaded/pathogen.vim ]; then
 	mkdir -p ~/.vim/autoload ~/.vim/bundle && \
 	curl -LSso ~/.vim/autoload/pathogen.vim https://tpo.pe/pathogen.vim
@@ -86,7 +86,6 @@ fi
 ## julia
 [ ! -d $HOME/.julia/config ] && mkdir $HOME/.julia/config
 ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
-
 
 ## nek
 
