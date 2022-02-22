@@ -13,14 +13,14 @@ export QSTAT_HEADER="JobId:User:QueuedTime:RunTime:WallTime:State:Location:Nodes
 export EDITOR="vi"
 
 ## ANL clusters
-export MWD='vpuri@login.mcs.anl.gov:/homes/vpuri'
-export CWD='vpuri@cetus.alcf.anl.gov:/projects/PANDAVal/vpuri'
-export VWD='vpuri@vesta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
-export TWD='vpuri@theta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
-export BWD='ac.vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
-export EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
+export NEK_MWD='vpuri@login.mcs.anl.gov:/homes/vpuri'
+export NEK_CWD='vpuri@cetus.alcf.anl.gov:/projects/PANDAVal/vpuri'
+export NEK_VWD='vpuri@vesta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
+export NEK_TWD='vpuri@theta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
+export NEK_BWD='ac.vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
+export NEK_EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 
-## # of logical CPU cores
+## num of CPU cores
 export NTHREADS=$(python3 -c 'import multiprocessing as mp; print(mp.cpu_count())')
 
 ME=$(whoami)
@@ -49,7 +49,7 @@ Darwin)
 	# MATLAB
 	export MTLB_BIN=/Applications/MATLAB_R2021a.app/bin
 	# NEK
-	export WD=$HOME'/Nek5000/run'
+	export NEK_WD=$HOME'/Nek5000/run'
 	# julia
     export PATH=/Applications/Julia-1.7.app/Contents/Resources/julia/bin:$PATH
     export JULIA_DEPOT_PATH="$HOME/.julia"
@@ -58,30 +58,34 @@ Darwin)
 	;;
 Linux)
 	MACHINE=$(hostname)
+
+    # nek
+	export NEK_WD=$HOME'/Nek5000/run'
+
 	case `hostname` in
 	cooley*)
-		export WD='/lus/theta-fs0/projects/wall_turb_dd/vpuri'
-		export PATH=$WD/Nek5000-v19/bin:$PATH
+		export NEK_WD='/lus/theta-fs0/projects/wall_turb_dd/vpuri'
+		export PATH=$NEK_WD/Nek5000-v19/bin:$PATH
 		;;
 	theta*)
-		export WD='/projects/wall_turb_dd/vpuri'
-		export PATH=$WD/Nek5000-v19/bin:$PATH
+		export NEK_WD='/projects/wall_turb_dd/vpuri'
+		export PATH=$NEK_WD/Nek5000-v19/bin:$PATH
 		;;
 	cetus*)
-		export WD='/projects/PANDAVal/vpuri'
+		export NEK_WD='/projects/PANDAVal/vpuri'
 		;;
 	vesta*)
-		export WD='/projects/wall_turb_dd/vpuri/'
+		export NEK_WD='/projects/wall_turb_dd/vpuri/'
 		;;
 	login*)
-		export WD="/homes/vpuri"
-		export PATH=$WD/Nek5000-v19/bin:$PATH
+		export NEK_WD="/homes/vpuri"
+		export PATH=$NEK_WD/Nek5000-v19/bin:$PATH
 		;;
 	bebop*)
-		export WD='/lcrc/project/wall_bounded_flows/vpuri/'
+		export NEK_WD='/lcrc/project/wall_bounded_flows/vpuri/'
 		;;
 	blues*)
-		export WD='/lcrc/project/wall_bounded_flows/vpuri/'
+		export NEK_WD='/lcrc/project/wall_bounded_flows/vpuri/'
 		;;
 	*ews.illinois.edu)
 		MACHINE="ews"
@@ -92,8 +96,8 @@ Linux)
 	export PATH=$HOME/.local/bin:$PATH
 
     # julia
-    export PATH=$HOME/julia-1.6.1/bin:$PATH
-    export JULIA_DEPOT_PATH="$HOME/julia-1.6.1/.julia"
+    export PATH=$HOME/julia-1.7.1/bin:$PATH
+    export JULIA_DEPOT_PATH="$HOME/julia-1.7.1/.julia"
 
 	;;
 esac
