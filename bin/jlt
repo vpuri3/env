@@ -1,0 +1,18 @@
+#!/bin/bash
+
+PKG=""
+if [ $# -eq 0 ]
+then
+    PKG=""
+    echo "
+    import Pkg
+    Pkg.test()
+    " | julia --proj
+else
+    PKG=":$1"
+    echo "
+    import Pkg
+    Pkg.test(String($PKG))
+    " | julia --proj
+fi
+#

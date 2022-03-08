@@ -32,6 +32,9 @@ alias     tf='tail -f'
 alias     le='less'
 alias    lel='less logfile'
 # git
+alias     ga='git add'
+alias     gc='git commit'
+alias    gcm='git commit -m'
 alias     gs='git status'
 alias     gb='git branch'
 alias  gdiff='git diff'
@@ -40,6 +43,8 @@ alias    gdf='git difftool'
 alias    sls='screen -ls'
 alias    sdr='screen -dr'
 #. $HOME/Downloads/z-master/z.sh
+# Julia
+alias     jl='julia --proj'
 
 case `uname` in
 Darwin)
