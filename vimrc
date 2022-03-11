@@ -3,7 +3,6 @@ execute pathogen#infect()
 
 syntax on
 filetype plugin indent on
-
 set omnifunc=syntaxcomplete#Complete
 
 set nocompatible
@@ -81,6 +80,7 @@ set wildmenu
 
 
 colorscheme default "desert,peachpuff
+highlight Visual ctermfg=Black ctermbg=Yellow cterm=NONE
 
 " youcompleteme
 au bufenter *jl let g:ycm_auto_trigger=0
