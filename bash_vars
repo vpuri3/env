@@ -51,7 +51,7 @@ Darwin)
 	# NEK
 	export NEK_WD=$HOME'/Nek5000/run'
 	# julia
-    export PATH=/Applications/Julia-1.7.app/Contents/Resources/julia/bin:$PATH
+    export PATH=/Applications/Julia-1.8.app/Contents/Resources/julia/bin:$PATH
     export JULIA_DEPOT_PATH="$HOME/.julia"
     # python
     #export PYTHONPATH=$PYTHONPATH:/usr/local/lib/python3.7/site-packages

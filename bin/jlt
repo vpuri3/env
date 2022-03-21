@@ -15,4 +15,5 @@ else
     Pkg.test(String($PKG))
     " | julia --proj
 fi
+# keep julia REPL open
 #
