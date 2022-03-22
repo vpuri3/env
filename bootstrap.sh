@@ -5,7 +5,7 @@ echo "$ source ~/.bash_profile afterwards"
 
 cd $HOME
 
-[ ! -d ~/env ] && git clone https://github.com/vpuri3/env.git
+[ ! -d ~/env ] && git clone git@github.com:vpuri3/env.git
 
 touch ~/.bash_profile
 
@@ -76,7 +76,7 @@ if [ ! -d ~/.vim/autoloaded/pathogen.vim ]; then
 	curl -LSso ~/.vim/autoload/pathogen.vim https://tpo.pe/pathogen.vim
 
 	# Julia vim
-	git clone git://github.com/JuliaEditorSupport/julia-vim.git \
+	git clone git@github.com:JuliaEditorSupport/julia-vim.git \
 	~/.vim/bundle/julia-vim
 
 fi
