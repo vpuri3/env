@@ -9,7 +9,7 @@ export PATH=$HOME/Nek5000/bin:$PATH
 ## vars
 export email="vedantpuri@gmail.com"
 export QSTAT_HEADER="JobId:User:QueuedTime:RunTime:WallTime:State:Location:Nodes"
-#export TZ="America/New_York"
+export TZ="America/New_York"
 export EDITOR="vi"
 
 ## ANL clusters
@@ -28,38 +28,45 @@ case `uname` in
 Darwin)
     export NTHREADS=$(sysctl -n hw.ncpu)
 	MACHINE="MBP"
+
 	#Ensure user-installed binaries take precedence
 	export PATH=/usr/local/bin:$PATH
+
 	## mpich
 	#export CC=gcc-4.9
 	#export CXX=g++-4.9
 	#export FC=gfortran-4.9
 	#export F77=gfortran-4.9
+
 	## homebrew
 	export PATH=/usr/local/sbin:$PATH
 	#export HOMEBREW_CC=gcc-4.9
 	#export HOMEBREW_CXX=g++-4.9
 	#export HOMEBREW_FC=gfortran-4.9
 	#export HOMEBREW_F77=gfortran-4.9
+
 	## PETSc
 	#export PETSC_DIR=/Users/vp/software/petsc
 	#export PETSC_ARCH=arch-darwin-c-debug
+
 	# Visit
 	export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
 	# MATLAB
 	export MTLB_BIN=/Applications/MATLAB_R2021a.app/bin
 	# NEK
 	export NEK_WD=$HOME'/Nek5000/run'
+
 	# julia
-    export PATH=/Applications/Julia-1.8.app/Contents/Resources/julia/bin:$PATH
-    export JULIA_DEPOT_PATH="$HOME/.julia"
+    export PATH=/Applications/Julia-1.7.app/Contents/Resources/julia/bin:$PATH
+#   export PATH=/Applications/Julia-1.8.app/Contents/Resources/julia/bin:$PATH
+
     # python
     #export PYTHONPATH=$PYTHONPATH:/usr/local/lib/python3.7/site-packages
 	;;
 Linux)
 	MACHINE=$(hostname)
 
-    # nek
+    # NEK
 	export NEK_WD=$HOME'/Nek5000/run'
 
 	case `hostname` in
@@ -95,14 +102,15 @@ Linux)
     # python tooling
 	export PATH=$HOME/.local/bin:$PATH
 
-    # julia
-    export PATH=$HOME/julia-1.7.1/bin:$PATH
-    export JULIA_DEPOT_PATH="$HOME/julia-1.7.1/.julia"
+    # Julia
+    export PATH=$HOME/julia-1.7.2/bin:$PATH
+    export PATH=$HOME/julia-1.8.0-beta1/bin:$PATH
 
 	;;
 esac
 
-# julia
+# Julia
+export JULIA_DEPOT_PATH="$HOME/.julia"
 export JULIA_NUM_THREADS=$NTHREADS
 export JULIA_NUM_PRECOMPILE_TASKS=$NTHREADS
 

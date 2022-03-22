@@ -82,6 +82,7 @@ if [ ! -d ~/.vim/autoloaded/pathogen.vim ]; then
 fi
 
 ## julia
+[ ! -d $HOME/.julia ] && mkdir $HOME/.julia
 [ ! -d $HOME/.julia/config ] && mkdir $HOME/.julia/config
 ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
 
