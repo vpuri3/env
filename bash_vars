@@ -18,6 +18,11 @@ export NEK_CWD='vpuri@cetus.alcf.anl.gov:/projects/PANDAVal/vpuri'
 export NEK_VWD='vpuri@vesta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
 export NEK_TWD='vpuri@theta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
 export NEK_BWD='ac.vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
+
+# UIUC cluster
+export NEK_EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
+
+# CMU Cluster
 export NEK_EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 
 ## num of CPU cores
@@ -51,8 +56,10 @@ Darwin)
 
 	# Visit
 	export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
+
 	# MATLAB
 	export MTLB_BIN=/Applications/MATLAB_R2021a.app/bin
+
 	# NEK
 	export NEK_WD=$HOME'/Nek5000/run'
 
@@ -62,6 +69,7 @@ Darwin)
 
     # python
     #export PYTHONPATH=$PYTHONPATH:/usr/local/lib/python3.7/site-packages
+
 	;;
 Linux)
 	MACHINE=$(hostname)
@@ -104,7 +112,7 @@ Linux)
 
     # Julia
     export PATH=$HOME/julia-1.7.2/bin:$PATH
-    export PATH=$HOME/julia-1.8.0-beta1/bin:$PATH
+#   export PATH=$HOME/julia-1.8.0-beta1/bin:$PATH
 
 	;;
 esac

@@ -5,7 +5,7 @@ echo "$ source ~/.bash_profile afterwards"
 
 cd $HOME
 
-[ ! -d ~/env ] && git clone git@github.com:vpuri3/env.git
+[ ! -d ~/env ] && git clone https://github.com/vpuri3/env.git
 
 touch ~/.bash_profile
 
@@ -22,6 +22,7 @@ ln -sf ~/env/tmux.conf   ~/.tmux.conf
 ln -sf ~/env/bin ~/bin
 chmod +x ~/bin/*
 
+source ~/.bash_profile
 cd $HOME
 
 case `uname` in
@@ -30,6 +31,8 @@ Darwin)
 	xcode-select -p > /dev/null
 	[ "$?" == "0" ] || xcode-select --install
 
+    # Comment out Homebrew part. switch to spack
+    : '
 	# homebrew
 	if [ -f /usr/local/bin/brew ]; then
 		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"")"
@@ -38,7 +41,7 @@ Darwin)
         brew install python
         brew install python@3.7
 
-        # link python, pip to homebrew's python@3.7
+        # link python, pip to homebrew python@3.7
         ln -sf $(which python3.7) /usr/local/bin/python
         ln -sf $(which pip.7)     /usr/local/bin/pip
 
@@ -50,7 +53,7 @@ Darwin)
 	    if [[ "$gccbeclang" =~ "clang" ]]; then
 	    	echo "gcc is linked to clang"
 	    	if [[ -x $(which gcc) ]]; then
-	    		echo "linking gcc to homebrew's gcc"
+	    		echo "linking gcc to homebrew gcc"
 	    		cd /usr/local/bin
 	    		ln -sf $(which gcc)      gcc
 	    		ln -sf $(which g++)      g++
@@ -59,31 +62,69 @@ Darwin)
 	    fi
 
 	fi
+    '
+    # end comment
+
+    ## Julia
+    JL_PATH=$(which julia)
+    if [[ ! -f "$JL_PATH" ]] ; then
+        cd $HOME
+        case `uname -m` in
+            x86*)
+                JL_LINK="https://julialang-s3.julialang.org/bin/mac/x64/1.7/julia-1.7.2-mac64.tar.gz"
+                ;;
+            arm*)
+                JL_LINK="https://julialang-s3.julialang.org/bin/mac/aarch64/1.7/julia-1.7.2-macaarch64.dmg"
+                ;;
+        esac
+        wget $JL_LINK
+        tar -xvf julia-*
+    fi
 
 	;;
-Linux) # make cases for yum (redheat), apt
+Linux)
+
+    # figure out the right package manager
+
 	#sudo apt-get update
-	#sudo apt-get install git unzip wget vim
+	#sudo apt-get install git unzip wget curl vim
+
+    ## Julia
+    JL_PATH=$(which julia)
+    if [[ ! -f "$JL_PATH" ]] ; then
+        cd $HOME
+        case `uname -m` in
+            x86*)
+                JL_LINK="https://julialang-s3.julialang.org/bin/linux/x64/1.7/julia-1.7.2-linux-x86_64.tar.gz"
+                ;;
+            *aarch64*)
+                JL_LINK="https://julialang-s3.julialang.org/bin/linux/aarch64/1.7/julia-1.7.2-linux-aarch64.tar.gz"
+                ;;
+        esac
+        wget $JL_LINK
+        tar -xvf julia-*
+    fi
+
 	;;
 esac
 
-# vim
-[ ! -d ~/.vim ] && mkdir $HOME/.vim
+## vim
+[ ! -d "$HOME/.vim" ] && mkdir $HOME/.vim
 
 # vim pathogen
-if [ ! -d ~/.vim/autoloaded/pathogen.vim ]; then
-	mkdir -p ~/.vim/autoload ~/.vim/bundle && \
-	curl -LSso ~/.vim/autoload/pathogen.vim https://tpo.pe/pathogen.vim
-
-	# Julia vim
-	git clone git@github.com:JuliaEditorSupport/julia-vim.git \
-	~/.vim/bundle/julia-vim
-
+if [ ! -d "$HOME/.vim/autoloaded/pathogen.vim" ]; then
+	mkdir -p $HOME/.vim/autoload $HOME/.vim/bundle && \
+	curl -LSso $HOME/.vim/autoload/pathogen.vim https://tpo.pe/pathogen.vim
 fi
 
-## julia
-[ ! -d $HOME/.julia ] && mkdir $HOME/.julia
-[ ! -d $HOME/.julia/config ] && mkdir $HOME/.julia/config
+# julia-vim
+if [[ ! -d "$HOME/.vim/bundle/julia-vim" ]]; then
+    git clone https://github.com/JuliaEditorSupport/julia-vim.git \
+    $HOME/.vim/bundle/julia-vim
+fi
+
+## Julia
+[ ! -d $HOME/.julia/config ] && mkdir -p $HOME/.julia/config
 ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
 
 ## nek
@@ -97,5 +138,3 @@ ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
 #ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
 
 ## end
-source ~/.bash_profile
-cd $HOME
