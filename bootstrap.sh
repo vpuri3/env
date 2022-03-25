@@ -7,12 +7,14 @@ cd $HOME
 
 [ ! -d ~/env ] && git clone https://github.com/vpuri3/env.git
 
-touch ~/.bash_profile
+touch $HOME/.bash_profile
 
-echo "# https://github.com/vpuri3/env/bootstrap.sh" >>~/.bash_profile
-echo "[ -f ~/.bashrc ] && source ~/.bashrc"         >>~/.bash_profile
-echo "source ~/env/bash_vars"                       >>~/.bash_profile
-echo "source ~/env/bash_alias"                      >>~/.bash_profile
+echo "## https://github.com/vpuri3/env/bootstrap.sh" >>~/.bash_profile
+echo "[ -f $HOME/.bashrc ] && source ~/.bashrc"      >>~/.bash_profile
+echo "source $HOME/env/bash_vars"                    >>~/.bash_profile
+echo "source $HOME/env/bash_alias"                   >>~/.bash_profile
+echo "# Spack"                                       >>~/.bash_profile
+echo "$source HOME/spack/share/spack/setup-env.sh"   >>~/.bash_profile
 
 ln -sf ~/env/emacs.conf  ~/.emacs
 ln -sf ~/env/vimrc       ~/.vimrc
@@ -78,7 +80,7 @@ Darwin)
                 ;;
         esac
         wget $JL_LINK
-        tar -xvf julia-*
+        tar -xvf julia-*.tar.gz > /dev/null # 2 > &1
     fi
 
 	;;
@@ -102,7 +104,7 @@ Linux)
                 ;;
         esac
         wget $JL_LINK
-        tar -xvf julia-*
+        tar -xvf julia-*.tar.gz > /dev/null # 2 > &1
     fi
 
 	;;
@@ -128,8 +130,17 @@ fi
 ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
 
 ## nek
+if [[ ! -d "$HOME/Nek5000" ]]; then
+    NEK_LINK="https://github.com/Nek5000/Nek5000/releases/download/v19.0/Nek5000-19.0.tar.gz"
+    wget $NEK_LINK
+    tar -xvf Nek5000-*.tar.gz > /dev/null # 2 > &1
+fi
 
-## python
+## Spack
+if [[ ! -d "$HOME/spack" ]]; then
+    git clone https://github.com/spack/spack.git $HOME/spack
+    $HOME/share/spack/setup-env.sh
+fi
 
 ## matlab
 #[ ! -d $HOME/matlab ] && mkdir matlab

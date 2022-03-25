@@ -124,3 +124,7 @@ export JULIA_NUM_PRECOMPILE_TASKS=$NTHREADS
 
 # PS1
 export PS1='[\[\e[0;32m\]$ME\[\e[1;36m\]@$MACHINE\[\e[0m\] \W]:'
+
+# Spack
+#source ~/spack/share/spack/setup-env.sh
+# create env/ load env file,
