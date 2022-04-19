@@ -8,11 +8,21 @@
  TODO:
  -add completion support
 """
+
+#= # @run conflicts with Debugger.jl
 macro run(file)
     fs = String(file)
     fn = fs * ".jl"
     return :(include($fn))
 end
+=#
+
+"""
+macro for adding test dependencies to environment path
+"""
+#pkgpath = dirname(dirname(@__FILE__))
+#tstpath = joinpath(pkgpath, "test")
+#!(tstpath in LOAD_PATH) && push!(LOAD_PATH, tstpath)
 
 #--------------------------------------#
 export linspace

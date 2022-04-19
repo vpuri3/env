@@ -11,7 +11,6 @@ alias    cdg='cd $HOME/Google\ Drive; s'
 alias    cdd='cd $HOME/Downloads; s'
 alias    cdm='cd $HOME/matlab; s'
 alias    cdp='cd $HOME/python; s'
-alias    cdj='cd $JULIA_DEPOT_PATH/../.julia/dev; s'
 alias     kk='kill'
 alias     ka='killall'
 alias     k9='kill -9'
@@ -33,19 +32,23 @@ alias    lel='less logfile'
 # git
 alias     gs='git status'
 alias     ga='git add'
+alias    gau='git add -u'
 alias     gc='git commit'
 alias     gp='git push'
 alias    gcm='git commit -m'
 alias     gb='git branch'
-alias  gdiff='git diff'
+alias     gd='git diff'
 alias    gdf='git difftool'
 # screen
 alias    sls='screen -ls'
 alias    sdr='screen -dr'
 #. $HOME/Downloads/z-master/z.sh
 # Julia
+alias    cdj='cd $JULIA_DEPOT_PATH/../.julia/dev; s'
 alias     jl='julia --proj'
-alias     jj='j.jl'
+alias    jlj='julia --proj -J $HOME/sysimg/sysimage.so'
+#alias     jj='j.jl'
+alias     jj='/Applications/Julia-1.7.app/Contents/Resources/julia/bin/julia --proj'
 
 case `uname` in
 Darwin)
