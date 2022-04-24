@@ -20,9 +20,23 @@ end
 """
 macro for adding test dependencies to environment path
 """
-#pkgpath = dirname(dirname(@__FILE__))
-#tstpath = joinpath(pkgpath, "test")
-#!(tstpath in LOAD_PATH) && push!(LOAD_PATH, tstpath)
+
+# add dependencies to env stack
+#=
+pkgpath = dirname(dirname(@__FILE__))
+tstpath = joinpath(pkgpath, "test")
+if !(tstpath in LOAD_PATH)
+    @info "adding $tstpath to LOAD_PATH"
+    push!(LOAD_PATH, tstpath)
+end
+=#
+
+# utility
+ls(x) = readdir(x)
+ls()  = readdir()
+ty(x) = typeof(x)
+fn(x) = fieldnames(x)
+fnty(x) = fn ∘ ty
 
 #--------------------------------------#
 export linspace
