@@ -36,11 +36,8 @@ ls(x) = readdir(x)
 ls()  = readdir()
 ty(x) = typeof(x)
 fn(x) = fieldnames(x)
-fnty(x) = fn ∘ ty
+fnty  = fn ∘ ty
 
-#--------------------------------------#
-export linspace
-linspace(zi::Number,ze::Number,n::Integer) = Array(range(zi,stop=ze,length=n))
-#--------------------------------------#
-export iscallable
 iscallable(op) = !isempty(methods(op))
+push(x::Tuple, val) = (x..., val)
+linspace(zi::Number,ze::Number,n::Integer) = Array(range(zi,stop=ze,length=n))
