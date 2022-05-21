@@ -9,20 +9,23 @@ cd $HOME
 
 touch $HOME/.bash_profile
 
-echo "## https://github.com/vpuri3/env/bootstrap.sh" >>~/.bash_profile
-echo "[ -f $HOME/.bashrc ] && source ~/.bashrc"      >>~/.bash_profile
-echo "source $HOME/env/bash_vars"                    >>~/.bash_profile
-echo "source $HOME/env/bash_alias"                   >>~/.bash_profile
-echo "# Spack"                                       >>~/.bash_profile
-echo "$source HOME/spack/share/spack/setup-env.sh"   >>~/.bash_profile
-
-ln -sf ~/env/emacs.conf  ~/.emacs
-ln -sf ~/env/vimrc       ~/.vimrc
-ln -sf ~/env/gitconfig   ~/.gitconfig
-ln -sf ~/env/tmux.conf   ~/.tmux.conf
+echo "## https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bash_profile
+echo "[ -f $HOME/.bashrc ] && source ~/.bashrc"      >> $HOME/.bash_profile
+echo "source $HOME/env/bash_vars"                    >> $HOME/.bash_profile
+echo "source $HOME/env/bash_alias"                   >> $HOME/.bash_profile
+echo "# Spack"                                       >> $HOME/.bash_profile
+echo "$source HOME/spack/share/spack/setup-env.sh"   >> $HOME/.bash_profile
 
 ln -sf ~/env/bin ~/bin
 chmod +x ~/bin/*
+
+mkdir -p $HOME/.ssh
+
+ln -sf $HOME/env/emacs.conf $HOME/.emacs
+ln -sf $HOME/env/vimrc      $HOME/.vimrc
+ln -sf $HOME/env/gitconfig  $HOME/.gitconfig
+ln -sf $HOME/env/tmux.conf  $HOME/.tmux.conf
+ln -sf $HOME/env/sshconfig  $HOME/.ssh/config
 
 source ~/.bash_profile
 cd $HOME
