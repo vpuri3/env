@@ -91,8 +91,8 @@ Linux)
 
     # figure out the right package manager
 
-	#sudo apt-get update
-	#sudo apt-get install git unzip wget curl vim
+	sudo apt-get update
+	sudo apt-get install git unzip wget curl vim imagemagick
 
     ## Julia
     JL_PATH=$(which julia)
