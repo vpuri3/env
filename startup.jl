@@ -23,11 +23,12 @@ macro for adding test dependencies to environment path
 
 # add dependencies to env stack
 #=
-pkgpath = dirname(dirname(@__FILE__))
-tstpath = joinpath(pkgpath, "test")
-if !(tstpath in LOAD_PATH)
-    @info "adding $tstpath to LOAD_PATH"
-    push!(LOAD_PATH, tstpath)
+let
+    # add dependencies to env stack
+    pkgpath = dirname(dirname(pathof(PDEInterfaces)))
+    tstpath = joinpath(pkgpath, "test")
+    !(tstpath in LOAD_PATH) && push!(LOAD_PATH, tstpath)
+    nothing
 end
 =#
 

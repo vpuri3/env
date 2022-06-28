@@ -76,10 +76,10 @@ Darwin)
         cd $HOME
         case `uname -m` in
             x86*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/mac/x64/1.7/julia-1.7.2-mac64.tar.gz"
+                JL_LINK="https://julialang-s3.julialang.org/bin/mac/x64/1.8/julia-1.8.0-rc1-mac64.dmg"
                 ;;
             arm*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/mac/aarch64/1.7/julia-1.7.2-macaarch64.dmg"
+                JL_LINK="https://julialang-s3.julialang.org/bin/mac/aarch64/1.8/julia-1.8.0-rc1-macaarch64.dmg"
                 ;;
         esac
         wget $JL_LINK
@@ -100,10 +100,10 @@ Linux)
         cd $HOME
         case `uname -m` in
             x86*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/linux/x64/1.7/julia-1.7.2-linux-x86_64.tar.gz"
+                JL_LINK="https://julialang-s3.julialang.org/bin/linux/x64/1.8/julia-1.8.0-rc1-linux-x86_64.tar.gz"
                 ;;
             *aarch64*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/linux/aarch64/1.7/julia-1.7.2-linux-aarch64.tar.gz"
+                JL_LINK="https://julialang-s3.julialang.org/bin/linux/aarch64/1.8/julia-1.8.0-rc1-linux-aarch64.tar.gz"
                 ;;
         esac
         wget $JL_LINK
