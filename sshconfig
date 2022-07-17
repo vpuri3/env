@@ -35,3 +35,9 @@ Host bebop
     HostName %h.lcrc.anl.gov
     ForwardAgent yes
     User ac.vnpuri
+
+Host oracle-g
+    HostName 130.61.137.140
+    User ubuntu
+    RequestTTY yes
+    RemoteCommand sudo su opc
