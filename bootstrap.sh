@@ -5,7 +5,24 @@ echo "$ source ~/.bash_profile afterwards"
 
 cd $HOME
 
-[ ! -d ~/env ] && git clone git@github.com:vpuri3/env.git
+## SSH
+if [ ! -f $HOME/.ssh/*pub ]; then
+    echo "generating SSH keys"
+    ssh-keygen -t ed25519
+    eval "$(ssh-agent -s)"
+fi
+
+ssh-add -K $HOME/.ssh/id_ed25519
+
+#touch $HOME/.ssh/config
+#printf "Host *\n    AddKeysToAgent yes\n    UseKeychain yes\n    IdentityFile ~/.ssh/id_ed25519" > $HOME/.ssh/config
+
+[ ! -d ~/env ] && git clone https://github.com/vpuri3/env.git
+cd $HOME/env
+git remote rm origin
+git remote add origin git@github.com:vpuri3/env.git
+
+cd $HOME
 
 touch $HOME/.bash_profile
 
@@ -25,7 +42,7 @@ ln -sf $HOME/env/emacs.conf $HOME/.emacs
 ln -sf $HOME/env/vimrc      $HOME/.vimrc
 ln -sf $HOME/env/gitconfig  $HOME/.gitconfig
 ln -sf $HOME/env/tmux.conf  $HOME/.tmux.conf
-#ln -sf $HOME/env/sshconfig  $HOME/.ssh/config
+ln -sf $HOME/env/sshconfig  $HOME/.ssh/config
 
 source ~/.bash_profile
 cd $HOME
@@ -82,8 +99,9 @@ Darwin)
                 JL_LINK="https://julialang-s3.julialang.org/bin/mac/aarch64/1.8/julia-1.8.0-rc3-macaarch64.dmg"
                 ;;
         esac
-        wget $JL_LINK
-        tar -xvf julia-*.tar.gz > /dev/null # 2 > &1
+        wget -P $HOME/Downloads $JL_LINK $HOME/Downloads
+	#hdiutil attach $HOME/Downloads/julia*
+	#hdiutil detatch 
     fi
 
 	;;
