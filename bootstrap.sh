@@ -134,17 +134,10 @@ esac
 ## vim
 [ ! -d "$HOME/.vim" ] && mkdir $HOME/.vim
 
-# vim pathogen
-if [ ! -d "$HOME/.vim/autoloaded/pathogen.vim" ]; then
-	mkdir -p $HOME/.vim/autoload $HOME/.vim/bundle && \
-	curl -LSso $HOME/.vim/autoload/pathogen.vim https://tpo.pe/pathogen.vim
-fi
-
 # julia-vim
-if [[ ! -d "$HOME/.vim/bundle/julia-vim" ]]; then
-    git clone https://github.com/JuliaEditorSupport/julia-vim.git \
-    $HOME/.vim/bundle/julia-vim
-fi
+cd ~/.vim
+mkdir -p pack/plugins/start && cd pack/plugins/start
+git clone https://github.com/JuliaEditorSupport/julia-vim.git
 
 ## Julia
 [ ! -d $HOME/.julia/config ] && mkdir -p $HOME/.julia/config
