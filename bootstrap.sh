@@ -5,22 +5,44 @@ echo "$ source ~/.bash_profile afterwards"
 
 cd $HOME
 
+## SSH
+if [ ! -f $HOME/.ssh/*pub ]; then
+    echo "generating SSH keys"
+    ssh-keygen -t ed25519
+    eval "$(ssh-agent -s)"
+fi
+
+ssh-add -K $HOME/.ssh/id_ed25519
+
+#touch $HOME/.ssh/config
+#printf "Host *\n    AddKeysToAgent yes\n    UseKeychain yes\n    IdentityFile ~/.ssh/id_ed25519" > $HOME/.ssh/config
+
 [ ! -d ~/env ] && git clone https://github.com/vpuri3/env.git
+cd $HOME/env
+git remote rm origin
+git remote add origin git@github.com:vpuri3/env.git
 
-touch ~/.bash_profile
+cd $HOME
 
-echo "# https://github.com/vpuri3/env/bootstrap.sh" >>~/.bash_profile
-echo "[ -f ~/.bashrc ] && source ~/.bashrc"         >>~/.bash_profile
-echo "source ~/env/bash_vars"                       >>~/.bash_profile
-echo "source ~/env/bash_alias"                      >>~/.bash_profile
+touch $HOME/.bash_profile
 
-ln -sf ~/env/emacs.conf  ~/.emacs
-ln -sf ~/env/vimrc       ~/.vimrc
-ln -sf ~/env/gitconfig   ~/.gitconfig
-ln -sf ~/env/tmux.conf   ~/.tmux.conf
+echo "## https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bash_profile
+echo "[ -f $HOME/.bashrc ] && source ~/.bashrc"      >> $HOME/.bash_profile
+echo "source $HOME/env/bash_vars"                    >> $HOME/.bash_profile
+echo "source $HOME/env/bash_alias"                   >> $HOME/.bash_profile
+echo "# Spack"                                       >> $HOME/.bash_profile
+echo "$source HOME/spack/share/spack/setup-env.sh"   >> $HOME/.bash_profile
 
 ln -sf ~/env/bin ~/bin
 chmod +x ~/bin/*
+
+mkdir -p $HOME/.ssh
+
+ln -sf $HOME/env/emacs.conf $HOME/.emacs
+ln -sf $HOME/env/vimrc      $HOME/.vimrc
+ln -sf $HOME/env/gitconfig  $HOME/.gitconfig
+ln -sf $HOME/env/tmux.conf  $HOME/.tmux.conf
+ln -sf $HOME/env/sshconfig  $HOME/.ssh/config
 
 source ~/.bash_profile
 cd $HOME
@@ -71,14 +93,15 @@ Darwin)
         cd $HOME
         case `uname -m` in
             x86*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/mac/x64/1.7/julia-1.7.2-mac64.tar.gz"
+                JL_LINK="https://julialang-s3.julialang.org/bin/mac/x64/1.8/julia-1.8.0-rc3-mac64.dmg"
                 ;;
             arm*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/mac/aarch64/1.7/julia-1.7.2-macaarch64.dmg"
+                JL_LINK="https://julialang-s3.julialang.org/bin/mac/aarch64/1.8/julia-1.8.0-rc3-macaarch64.dmg"
                 ;;
         esac
-        wget $JL_LINK
-        tar -xvf julia-*
+        wget -P $HOME/Downloads $JL_LINK $HOME/Downloads
+	#hdiutil attach $HOME/Downloads/julia*
+	#hdiutil detatch 
     fi
 
 	;;
@@ -86,8 +109,8 @@ Linux)
 
     # figure out the right package manager
 
-	#sudo apt-get update
-	#sudo apt-get install git unzip wget curl vim
+	sudo apt-get update
+	sudo apt-get install git unzip wget curl vim imagemagick
 
     ## Julia
     JL_PATH=$(which julia)
@@ -95,14 +118,14 @@ Linux)
         cd $HOME
         case `uname -m` in
             x86*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/linux/x64/1.7/julia-1.7.2-linux-x86_64.tar.gz"
+                JL_LINK="https://julialang-s3.julialang.org/bin/linux/x64/1.8/julia-1.8.0-rc3-linux-x86_64.tar.gz"
                 ;;
             *aarch64*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/linux/aarch64/1.7/julia-1.7.2-linux-aarch64.tar.gz"
+                JL_LINK="https://julialang-s3.julialang.org/bin/linux/aarch64/1.8/julia-1.8.0-rc3-linux-aarch64.tar.gz"
                 ;;
         esac
         wget $JL_LINK
-        tar -xvf julia-*
+        tar -xvf julia-*.tar.gz > /dev/null # 2 > &1
     fi
 
 	;;
@@ -111,25 +134,27 @@ esac
 ## vim
 [ ! -d "$HOME/.vim" ] && mkdir $HOME/.vim
 
-# vim pathogen
-if [ ! -d "$HOME/.vim/autoloaded/pathogen.vim" ]; then
-	mkdir -p $HOME/.vim/autoload $HOME/.vim/bundle && \
-	curl -LSso $HOME/.vim/autoload/pathogen.vim https://tpo.pe/pathogen.vim
-fi
-
 # julia-vim
-if [[ ! -d "$HOME/.vim/bundle/julia-vim" ]]; then
-    git clone https://github.com/JuliaEditorSupport/julia-vim.git \
-    $HOME/.vim/bundle/julia-vim
-fi
+cd ~/.vim
+mkdir -p pack/plugins/start && cd pack/plugins/start
+git clone https://github.com/JuliaEditorSupport/julia-vim.git
 
 ## Julia
 [ ! -d $HOME/.julia/config ] && mkdir -p $HOME/.julia/config
 ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
 
 ## nek
+if [[ ! -d "$HOME/Nek5000" ]]; then
+    NEK_LINK="https://github.com/Nek5000/Nek5000/releases/download/v19.0/Nek5000-19.0.tar.gz"
+    wget $NEK_LINK
+    tar -xvf Nek5000-*.tar.gz > /dev/null # 2 > &1
+fi
 
-## python
+## Spack
+if [[ ! -d "$HOME/spack" ]]; then
+    git clone https://github.com/spack/spack.git $HOME/spack
+    $HOME/share/spack/setup-env.sh
+fi
 
 ## matlab
 #[ ! -d $HOME/matlab ] && mkdir matlab

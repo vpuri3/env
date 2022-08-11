@@ -1,6 +1,4 @@
 "
-execute pathogen#infect()
-
 syntax on
 filetype plugin indent on
 set omnifunc=syntaxcomplete#Complete
@@ -79,7 +77,7 @@ set path+=**
 set wildmenu
 
 
-colorscheme default "desert,peachpuff
+colorscheme default
 highlight Visual ctermfg=Black ctermbg=Yellow cterm=NONE
 
 " youcompleteme

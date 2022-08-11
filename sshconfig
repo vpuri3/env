@@ -1,0 +1,41 @@
+Host *
+    AddKeysToAgent yes
+    ForwardAgent yes
+    UseKeychain yes
+    IdentityFile ~/.ssh/id_ed25519
+
+# Julia Computing
+Host antarctic arctic1 cyclops
+    HostName %h.juliacomputing.io
+    User vpuri3
+
+Host arctic2 arctic3 arctic4
+    HostName %h.juliacomputing.io
+    ProxyJump arctic1
+    User vpuri3
+
+# Carnegie Mellon University
+Host arjuna
+    HostName arjuna.psc.edu
+    User vedantpu
+
+Host arjuna-jump
+    HostName arjuna.psc.edu
+    ProxyJump vedantpu@unix.andrew.cmu.edu
+    User vedantpu
+
+Host h001
+    HostName h001
+    ProxyJump vedantpu@arjuna.psc.edu
+    User vedantpu
+
+# Argonne National Laboratory
+Host bebop
+    HostName %h.lcrc.anl.gov
+    User ac.vnpuri
+
+Host oracle-g
+    HostName 130.61.137.140
+    User ubuntu
+    RequestTTY yes
+    RemoteCommand sudo su opc
