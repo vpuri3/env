@@ -6,13 +6,13 @@ echo "$ source ~/.bash_profile afterwards"
 cd $HOME
 
 ## SSH
-if [ ! -f $HOME/.ssh/*pub ]; then
-    echo "generating SSH keys"
-    ssh-keygen -t ed25519
-    eval "$(ssh-agent -s)"
-fi
+#if [ ! -f $HOME/.ssh/*pub ]; then
+#    echo "generating SSH keys"
+#    ssh-keygen -t ed25519 -C "vedantpuri@gmail.com"
+#    eval "$(ssh-agent -s)"
+#fi
 
-ssh-add -K $HOME/.ssh/id_ed25519
+#ssh-add -K $HOME/.ssh/id_ed25519
 
 #touch $HOME/.ssh/config
 #printf "Host *\n    AddKeysToAgent yes\n    UseKeychain yes\n    IdentityFile ~/.ssh/id_ed25519" > $HOME/.ssh/config
