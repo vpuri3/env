@@ -55,41 +55,10 @@ Darwin)
 	xcode-select -p > /dev/null
 	[ "$?" == "0" ] || xcode-select --install
 
-    # Comment out Homebrew part. switch to spack
-    : '
-	# homebrew
-	if [ -f /usr/local/bin/brew ]; then
-		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"")"
-
-	    # get essentials
-        brew install python
-        brew install python@3.7
-
-        # link python, pip to homebrew python@3.7
-        ln -sf $(which python3.7) /usr/local/bin/python
-        ln -sf $(which pip.7)     /usr/local/bin/pip
-
-	    brew install vim
-
-	    echo "Ensure gcc is not linked to clang"
-
-	    gccbeclang=$(gcc --version)
-	    if [[ "$gccbeclang" =~ "clang" ]]; then
-	    	echo "gcc is linked to clang"
-	    	if [[ -x $(which gcc) ]]; then
-	    		echo "linking gcc to homebrew gcc"
-	    		cd /usr/local/bin
-	    		ln -sf $(which gcc)      gcc
-	    		ln -sf $(which g++)      g++
-	    		ln -sf $(which gfortran) gfortran
-	    	fi
-	    fi
-
-	fi
-    '
-    # end comment
-
-    #echo "# Brew"
+    #echo "# Homebrew"
+	#if [ -f /opt/homebrew/bin/brew ]; then
+	#	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"")"
+	#fi
     #echo "eval "$(/opt/homebrew/bin/brew shellenv)")" >> $HOME/.bash_profile
 
     ## Julia
@@ -148,6 +117,15 @@ git clone https://github.com/JuliaEditorSupport/julia-vim.git
 [ ! -d $HOME/.julia/config ] && mkdir -p $HOME/.julia/config
 ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
 
+## Spack
+if [[ ! -d "$HOME/spack" ]]; then
+    git clone https://github.com/spack/spack.git $HOME/spack
+    $HOME/share/spack/setup-env.sh
+fi
+
+echo "# Spack"                                     >> $HOME/.bash_profile
+echo "$source HOME/spack/share/spack/setup-env.sh" >> $HOME/.bash_profile
+
 ## nek
 if [[ ! -d "$HOME/Nek5000" ]]; then
     NEK_LINK="https://github.com/Nek5000/Nek5000/releases/download/v19.0/Nek5000-19.0.tar.gz"
@@ -155,22 +133,11 @@ if [[ ! -d "$HOME/Nek5000" ]]; then
     tar -xvf Nek5000-*.tar.gz > /dev/null # 2 > &1
 fi
 
-## Spack
-if [[ ! -d "$HOME/spack" ]]; then
-    git clone https://github.com/spack/spack.git $HOME/spack
-    $HOME/share/spack/setup-env.sh
-fi
+# matlab
+[ ! -d $HOME/matlab ] && mkdir matlab
+cd matlab
+[ ! -d spec ] && git clone https://github.com/vpuri3/spec.git
+ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
 
-#echo "# Spack"                                       >> $HOME/.bash_profile
-#echo "$source HOME/spack/share/spack/setup-env.sh"   >> $HOME/.bash_profile
-
-## matlab
-#[ ! -d $HOME/matlab ] && mkdir matlab
-#cd matlab
-#[ ! -d spec ] && git clone https://github.com/vpuri3/spec.git
-#ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
-
-## end
-
-#
+# end
 eval "$HOME/.bash_profile"
