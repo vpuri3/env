@@ -25,13 +25,15 @@ git remote add origin git@github.com:vpuri3/env.git
 cd $HOME
 
 touch $HOME/.bash_profile
+touch $HOME/.bashrc
 
 echo "## https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bash_profile
 echo "[ -f $HOME/.bashrc ] && source ~/.bashrc"      >> $HOME/.bash_profile
-echo "source $HOME/env/bash_vars"                    >> $HOME/.bash_profile
-echo "source $HOME/env/bash_alias"                   >> $HOME/.bash_profile
-echo "# Spack"                                       >> $HOME/.bash_profile
-echo "$source HOME/spack/share/spack/setup-env.sh"   >> $HOME/.bash_profile
+echo "source $HOME/.bashrc"                          >> $HOME/.bash_profile
+
+echo "## https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bashrc
+echo "source $HOME/env/bash_vars"                    >> $HOME/.bashrc
+echo "source $HOME/env/bash_alias"                   >> $HOME/.bashrc
 
 ln -sf ~/env/bin ~/bin
 chmod +x ~/bin/*
@@ -87,16 +89,19 @@ Darwin)
     '
     # end comment
 
+    #echo "# Brew"
+    #echo "eval "$(/opt/homebrew/bin/brew shellenv)")" >> $HOME/.bash_profile
+
     ## Julia
     JL_PATH=$(which julia)
     if [[ ! -f "$JL_PATH" ]] ; then
         cd $HOME
         case `uname -m` in
             x86*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/mac/x64/1.8/julia-1.8.0-rc3-mac64.dmg"
+                JL_LINK="https://julialang-s3.julialang.org/bin/mac/x64/1.8/julia-1.8.0-mac64.dmg"
                 ;;
             arm*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/mac/aarch64/1.8/julia-1.8.0-rc3-macaarch64.dmg"
+                JL_LINK="https://julialang-s3.julialang.org/bin/mac/aarch64/1.8/julia-1.8.0-macaarch64.dmg"
                 ;;
         esac
         wget -P $HOME/Downloads $JL_LINK $HOME/Downloads
@@ -118,10 +123,10 @@ Linux)
         cd $HOME
         case `uname -m` in
             x86*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/linux/x64/1.8/julia-1.8.0-rc3-linux-x86_64.tar.gz"
+                JL_LINK="https://julialang-s3.julialang.org/bin/linux/x64/1.8/julia-1.8.0-linux-x86_64.tar.gz"
                 ;;
             *aarch64*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/linux/aarch64/1.8/julia-1.8.0-rc3-linux-aarch64.tar.gz"
+                JL_LINK="https://julialang-s3.julialang.org/bin/linux/aarch64/1.8/julia-1.8.0-linux-aarch64.tar.gz"
                 ;;
         esac
         wget $JL_LINK
@@ -156,6 +161,9 @@ if [[ ! -d "$HOME/spack" ]]; then
     $HOME/share/spack/setup-env.sh
 fi
 
+#echo "# Spack"                                       >> $HOME/.bash_profile
+#echo "$source HOME/spack/share/spack/setup-env.sh"   >> $HOME/.bash_profile
+
 ## matlab
 #[ ! -d $HOME/matlab ] && mkdir matlab
 #cd matlab
@@ -163,3 +171,6 @@ fi
 #ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
 
 ## end
+
+#
+eval "$HOME/.bash_profile"
