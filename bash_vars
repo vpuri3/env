@@ -22,9 +22,6 @@ export NEK_BWD='ac.vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpu
 # UIUC cluster
 export NEK_EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 
-# CMU Cluster
-export NEK_EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
-
 ## num of CPU cores
 export NTHREADS=$(python3 -c 'import multiprocessing as mp; print(mp.cpu_count())')
 
