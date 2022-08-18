@@ -126,6 +126,11 @@ fi
 echo "# Spack"                                     >> $HOME/.bash_profile
 echo "source $HOME/spack/share/spack/setup-env.sh" >> $HOME/.bash_profile
 
+## conda
+echo "# do not activate conda by default" >> $HOME/.bash_profile
+echo "[ -x "$(command -v conda)" ] && conda config --set auto_activate_base false" >> $HOME/.bash_profile
+
+
 ## nek
 if [[ ! -d "$HOME/Nek5000" ]]; then
     NEK_LINK="https://github.com/Nek5000/Nek5000/releases/download/v19.0/Nek5000-19.0.tar.gz"
