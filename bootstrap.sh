@@ -29,7 +29,6 @@ touch $HOME/.bashrc
 
 echo "## https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bash_profile
 echo "[ -f $HOME/.bashrc ] && source ~/.bashrc"      >> $HOME/.bash_profile
-echo "source $HOME/.bashrc"                          >> $HOME/.bash_profile
 
 echo "## https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bashrc
 echo "source $HOME/env/bash_vars"                    >> $HOME/.bashrc
@@ -128,8 +127,7 @@ echo "source $HOME/spack/share/spack/setup-env.sh" >> $HOME/.bash_profile
 
 ## conda
 echo "# do not activate conda by default" >> $HOME/.bash_profile
-echo "[ -x "$(command -v conda)" ] && conda config --set auto_activate_base false" >> $HOME/.bash_profile
-
+echo "[ ! -f $(command -v conda) ] && conda config --set auto_activate_base false" >> $HOME/.bash_profile
 
 ## nek
 if [[ ! -d "$HOME/Nek5000" ]]; then
