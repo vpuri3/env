@@ -124,7 +124,7 @@ if [[ ! -d "$HOME/spack" ]]; then
 fi
 
 echo "# Spack"                                     >> $HOME/.bash_profile
-echo "$source HOME/spack/share/spack/setup-env.sh" >> $HOME/.bash_profile
+echo "source $HOME/spack/share/spack/setup-env.sh" >> $HOME/.bash_profile
 
 ## nek
 if [[ ! -d "$HOME/Nek5000" ]]; then
