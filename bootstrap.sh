@@ -1,10 +1,6 @@
 #!/bin/bash
 
-echo "bash script to load environment variables. Don't forget to"
-echo "$ source ~/.bash_profile afterwards"
-
 cd $HOME
-
 ## SSH
 #if [ ! -f $HOME/.ssh/*pub ]; then
 #    echo "generating SSH keys"
@@ -28,8 +24,7 @@ touch $HOME/.bash_profile
 touch $HOME/.bashrc
 
 echo "## https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bash_profile
-echo "[ -f $HOME/.bashrc ] && source ~/.bashrc"      >> $HOME/.bash_profile
-echo "source $HOME/.bashrc"                          >> $HOME/.bash_profile
+echo "[ -f $HOME/.bashrc ] && source $HOME/.bashrc"  >> $HOME/.bash_profile
 
 echo "## https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bashrc
 echo "source $HOME/env/bash_vars"                    >> $HOME/.bashrc
@@ -55,19 +50,38 @@ Darwin)
 	xcode-select -p > /dev/null
 	[ "$?" == "0" ] || xcode-select --install
 
-    #echo "# Homebrew"
+    ## Homebrew
 	#if [ -f /opt/homebrew/bin/brew ]; then
 	#	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"")"
 	#fi
     #echo "eval "$(/opt/homebrew/bin/brew shellenv)")" >> $HOME/.bash_profile
 
+    case `uname -m` in
+        x86*)
+            CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh"
+            ;;
+        arm*)
+            CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh"
+            ;;
+    esac
+    SU2_LINK="https://github.com/su2code/SU2/releases/download/v7.4.0/SU2-v7.4.0-macos64-mpi.zip"
+
 	;;
 Linux)
 
     # figure out the right package manager
+	#sudo apt-get update
+	#sudo apt-get install git unzip wget curl vim imagemagick
 
-	sudo apt-get update
-	sudo apt-get install git unzip wget curl vim imagemagick
+    case `uname -m` in
+        x86*)
+            CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linux-x86_64.sh"
+            ;;
+        *aarch64*)
+            CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linux-aarch64.sh"
+            ;;
+    esac
+    SU2_LINK="https://github.com/su2code/SU2/releases/download/v7.4.0/SU2-v7.4.0-linux64-mpi.zip"
 
 	;;
 esac
@@ -81,7 +95,7 @@ curl -fsSL https://install.julialang.org | sh # juliaup
 ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
 
 # julia-vim
-cd ~/.vim
+cd $HOME/.vim
 mkdir -p pack/plugins/start && cd pack/plugins/start
 git clone https://github.com/JuliaEditorSupport/julia-vim.git
 
@@ -91,26 +105,53 @@ if [[ ! -d "$HOME/spack" ]]; then
     $HOME/share/spack/setup-env.sh
 fi
 
-echo "# Spack"                                     >> $HOME/.bash_profile
+echo "# spack"                                     >> $HOME/.bash_profile
 echo "source $HOME/spack/share/spack/setup-env.sh" >> $HOME/.bash_profile
 
 ## conda
-echo "# do not activate conda by default" >> $HOME/.bash_profile
-echo "[ -x "$(command -v conda)" ] && conda config --set auto_activate_base false" >> $HOME/.bash_profile
+cd $HOME
+CONDA_PATH=$(which conda)
+if [[ ! -f "$CONDA_PATH" ]]; then
+    echo $CONDA_LINK
+    wget $CONDA_LINK
+    chmod +x Miniconda3*.sh
+    ./Miniconda3*.sh
 
+    echo "# conda" >> $HOME/.bash_profile
+    echo "conda config --set auto_activate_base false" >> $HOME/.bash_profile
+fi
 
-## nek
+## NEK
+cd $HOME
 if [[ ! -d "$HOME/Nek5000" ]]; then
     NEK_LINK="https://github.com/Nek5000/Nek5000/releases/download/v19.0/Nek5000-19.0.tar.gz"
     wget $NEK_LINK
     tar -xvf Nek5000-*.tar.gz > /dev/null # 2 > &1
 fi
 
+## SU2
+cd $HOME
+SU2_CFD_PATH="$(which SU2_CFD)"
+if [[ ! -f SU2_CFD_PATH ]]; then
+    SU2_HOME="$HOME/SU2"
+    SU2_RUN="$SU2_HOME/bin"
+
+    wget $SU2_LINK
+    unzip SU2-*.zip -d $SU2_HOME
+
+    echo "# SU2"                                   >> $HOME/.bash_profile
+    echo "export SU2_RUN=$SU2_RUN"                 >> $HOME/.bash_profile
+    echo "export SU2_HOME=$SU2_HOME"               >> $HOME/.bash_profile
+    echo "export PATH=\$PATH:$SU2_RUN"             >> $HOME/.bash_profile
+    echo "export PYTHONPATH=\$PYTHONPATH:$SU2_RUN" >> $HOME/.bash_profile
+fi
+
 # matlab
+cd $HOME
 [ ! -d $HOME/matlab ] && mkdir matlab
 cd matlab
 [ ! -d spec ] && git clone https://github.com/vpuri3/spec.git
 ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
 
 # end
-eval "$HOME/.bash_profile"
+eval "source $HOME/.bash_profile"
