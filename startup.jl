@@ -42,3 +42,13 @@ fnty  = fn ∘ ty
 iscallable(op) = !isempty(methods(op))
 push(x::Tuple, val) = (x..., val)
 linspace(zi::Number,ze::Number,n::Integer) = Array(range(zi,stop=ze,length=n))
+
+# TODO make macro @capture_out include("script.jl")
+function capture_out(script::AbstractString)
+    open(script * ".stdout", "w") do io
+        redirect_stdout(io) do
+            include(script * ".jl")
+        end
+    end
+end
+

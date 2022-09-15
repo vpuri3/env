@@ -61,23 +61,6 @@ Darwin)
 	#fi
     #echo "eval "$(/opt/homebrew/bin/brew shellenv)")" >> $HOME/.bash_profile
 
-    ## Julia
-    JL_PATH=$(which julia)
-    if [[ ! -f "$JL_PATH" ]] ; then
-        cd $HOME
-        case `uname -m` in
-            x86*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/mac/x64/1.8/julia-1.8.0-mac64.dmg"
-                ;;
-            arm*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/mac/aarch64/1.8/julia-1.8.0-macaarch64.dmg"
-                ;;
-        esac
-        wget -P $HOME/Downloads $JL_LINK $HOME/Downloads
-	#hdiutil attach $HOME/Downloads/julia*
-	#hdiutil detatch 
-    fi
-
 	;;
 Linux)
 
@@ -86,36 +69,21 @@ Linux)
 	sudo apt-get update
 	sudo apt-get install git unzip wget curl vim imagemagick
 
-    ## Julia
-    JL_PATH=$(which julia)
-    if [[ ! -f "$JL_PATH" ]] ; then
-        cd $HOME
-        case `uname -m` in
-            x86*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/linux/x64/1.8/julia-1.8.0-linux-x86_64.tar.gz"
-                ;;
-            *aarch64*)
-                JL_LINK="https://julialang-s3.julialang.org/bin/linux/aarch64/1.8/julia-1.8.0-linux-aarch64.tar.gz"
-                ;;
-        esac
-        wget $JL_LINK
-        tar -xvf julia-*.tar.gz > /dev/null # 2 > &1
-    fi
-
 	;;
 esac
 
 ## vim
 [ ! -d "$HOME/.vim" ] && mkdir $HOME/.vim
 
+## Julia
+curl -fsSL https://install.julialang.org | sh # juliaup
+[ ! -d $HOME/.julia/config ] && mkdir -p $HOME/.julia/config
+ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
+
 # julia-vim
 cd ~/.vim
 mkdir -p pack/plugins/start && cd pack/plugins/start
 git clone https://github.com/JuliaEditorSupport/julia-vim.git
-
-## Julia
-[ ! -d $HOME/.julia/config ] && mkdir -p $HOME/.julia/config
-ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
 
 ## Spack
 if [[ ! -d "$HOME/spack" ]]; then

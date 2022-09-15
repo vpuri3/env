@@ -48,9 +48,9 @@ alias    sdr='screen -dr'
 # Julia
 alias    cdj='cd $JULIA_DEPOT_PATH/../.julia/dev; s'
 alias     jl='julia --proj'
-alias    jlj='julia --proj -J $HOME/sysimg/sysimage.so'
+alias    jup='juliaup'
+#alias    jlj='julia --proj -J $HOME/sysimg/sysimage.so'
 #alias     jj='j.jl'
-alias     jj='/Applications/Julia-1.7.app/Contents/Resources/julia/bin/julia --proj'
 
 case `uname` in
 Darwin)
