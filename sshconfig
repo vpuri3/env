@@ -30,6 +30,11 @@ Host h001
     ProxyJump vedantpu@arjuna.psc.edu
     User vedantpu
 
+Host h001-jump
+    HostName h001
+    ProxyJump arjuna-jump
+    User vedantpu
+
 # Argonne National Laboratory
 Host bebop
     HostName %h.lcrc.anl.gov
