@@ -1,0 +1,11 @@
+# Mac
+.DS_Store
+
+# emacs
+*~
+.*~                                                                                    
+
+# vi
+.*.swp                                                                                 
+.*.swo
+

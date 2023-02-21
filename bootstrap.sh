@@ -38,6 +38,7 @@ mkdir -p $HOME/.ssh
 ln -sf $HOME/env/emacs.conf $HOME/.emacs
 ln -sf $HOME/env/vimrc      $HOME/.vimrc
 ln -sf $HOME/env/gitconfig  $HOME/.gitconfig
+ln -sf $HOME/env/gitignore  $HOME/.gitignore
 ln -sf $HOME/env/tmux.conf  $HOME/.tmux.conf
 ln -sf $HOME/env/sshconfig  $HOME/.ssh/config
 
