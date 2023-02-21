@@ -3,6 +3,7 @@
 	email = vedantpuri@gmail.com
 [core]
 	editor = vim
+	excludesfile = /Users/vp/.gitignore
 [diff]
 	tool = vimdiff
 [alias]
