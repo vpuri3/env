@@ -49,11 +49,9 @@ alias    sdr='screen -dr'
 #. $HOME/Downloads/z-master/z.sh
 # Julia
 alias    cdj='cd $JULIA_DEPOT_PATH/../.julia/dev; s'
-alias     jl='julia --proj'
-alias     jj='julia +beta --proj'
+alias     jj='julia --proj'
+alias     jl='julia +beta --proj'
 alias    jup='juliaup'
-#alias    jlj='julia --proj -J $HOME/sysimg/sysimage.so'
-#alias     jj='j.jl'
 
 case `uname` in
 Darwin)
