@@ -35,6 +35,10 @@ Host h001-jump
     ProxyJump arjuna-jump
     User vedantpu
 
+Host bridges
+    HostName bridges2.psc.edu
+    User vpuri1
+
 # Argonne National Laboratory
 Host bebop
     HostName %h.lcrc.anl.gov
