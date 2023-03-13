@@ -20,7 +20,7 @@ alias whereami='hostname'
 # 
 alias       pv='paraview'
 # 
-#alias     vi='vim' # vi --> spack/vim
+alias     nv="nvim"
 alias     em='emacs -nw'
 alias     tm='tmux -new'
 alias   mtlb='$MTLB_BIN/matlab -nodesktop'
