@@ -12,7 +12,7 @@ vim.keymap.set("i", "{", "{}<left>")
 vim.api.nvim_set_keymap("i", '""', [[""<Esc>i]], { noremap = true })
 vim.api.nvim_set_keymap("i", "''", [[''<Esc>i]], { noremap = true })
 
-vim.keymap.set("i", "{<CR>", "{<CR>}<ESC>O") -- doesn't work
+vim.keymap.set("i", "{<CR>", "{<CR>}<ESC>O") -- TODO doesn't work
 
 -- split screen motions
 vim.keymap.set("n", "<C-H>", "<C-W><C-H>")
