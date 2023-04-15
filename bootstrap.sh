@@ -34,11 +34,9 @@ ln -sf ~/env/bin ~/bin
 chmod +x ~/bin/*
 
 mkdir -p $HOME/.ssh
-mkdir -p $HOME/.config/nvim
 
 ln -sf $HOME/env/emacs.conf $HOME/.emacs
 ln -sf $HOME/env/vimrc      $HOME/.vimrc
-ln -sf $HOME/env/vimrc      $HOME/.config/nvim/init.vim
 ln -sf $HOME/env/gitconfig  $HOME/.gitconfig
 ln -sf $HOME/env/gitignore  $HOME/.gitignore
 ln -sf $HOME/env/tmux.conf  $HOME/.tmux.conf
@@ -91,6 +89,15 @@ esac
 
 ## vim
 [ ! -d "$HOME/.vim" ] && mkdir $HOME/.vim
+
+## neovim
+[ ! -d "$HOME/.config/nvim" ] && mkdir $HOME/.config/nvim
+
+ln -sf $HOME/env/vimrc $HOME/.config/nvim/init.vim
+
+# nvim packer
+git clone --depth 1 https://github.com/wbthomason/packer.nvim\
+~/.local/share/nvim/site/pack/packer/start/packer.nvim
 
 ## Julia
 curl -fsSL https://install.julialang.org | sh # juliaup
