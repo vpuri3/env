@@ -91,9 +91,8 @@ esac
 [ ! -d "$HOME/.vim" ] && mkdir $HOME/.vim
 
 ## neovim
-[ ! -d "$HOME/.config/nvim" ] && mkdir $HOME/.config/nvim
-
-ln -sf $HOME/env/vimrc $HOME/.config/nvim/init.vim
+[ ! -d "$HOME/.config" ] && mkdir $HOME/.config
+ln -sf $HOME/env/nvim $HOME/.config/nvim
 
 # nvim packer
 git clone --depth 1 https://github.com/wbthomason/packer.nvim\
