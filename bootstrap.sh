@@ -34,9 +34,11 @@ ln -sf ~/env/bin ~/bin
 chmod +x ~/bin/*
 
 mkdir -p $HOME/.ssh
+mkdir -p $HOME/.config/nvim
 
 ln -sf $HOME/env/emacs.conf $HOME/.emacs
 ln -sf $HOME/env/vimrc      $HOME/.vimrc
+ln -sf $HOME/env/vimrc      $HOME/.config/nvim/init.vim
 ln -sf $HOME/env/gitconfig  $HOME/.gitconfig
 ln -sf $HOME/env/gitignore  $HOME/.gitignore
 ln -sf $HOME/env/tmux.conf  $HOME/.tmux.conf
