@@ -23,12 +23,12 @@ export NEK_BWD='ac.vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpu
 export NEK_EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 
 ## num of CPU cores
-export NTHREADS=$(python3 -c 'import multiprocessing as mp; print(mp.cpu_count())')
+export NPROCS=$(python3 -c 'import multiprocessing as mp; print(mp.cpu_count())')
 
 ME=$(whoami)
 case `uname` in
 Darwin)
-    export NTHREADS=$(sysctl -n hw.ncpu)
+    export NPROCS=$(sysctl -n hw.ncpu)
 	MACHINE="MBP"
 
 	#Ensure user-installed binaries take precedence
@@ -108,8 +108,8 @@ esac
 
 # Julia
 export JULIA_DEPOT_PATH="$HOME/.julia"
-export JULIA_NUM_THREADS=$NTHREADS
-export JULIA_NUM_PRECOMPILE_TASKS=$NTHREADS
+export JULIA_NUM_THREADS=$NPROCS
+export JULIA_NUM_PRECOMPILE_TASKS=$NPROCS
 #export JULIA_CUDA_MEMORY_POOL=none
 
 # PS1
