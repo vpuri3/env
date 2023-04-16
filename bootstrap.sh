@@ -94,18 +94,15 @@ esac
 [ ! -d "$HOME/.config" ] && mkdir $HOME/.config
 ln -sf $HOME/env/nvim $HOME/.config/nvim
 
-# nvim packer
-git clone --depth 1 https://github.com/wbthomason/packer.nvim ~/.local/share/nvim/site/pack/packer/start/packer.nvim
+# julia-vim
+cd $HOME/.vim
+mkdir -p pack/plugins/start && cd pack/plugins/start
+git clone https://github.com/JuliaEditorSupport/julia-vim.git
 
 ## Julia
 curl -fsSL https://install.julialang.org | sh # juliaup
 [ ! -d $HOME/.julia/config ] && mkdir -p $HOME/.julia/config
 ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
-
-# julia-vim
-cd $HOME/.vim
-mkdir -p pack/plugins/start && cd pack/plugins/start
-git clone https://github.com/JuliaEditorSupport/julia-vim.git
 
 ## Spack
 if [[ ! -d "$HOME/spack" ]]; then
