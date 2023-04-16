@@ -26,6 +26,16 @@ return require('packer').startup(function(use)
 	  'tpope/vim-fugitive'
   }
 
+  use {
+      'nvim-tree/nvim-tree.lua',
+      requires = {
+          'nvim-tree/nvim-web-devicons', -- optional
+      },
+      config = function()
+          require("nvim-tree").setup {}
+      end
+  }
+
   --colorscheme
   use {
 	  "catppuccin/nvim", as = "catppuccin" 

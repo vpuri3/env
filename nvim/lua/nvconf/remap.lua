@@ -10,8 +10,8 @@ vim.keymap.set("v", "K", ":m '<-2<CR>gv=gv")
 -- maintain cursor position
 vim.keymap.set("n", "<C-D>", "<C-D>zz")
 vim.keymap.set("n", "<C-U>", "<C-U>zz")
-vim.keymap.set("n", "n", "nzzv")
-vim.keymap.set("n", "N", "nzzv")
+--vim.keymap.set("n", "n", "nzzv")
+--vim.keymap.set("n", "N", "nzzv")
 
 -- copy-paste hacks
 
