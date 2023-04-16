@@ -1,4 +1,6 @@
 --
+
+-- Automatically install packer
 local ensure_packer = function()
     local fn = vim.fn
     local install_path = fn.stdpath('data')..'/site/pack/packer/start/packer.nvim'
@@ -9,6 +11,22 @@ local ensure_packer = function()
     end
     return false
 end
+
+-- protected call to require packer
+local status, packer = pcall(require, "packer")
+if not status then
+    vim.notify("packer not loaded :/") -- similar to print
+    return
+end
+
+-- have packer use a popup window
+packer.init {
+    display = {
+        open_fn = function()
+            return require("packer.util").float { border = "rounded" }
+        end,
+    },
+}
 
 local PACKER_BOOTSTRAP = ensure_packer()
 
@@ -85,12 +103,13 @@ return require('packer').startup(function(use)
     -- -- TODO - fix julia-vim
     -- use {
     --     'JuliaEditorSupport/julia-vim',
+    --     ft = { 'julia' }
     --     config = function()
     --         require("julia-vim").setup({})
     --     end
     -- }
 
-    -- TODO - nvterm, bufferline, cmp, whichkey
+    -- TODO - nvterm/toggleterm, bufferline, cmp, whichkey
     -- TODO - add colors to fugitive
 
     if PACKER_BOOTSTRAP then

@@ -4,58 +4,71 @@
 -- leader
 vim.g.mapleader = " "
 
--- line-number
-vim.opt.nu = true
-vim.opt.relativenumber = true
-vim.opt.numberwidth = 4 -- width of line-number column
+local options = {
 
--- tabstop
-vim.opt.tabstop = 4
-vim.opt.softtabstop = 4
-vim.opt.shiftwidth = 4
-vim.opt.expandtab = true
+    -- line-number
+    nu = true,
+    relativenumber = false,
+    numberwidth = 4, -- width of line-number column
 
-vim.opt.showtabline = 2
+    -- tabstop
+    tabstop = 4,
+    softtabstop = 4,
+    shiftwidth = 4,
+    expandtab = true,
 
--- panes
-vim.opt.splitbelow = true
-vim.opt.splitright = true
+    showtabline = 2,
 
--- search
-vim.opt.ignorecase = true
-vim.opt.smartcase = true
-vim.opt.hlsearch = true
-vim.opt.incsearch = true
+    -- panes
+    splitbelow = true,
+    splitright = true,
 
--- undo
-vim.opt.swapfile = true
-vim.opt.backup = false
-vim.opt.undofile = true
-vim.opt.undodir = os.getenv("HOME") .. "/.vim/undodir"
+    -- search
+    ignorecase = true,
+    smartcase = true,
+    hlsearch = true,
+    incsearch = true,
 
--- colors
-vim.opt.termguicolors = true
-vim.opt.colorcolumn = "80"
+    -- undo
+    swapfile = true,
+    backup = false,
+    undofile = true,
+    undodir = os.getenv("HOME") .. "/.vim/undodir",
 
--- timeout
-vim.opt.timeoutlen = 1000 -- time to wait for a mapped sequence to complete (ms)
-vim.opt.ttimeoutlen = 0
+    -- colors
+    termguicolors = true,
+    colorcolumn = "80",
+
+    -- timeout
+    timeoutlen = 1000, -- time to wait for a mapped sequence to complete (ms)
+    ttimeoutlen = 0,
+
+    -- misc
+    guicursor = "",
+    fileencoding = "utf-8",
+
+    smartindent = true,
+    wrap = false,
+    scrolloff = 8,
+    updatetime = 50,
+
+    signcolumn = "yes",
+
+}
+
+for k, v in pairs(options) do
+    vim.opt[k] = v
+end
+
+-- misc
+
+--vim.opt.isfname:append("@-@")
+--vim.opt.shortmess:append "c"
 
 -- path
 -- vim.opt.autochdir = true
 -- vim.cmd "set path+=**"
 
--- misc
-vim.opt.guicursor = ""
-vim.opt.fileencoding = "utf-8"
-
-vim.opt.smartindent = true
-vim.opt.wrap = false
-vim.opt.scrolloff = 8
-vim.opt.updatetime = 50
-
-vim.opt.signcolumn = "yes"
-vim.opt.isfname:append("@-@")
 vim.cmd [[set iskeyword+=-]] -- treat "-" as part of the word
 
 --

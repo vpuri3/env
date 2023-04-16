@@ -17,15 +17,11 @@ vim.g.mapleader = " "
 
 vim.keymap.set("n", "<leader>e", vim.cmd.Ex, opts)
 
--- move highlighted blocks around
-vim.keymap.set("v", "J", ":m '>+1<CR>gv=gv", opts)
-vim.keymap.set("v", "K", ":m '<-2<CR>gv=gv", opts)
-
 -- maintain cursor position
 vim.keymap.set("n", "<C-D>", "<C-D>zz", opts)
 vim.keymap.set("n", "<C-U>", "<C-U>zz", opts)
---vim.keymap.set("n", "n", "nzzv", opts)
---vim.keymap.set("n", "N", "nzzv", opts)
+vim.keymap.set("n", "n", "nzz", opts)
+vim.keymap.set("n", "N", "Nzz", opts)
 
 -- copy-paste hacks
 
@@ -57,11 +53,24 @@ vim.api.nvim_set_keymap("i", "''", [[''<Esc>i]], opts)
 vim.api.nvim_set_keymap("i", '"""', [[""""""<Esc>hhi]], opts)
 vim.api.nvim_set_keymap("i", "'''", [[''''''<Esc>hhi]], opts)
 
+-- Visual mode
+-- move highlighted blocks around
+vim.keymap.set({"v", "x"}, "J", ":move '>+1<CR>gv=gv", opts)
+vim.keymap.set({"v", "x"}, "K", ":move '<-2<CR>gv=gv", opts)
+
+-- Stay in indent mode
+vim.keymap.set("v", "<", "<gv", opts)
+vim.keymap.set("v", ">", ">gv", opts)
+
 -- split screen motions
 vim.keymap.set("n", "<C-H>", "<C-W><C-H>", opts)
 vim.keymap.set("n", "<C-J>", "<C-W><C-J>", opts)
 vim.keymap.set("n", "<C-K>", "<C-W><C-K>", opts)
 vim.keymap.set("n", "<C-L>", "<C-W><C-L>", opts)
+
+-- Navigate buffers
+vim.keymap.set("n", "<S-l>", ":bnext<CR>", opts)
+vim.keymap.set("n", "<S-h>", ":bprevious<CR>", opts)
 
 -- tabs motions
 vim.keymap.set("n", ":T", ":tabe", opts)
