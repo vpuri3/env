@@ -1,4 +1,6 @@
 --
+-- :help options
+
 -- leader
 vim.g.mapleader = " "
 
@@ -39,8 +41,11 @@ vim.opt.colorcolumn = "80"
 vim.opt.timeoutlen = 1000 -- time to wait for a mapped sequence to complete (ms)
 vim.opt.ttimeoutlen = 0
 
+-- path
+-- vim.opt.autochdir = true
+-- vim.cmd "set path+=**"
+
 -- misc
---vim.opt.autochdir = true
 vim.opt.guicursor = ""
 vim.opt.fileencoding = "utf-8"
 
@@ -51,5 +56,6 @@ vim.opt.updatetime = 50
 
 vim.opt.signcolumn = "yes"
 vim.opt.isfname:append("@-@")
+vim.cmd [[set iskeyword+=-]] -- treat "-" as part of the word
 
 --

@@ -1,6 +1,4 @@
 --
--- This file can be loaded by calling `lua require('plugins')` from your init.vim
-
 local ensure_packer = function()
     local fn = vim.fn
     local install_path = fn.stdpath('data')..'/site/pack/packer/start/packer.nvim'
@@ -12,7 +10,7 @@ local ensure_packer = function()
     return false
 end
 
-local packer_bootstrap = ensure_packer()
+local PACKER_BOOTSTRAP = ensure_packer()
 
 -- Only required if you have packer configured as `opt`
 vim.cmd [[packadd packer.nvim]]
@@ -95,7 +93,7 @@ return require('packer').startup(function(use)
     -- TODO - nvterm, bufferline, cmp, whichkey
     -- TODO - add colors to fugitive
 
-    if packer_bootstrap then
+    if PACKER_BOOTSTRAP then
         require('packer').sync()
     end
 

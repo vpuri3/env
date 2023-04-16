@@ -44,6 +44,8 @@ vim.keymap.set("i", "(", "()<left>", opts)
 vim.keymap.set("i", "[", "[]<left>", opts)
 vim.keymap.set("i", "{", "{}<left>", opts)
 
+vim.api.nvim_set_keymap("i", "<>", [[<><Esc>i]], opts)
+
 vim.keymap.set("i", "(<CR>", "(<CR>)<ESC>O", opts)
 vim.keymap.set("i", "[<CR>", "[<CR>]<ESC>O", opts)
 vim.keymap.set("i", "{<CR>", "{<CR>}<ESC>O", opts)
@@ -51,7 +53,9 @@ vim.keymap.set("i", "{<CR>", "{<CR>}<ESC>O", opts)
 -- quotes
 vim.api.nvim_set_keymap("i", '""', [[""<Esc>i]], opts)
 vim.api.nvim_set_keymap("i", "''", [[''<Esc>i]], opts)
-vim.api.nvim_set_keymap("i", "<>", [[<><Esc>i]], opts)
+
+vim.api.nvim_set_keymap("i", '"""', [[""""""<Esc>hhi]], opts)
+vim.api.nvim_set_keymap("i", "'''", [[''''''<Esc>hhi]], opts)
 
 -- split screen motions
 vim.keymap.set("n", "<C-H>", "<C-W><C-H>", opts)

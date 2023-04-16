@@ -3,3 +3,4 @@
 
 require("nvconf.remap")
 require("nvconf.set")
+require("nvconf.packer")
