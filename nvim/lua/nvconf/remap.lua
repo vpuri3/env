@@ -54,6 +54,6 @@ vim.api.nvim_set_keymap("t", "<Esc>", [[<C-\><C-N>]], { noremap = true })
 
 -- misc
 vim.keymap.set("n", "Y", "y$")
-vim.keymap.set("n", "<Esc><Esc>", ":noh<CR>")
+vim.keymap.set("n", "<Esc><Esc>", ":<Esc><Esc>noh<CR>")
 
 --
