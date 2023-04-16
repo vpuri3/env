@@ -56,6 +56,10 @@ return require('packer').startup(function(use)
     }
 
     use {
+        'hrsh7th/nvim-cmp'
+    }
+
+    use {
         'VonHeikemen/lsp-zero.nvim',
         branch = 'v2.x',
         requires = {
@@ -80,7 +84,7 @@ return require('packer').startup(function(use)
         "terrortylor/nvim-comment"
     }
 
-    -- TODO - fix julia-vim
+    -- -- TODO - fix julia-vim
     -- use {
     --     'JuliaEditorSupport/julia-vim',
     --     config = function()
