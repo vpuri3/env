@@ -63,12 +63,20 @@ return require('packer').startup(function(use)
         }
     }
 
-    use{
+    use {
         "terrortylor/nvim-comment"
+    }
+
+    use {
+        'JuliaEditorSupport/julia-vim',
+        config = function()
+            require("julia-vim").setup {}
+        end
     }
 
 
     -- TODO - nvterm, bufferline, cmp, whichkey
     -- TODO - add colors to fugitive
+    -- TODO - julia-vim
 
 end)
