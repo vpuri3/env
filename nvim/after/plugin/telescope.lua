@@ -18,6 +18,8 @@ local telescope = require('telescope').setup{
             },
             n = {
                 ["<C-h>"] = "which_key",
+                ["q"] = require("telescope.actions").close,
+                ["<Esc><Esc>"] = require("telescope.actions").close,
             },
         }
     },
