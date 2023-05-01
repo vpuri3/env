@@ -49,7 +49,7 @@ local options = {
 
     smartindent = true,
     wrap = false,
-    scrolloff = 8,
+    scrolloff = 2,
     updatetime = 50,
 
     signcolumn = "yes",

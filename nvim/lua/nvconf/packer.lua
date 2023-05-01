@@ -104,9 +104,7 @@ return require('packer').startup(function(use)
     --     }
     -- }
 
-    use {
-        "terrortylor/nvim-comment"
-    }
+    use "terrortylor/nvim-comment" -- TODO - update c/cpp comment to //
 
     -- -- TODO - fix julia-vim
     -- use {
@@ -116,6 +114,8 @@ return require('packer').startup(function(use)
     --         require("julia-vim").setup({})
     --     end
     -- }
+
+    -- use "kdheepak/JuliaFormatter.vim" -- TODO
 
     -- TODO - nvterm/toggleterm, bufferline, cmp, whichkey
     -- TODO - add colors to fugitive

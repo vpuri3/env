@@ -20,8 +20,8 @@ vim.keymap.set("n", "<leader>e", vim.cmd.Ex, opts)
 -- maintain cursor position
 vim.keymap.set("n", "<C-D>", "<C-D>zz", opts)
 vim.keymap.set("n", "<C-U>", "<C-U>zz", opts)
-vim.keymap.set("n", "n", "nzz", opts)
-vim.keymap.set("n", "N", "Nzz", opts)
+-- vim.keymap.set("n", "N", "Nzz", opts)
+-- vim.keymap.set("n", "n", "nzz", opts)
 
 -- copy-paste hacks
 
