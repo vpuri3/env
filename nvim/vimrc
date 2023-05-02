@@ -1,6 +1,4 @@
 "
-set omnifunc=syntaxcomplete#Complete
-
 set nocompatible
 set autoread
 
@@ -17,7 +15,6 @@ au BufRead *.geo setf c       " gmsh
 autocmd FileType make    set tabstop=2 shiftwidth=8 softtabstop=0
 autocmd FileType fortran set tabstop=2 shiftwidth=2 softtabstop=2
 
+set autochdir
 set path+=**
 set wildmenu
-
-highlight Visual ctermfg=Black ctermbg=Yellow cterm=NONE
