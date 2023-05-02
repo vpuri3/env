@@ -49,9 +49,11 @@ vim.keymap.set("i", "{<CR>", "{<CR>}<ESC>O", opts)
 -- quotes
 vim.api.nvim_set_keymap("i", '""', [[""<Esc>i]], opts)
 vim.api.nvim_set_keymap("i", "''", [[''<Esc>i]], opts)
+vim.api.nvim_set_keymap("i", "``", [[``<Esc>i]], opts)
 
-vim.api.nvim_set_keymap("i", '"""', [[""""""<Esc>hhi]], opts)
-vim.api.nvim_set_keymap("i", "'''", [[''''''<Esc>hhi]], opts)
+vim.api.nvim_set_keymap("i", '"""', [[""""""<Esc>hhi<CR><Esc>O]], opts)
+vim.api.nvim_set_keymap("i", "'''", [[''''''<Esc>hhi<CR><Esc>O]], opts)
+vim.api.nvim_set_keymap("i", "```", [[``````<Esc>hhi<CR><Esc>O]], opts)
 
 -- Visual mode
 -- move highlighted blocks around
