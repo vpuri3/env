@@ -50,7 +50,7 @@ alias    sdr='screen -dr'
 # Julia
 alias    cdj='cd $JULIA_DEPOT_PATH/../.julia/dev; s'
 alias     jj='julia --proj'
-alias     jl='julia +beta --proj'
+alias     jl='julia --proj'
 alias    jup='juliaup'
 
 case `uname` in
