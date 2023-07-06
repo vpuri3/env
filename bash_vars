@@ -1,10 +1,10 @@
 #!/bin/bash
 
-## misc scripts
-export PATH=$HOME/bin:$PATH
+# PS1
+export PS1='[\[\e[0;32m\]$ME\[\e[1;36m\]@$MACHINE\[\e[0m\] \W]:'
 
-## Nek
-export PATH=$HOME/Nek5000/bin:$PATH
+# misc scripts
+export PATH=$HOME/bin:$PATH
 
 ## vars
 export email="vedantpuri@gmail.com"
@@ -12,18 +12,15 @@ export QSTAT_HEADER="JobId:User:QueuedTime:RunTime:WallTime:State:Location:Nodes
 export TZ="America/New_York"
 export EDITOR="vi"
 
-## ANL clusters
-export NEK_MWD='vpuri@login.mcs.anl.gov:/homes/vpuri'
-export NEK_CWD='vpuri@cetus.alcf.anl.gov:/projects/PANDAVal/vpuri'
-export NEK_VWD='vpuri@vesta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
-export NEK_TWD='vpuri@theta.alcf.anl.gov:/projects/wall_turb_dd/vpuri'
-export NEK_BWD='ac.vpuri@bebop.lcrc.anl.gov:/lcrc/project/wall_bounded_flows/vpuri'
-
-# UIUC cluster
-export NEK_EWD='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
+# Clusters
+export BRIDGES='vpuri1@bridges2.psc.edu:/ocean/projects/eng17006p/vpuri1'
+export UIUC='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 
 ## num of CPU cores
 export NPROCS=$(python3 -c 'import multiprocessing as mp; print(mp.cpu_count())')
+
+# NEK
+export NEK_WD=$HOME'/Nek5000/run'
 
 ME=$(whoami)
 case `uname` in
@@ -34,25 +31,8 @@ Darwin)
 	#Ensure user-installed binaries take precedence
 	export PATH=/usr/local/bin:$PATH
 
-	## mpich
-	#export CC=gcc-4.9
-	#export CXX=g++-4.9
-	#export FC=gfortran-4.9
-	#export F77=gfortran-4.9
-
 	## homebrew
 	export PATH=/usr/local/sbin:$PATH
-	#export HOMEBREW_CC=gcc-4.9
-	#export HOMEBREW_CXX=g++-4.9
-	#export HOMEBREW_FC=gfortran-4.9
-	#export HOMEBREW_F77=gfortran-4.9
-
-	## PETSc
-	#export PETSC_DIR=/Users/vp/software/petsc
-	#export PETSC_ARCH=arch-darwin-c-debug
-
-	# Visit
-	export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
 
 	# MATLAB
 	export MTLB_BIN=/Applications/MATLAB_R2022b.app/bin
@@ -61,44 +41,11 @@ Darwin)
 	export NEK_WD=$HOME'/Nek5000/run'
 
     # python
-    #export PYTHONPATH=$PYTHONPATH:/usr/local/lib/python3.7/site-packages
+    # export PYTHONPATH=$PYTHONPATH:/usr/local/lib/python3.7/site-packages
 
 	;;
 Linux)
 	MACHINE=$(hostname)
-
-    # NEK
-	export NEK_WD=$HOME'/Nek5000/run'
-
-	case `hostname` in
-	cooley*)
-		export NEK_WD='/lus/theta-fs0/projects/wall_turb_dd/vpuri'
-		export PATH=$NEK_WD/Nek5000-v19/bin:$PATH
-		;;
-	theta*)
-		export NEK_WD='/projects/wall_turb_dd/vpuri'
-		export PATH=$NEK_WD/Nek5000-v19/bin:$PATH
-		;;
-	cetus*)
-		export NEK_WD='/projects/PANDAVal/vpuri'
-		;;
-	vesta*)
-		export NEK_WD='/projects/wall_turb_dd/vpuri/'
-		;;
-	login*)
-		export NEK_WD="/homes/vpuri"
-		export PATH=$NEK_WD/Nek5000-v19/bin:$PATH
-		;;
-	bebop*)
-		export NEK_WD='/lcrc/project/wall_bounded_flows/vpuri/'
-		;;
-	blues*)
-		export NEK_WD='/lcrc/project/wall_bounded_flows/vpuri/'
-		;;
-	*ews.illinois.edu)
-		MACHINE="ews"
-	    export MTLB_BIN="/software/matlab-R2017b/bin"
-	esac
 
     # python tooling
 	export PATH=$HOME/.local/bin:$PATH
@@ -110,11 +57,5 @@ esac
 export JULIA_DEPOT_PATH="$HOME/.julia"
 export JULIA_NUM_THREADS=$NPROCS
 export JULIA_NUM_PRECOMPILE_TASKS=$NPROCS
-#export JULIA_CUDA_MEMORY_POOL=none
-
-# PS1
-export PS1='[\[\e[0;32m\]$ME\[\e[1;36m\]@$MACHINE\[\e[0m\] \W]:'
-
-# Spack
-#source ~/spack/share/spack/setup-env.sh
-# create env/ load env file,
+# export JULIA_CUDA_MEMORY_POOL=none
+#

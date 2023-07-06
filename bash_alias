@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # util
+alias   rmfr=`rm -fr`
 alias     cp='cp -r'
 alias    scp='scp -r'
 alias    ssh='ssh -Y'

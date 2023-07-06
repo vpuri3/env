@@ -23,12 +23,14 @@ cd $HOME
 touch $HOME/.bash_profile
 touch $HOME/.bashrc
 
-echo "## https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bash_profile
-echo "[ -f $HOME/.bashrc ] && source $HOME/.bashrc"  >> $HOME/.bash_profile
+echo ""                                             >> $HOME/.bash_profile
+echo "# https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bash_profile
+echo "[ -f $HOME/.bashrc ] && source $HOME/.bashrc" >> $HOME/.bash_profile
 
-echo "## https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bashrc
-echo "source $HOME/env/bash_vars"                    >> $HOME/.bashrc
-echo "source $HOME/env/bash_alias"                   >> $HOME/.bashrc
+echo ""                                             >> $HOME/.bashrc
+echo "# https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bashrc
+echo "source $HOME/env/bash_vars"                   >> $HOME/.bashrc
+echo "source $HOME/env/bash_alias"                  >> $HOME/.bashrc
 
 ln -sf ~/env/bin ~/bin
 chmod +x ~/bin/*
@@ -47,7 +49,7 @@ cd $HOME
 
 case `uname` in
 Darwin)
-	echo "xcode"
+	echo "XCODE"
 	xcode-select -p > /dev/null
 	[ "$?" == "0" ] || xcode-select --install
 
@@ -56,107 +58,213 @@ Darwin)
 	#	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"")"
 	#fi
     #echo "eval "$(/opt/homebrew/bin/brew shellenv)")" >> $HOME/.bash_profile
-
-    case `uname -m` in
-        x86*)
-            CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh"
-            ;;
-        arm*)
-            CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh"
-            ;;
-    esac
-    SU2_LINK="https://github.com/su2code/SU2/releases/download/v7.4.0/SU2-v7.4.0-macos64-mpi.zip"
-
 	;;
 Linux)
 
     # figure out the right package manager
 	#sudo apt-get update
 	#sudo apt-get install git unzip wget curl vim imagemagick
-
-    case `uname -m` in
-        x86*)
-            CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linux-x86_64.sh"
-            ;;
-        *aarch64*)
-            CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linux-aarch64.sh"
-            ;;
-    esac
-    SU2_LINK="https://github.com/su2code/SU2/releases/download/v7.4.0/SU2-v7.4.0-linux64-mpi.zip"
-
 	;;
 esac
 
 ## vim
-[ ! -d "$HOME/.vim" ] && mkdir $HOME/.vim
-
-## neovim
-[ ! -d "$HOME/.config" ] && mkdir $HOME/.config
-ln -sf $HOME/env/nvim $HOME/.config/nvim
-
-# julia-vim
+[ ! -d "$HOME/.vim" ] && mkdir -p $HOME/.vim
 cd $HOME/.vim
 mkdir -p pack/plugins/start && cd pack/plugins/start
-git clone https://github.com/JuliaEditorSupport/julia-vim.git
+git clone https://github.com/JuliaEditorSupport/julia-vim.git # julia-vim
 
-## Julia
-curl -fsSL https://install.julialang.org | sh # juliaup
-[ ! -d $HOME/.julia/config ] && mkdir -p $HOME/.julia/config
-ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
+######
+# neovim
+######
+read -p "Install Neovim binary? [Y/n] " yn
+case "$yn" in
+    [nN]*)
+    ;;
+    *)
+        cd $HOME
+        echo ""       >> $HOME/.bash_profile
+        echo "# nvim" >> $HOME/.bash_profile
+        case `uname` in
+            Darwin)
+                curl -LO https://github.com/neovim/neovim/releases/download/nightly/nvim-macos.tar.gz
+                tar xzf nvim-macos.tar.gz ./nvim-macos/bin/nvim
+                echo "alias nvim='$HOME/nvim-macos/bin/nvim'" >> $HOME/.bash_profile
+                ;;
+            Linux)
+                curl -LO https://github.com/neovim/neovim/releases/latest/download/nvim.appimage
+                chmod u+x nvim.appimage ./nvim.appimage
+                echo "alias nvim='$HOME/nvim.appimage'" >> $HOME/.bash_profile
+                ;;
+        esac
+    ;;
+esac
+[ ! -d "$HOME/.config" ] && mkdir -p $HOME/.config
+ln -sf $HOME/env/nvim $HOME/.config/nvim
 
-## Spack
-if [[ ! -d "$HOME/spack" ]]; then
-    git clone https://github.com/spack/spack.git $HOME/spack
-    $HOME/share/spack/setup-env.sh
-fi
+######
+# Julia
+######
+read -p "Install Julia via juliaup? [Y/n] " yn
+case "$yn" in
+    [nN]*)
+    ;;
+    *)
+        curl -fsSL https://install.julialang.org | sh # juliaup
+        [ ! -d $HOME/.julia/config ] && mkdir -p $HOME/.julia/config
+        ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
+    ;;
+esac
 
-echo "# spack"                                     >> $HOME/.bash_profile
-echo "source $HOME/spack/share/spack/setup-env.sh" >> $HOME/.bash_profile
+read -p "Set Julia development directory. Enter full path? [$HOME/.julia/dev] " dir
+echo ""        >> $HOME/.bash_profile
+echo "# Julia" >> $HOME/.bash_profile
+case "$dir" in
+    [/]* [~]*)
+        cd $HOME
+        if [[ -d "$dir" ]]; then
+            echo "export JULIA_PKG_DEVDIR=$dir" >> $HOME/.bash_profile
+        else
+            echo "$dir not valid directory"
+            exit 1
+        fi
+    ;;
+    *)
+        echo "export JULIA_PKG_DEVDIR=$HOME/.julia/dev" >> $HOME/.bash_profile
+    ;;
+esac
 
-## conda
-cd $HOME
-CONDA_PATH=$(which conda)
-if [[ ! -f "$CONDA_PATH" ]]; then
-    echo $CONDA_LINK
-    wget $CONDA_LINK
-    chmod +x Miniconda3*.sh
-    ./Miniconda3*.sh
+######
+# Spack
+######
+read -p "Install Spack? [Y/n] " yn
+case "$yn" in
+    [nN]*)
+    ;;
+    *)
+        if [[ ! -d "$HOME/spack" ]]; then
+            git clone https://github.com/spack/spack.git $HOME/spack
+            $HOME/share/spack/setup-env.sh
+        fi
 
-    echo "# conda" >> $HOME/.bash_profile
-    echo "conda config --set auto_activate_base false" >> $HOME/.bash_profile
-fi
+        echo ""                                            >> $HOME/.bash_profile
+        echo "# spack"                                     >> $HOME/.bash_profile
+        echo "source $HOME/spack/share/spack/setup-env.sh" >> $HOME/.bash_profile
+    ;;
+esac
 
-## NEK
-cd $HOME
-if [[ ! -d "$HOME/Nek5000" ]]; then
-    NEK_LINK="https://github.com/Nek5000/Nek5000/releases/download/v19.0/Nek5000-19.0.tar.gz"
-    wget $NEK_LINK
-    tar -xvf Nek5000-*.tar.gz > /dev/null # 2 > &1
-fi
+######
+# conda
+######
+read -p "Install Miniconda3? [Y/n] " yn
+case "$yn" in
+    [nN]*)
+    ;;
+    *)
+        case `uname` in
+            Darwin)
+                case `uname -m` in
+                    x86*) CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh"
+                        ;;
+                    arm*) CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh"
+                        ;;
+                esac
+                ;;
+            Linux)
+                case `uname -m` in
+                    x86*) CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linux-x86_64.sh"
+                        ;;
+                    *aarch64*) CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linux-aarch64.sh"
+                        ;;
+                esac
+                ;;
+        esac
 
-## SU2
-cd $HOME
-SU2_CFD_PATH="$(which SU2_CFD)"
-if [[ ! -f SU2_CFD_PATH ]]; then
-    SU2_HOME="$HOME/SU2"
-    SU2_RUN="$SU2_HOME/bin"
+        cd $HOME
+        CONDA_PATH=$(which conda)
+        if [[ ! -f "$CONDA_PATH" ]]; then
+            echo $CONDA_LINK
+            wget $CONDA_LINK
+            chmod +x Miniconda3*.sh
+            ./Miniconda3*.sh
 
-    wget $SU2_LINK
-    unzip SU2-*.zip -d $SU2_HOME
+            echo ""        >> $HOME/.bash_profile
+            echo "# conda" >> $HOME/.bash_profile
+            echo "conda config --set auto_activate_base false" >> $HOME/.bash_profile
+        fi
+    ;;
+esac
 
-    echo "# SU2"                                   >> $HOME/.bash_profile
-    echo "export SU2_RUN=$SU2_RUN"                 >> $HOME/.bash_profile
-    echo "export SU2_HOME=$SU2_HOME"               >> $HOME/.bash_profile
-    echo "export PATH=\$PATH:$SU2_RUN"             >> $HOME/.bash_profile
-    echo "export PYTHONPATH=\$PYTHONPATH:$SU2_RUN" >> $HOME/.bash_profile
-fi
+######
+# NEK5000
+######
+read -p "Install Nek5000? [y/N] " yn
+case "$yn" in
+    [yY]*)
+        cd $HOME
+        if [[ ! -d "$HOME/Nek5000" ]]; then
+            NEK_LINK="https://github.com/Nek5000/Nek5000/releases/download/v19.0/Nek5000-19.0.tar.gz"
+            wget $NEK_LINK
+            tar -xvf Nek5000-*.tar.gz > /dev/null # 2 > &1
+        fi
+        echo ""                                     >> $HOME/.bash_profile
+        echo "# Nek5000"                            >> $HOME/.bash_profile
+        echo "export PATH=$HOME/Nek5000/bin:\$PATH" >> $HOME/.bash_profile
+    ;;
+    *)
+    ;;
+esac
 
+######
+# SU2
+######
+read -p "Install SU2? [y/N] " yn
+case "$yn" in
+    [Yy]*)
+        case `uname` in
+            Darwin) SU2_LINK="https://github.com/su2code/SU2/releases/download/v7.4.0/SU2-v7.4.0-macos64-mpi.zip"
+                ;;
+            Linux) SU2_LINK="https://github.com/su2code/SU2/releases/download/v7.4.0/SU2-v7.4.0-linux64-mpi.zip"
+                ;;
+        esac
+
+        cd $HOME
+        SU2_CFD_PATH="$(which SU2_CFD)"
+        if [[ ! -f SU2_CFD_PATH ]]; then
+            SU2_HOME="$HOME/SU2"
+            SU2_RUN="$SU2_HOME/bin"
+
+            wget $SU2_LINK
+            unzip SU2-*.zip -d $SU2_HOME
+
+            echo ""                                        >> $HOME/.bash_profile
+            echo "# SU2"                                   >> $HOME/.bash_profile
+            echo "export SU2_RUN=$SU2_RUN"                 >> $HOME/.bash_profile
+            echo "export SU2_HOME=$SU2_HOME"               >> $HOME/.bash_profile
+            echo "export PATH=\$PATH:$SU2_RUN"             >> $HOME/.bash_profile
+            echo "export PYTHONPATH=\$PYTHONPATH:$SU2_RUN" >> $HOME/.bash_profile
+        fi
+    ;;
+    *)
+    ;;
+esac
+
+######
 # matlab
+######
 cd $HOME
 [ ! -d $HOME/matlab ] && mkdir matlab
 cd matlab
 [ ! -d spec ] && git clone https://github.com/vpuri3/spec.git
 ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
 
+## PETSc
+# export PETSC_DIR=/Users/vp/software/petsc
+# export PETSC_ARCH=arch-darwin-c-debug
+
+## Visit
+# export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
+
+######
 # end
+######
 eval "source $HOME/.bash_profile"
