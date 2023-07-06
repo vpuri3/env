@@ -49,7 +49,6 @@ alias    sls='screen -ls'
 alias    sdr='screen -dr'
 #. $HOME/Downloads/z-master/z.sh
 # Julia
-alias    cdj='cd $JULIA_DEPOT_PATH/../.julia/dev; s'
 alias     jj='julia --proj'
 alias     jl='julia --proj'
 alias   jlts='julia +lts --proj'

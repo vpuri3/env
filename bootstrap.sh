@@ -134,6 +134,7 @@ case "$dir" in
         echo "export JULIA_PKG_DEVDIR=$HOME/.julia/dev" >> $HOME/.bash_profile
     ;;
 esac
+echo "alias cdj='cd \$JULIA_PKG_DEVDIR; s'" >> $HOME/.bash_profile
 
 ######
 # Spack
