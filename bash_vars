@@ -17,7 +17,8 @@ export BRIDGES='vpuri1@bridges2.psc.edu:/ocean/projects/eng17006p/vpuri1'
 export UIUC='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 
 ## num of CPU cores
-export NCORES=$(julia -e 'Sys.cpu_info() |> length |> print')
+# export NCORES=$(julia -e 'Sys.cpu_info() |> length |> print')
+# export NCORES=$(python3 -c 'import psutil; print(psutil.cpu_count(logical=False))')
 export NPROCS=$(python3 -c 'import os; print(os.cpu_count())')
 
 # NEK
