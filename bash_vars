@@ -17,7 +17,8 @@ export BRIDGES='vpuri1@bridges2.psc.edu:/ocean/projects/eng17006p/vpuri1'
 export UIUC='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 
 ## num of CPU cores
-export NPROCS=$(python3 -c 'import multiprocessing as mp; print(mp.cpu_count())')
+export NCORES=$(julia -e 'Sys.cpu_info() |> length |> print')
+export NPROCS=$(python3 -c 'import os; print(os.cpu_count())')
 
 # NEK
 export NEK_WD=$HOME'/Nek5000/run'
@@ -55,7 +56,7 @@ esac
 
 # Julia
 export JULIA_DEPOT_PATH="$HOME/.julia"
-export JULIA_NUM_THREADS=$NPROCS
+# export JULIA_NUM_THREADS=$NPROCS 
 export JULIA_NUM_PRECOMPILE_TASKS=$NPROCS
 # export JULIA_CUDA_MEMORY_POOL=none
 #
