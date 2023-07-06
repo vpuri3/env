@@ -32,17 +32,21 @@ echo "# https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bashrc
 echo "source $HOME/env/bash_vars"                   >> $HOME/.bashrc
 echo "source $HOME/env/bash_alias"                  >> $HOME/.bashrc
 
-ln -sf ~/env/bin ~/bin
-chmod +x ~/bin/*
+chmod +x $HOME/env/bin/*
 
-mkdir -p $HOME/.ssh
-
+ln -sf $HOME/env/bin        $HOME/bin
 ln -sf $HOME/env/emacs.conf $HOME/.emacs
 ln -sf $HOME/env/vimrc      $HOME/.vimrc
 ln -sf $HOME/env/gitconfig  $HOME/.gitconfig
 ln -sf $HOME/env/gitignore  $HOME/.gitignore
 ln -sf $HOME/env/tmux.conf  $HOME/.tmux.conf
+ln -sf $HOME/env/condarc    $HOME/.condarc
+
+mkdir -p $HOME/.ssh
 ln -sf $HOME/env/sshconfig  $HOME/.ssh/config
+
+[ ! -d "$HOME/.config" ] && mkdir -p $HOME/.config
+ln -sf $HOME/env/nvim       $HOME/.config/nvim
 
 source ~/.bash_profile
 cd $HOME
@@ -87,19 +91,17 @@ case "$yn" in
         case `uname` in
             Darwin)
                 curl -LO https://github.com/neovim/neovim/releases/download/nightly/nvim-macos.tar.gz
-                tar xzf nvim-macos.tar.gz ./nvim-macos/bin/nvim
+                tar xzf nvim-macos.tar.gz $HOME/nvim-macos/bin/nvim
                 echo "alias nvim='$HOME/nvim-macos/bin/nvim'" >> $HOME/.bash_profile
                 ;;
             Linux)
                 curl -LO https://github.com/neovim/neovim/releases/latest/download/nvim.appimage
-                chmod u+x nvim.appimage ./nvim.appimage
+                chmod u+x nvim.appimage $HOME/nvim.appimage
                 echo "alias nvim='$HOME/nvim.appimage'" >> $HOME/.bash_profile
                 ;;
         esac
     ;;
 esac
-[ ! -d "$HOME/.config" ] && mkdir -p $HOME/.config
-ln -sf $HOME/env/nvim $HOME/.config/nvim
 
 ######
 # Julia
@@ -115,11 +117,11 @@ case "$yn" in
     ;;
 esac
 
-read -p "Set Julia development directory. Enter full path? [$HOME/.julia/dev] " dir
+read -p "Set Julia development directory? Enter full path. [$HOME/.julia/dev] " dir
 echo ""        >> $HOME/.bash_profile
 echo "# Julia" >> $HOME/.bash_profile
 case "$dir" in
-    [/]* [~]*)
+    [/]*)
         cd $HOME
         if [[ -d "$dir" ]]; then
             echo "export JULIA_PKG_DEVDIR=$dir" >> $HOME/.bash_profile
@@ -189,7 +191,6 @@ case "$yn" in
 
             echo ""        >> $HOME/.bash_profile
             echo "# conda" >> $HOME/.bash_profile
-            echo "conda config --set auto_activate_base false" >> $HOME/.bash_profile
         fi
     ;;
 esac
