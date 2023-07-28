@@ -16,6 +16,21 @@ Host arctic2 arctic3 arctic4
     User vpuri3
 
 # Carnegie Mellon University
+Host cmu
+    HostName unix.andrew.cmu.edu
+    User vedantpu
+
+# VDEL
+Host falcon
+    HostName vdel-falcon.andrew.cmu.edu
+    User vedantpu
+
+Host falcon-jump
+    HostName vdel-falcon.andrew.cmu.edu
+    ProxyJump vedantpu@unix.andrew.cmu.edu
+    User vedantpu
+
+# Viswanathan group
 Host arjuna
     HostName arjuna.psc.edu
     User vedantpu
