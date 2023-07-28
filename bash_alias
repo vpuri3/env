@@ -49,8 +49,8 @@ alias    sls='screen -ls'
 alias    sdr='screen -dr'
 #. $HOME/Downloads/z-master/z.sh
 # Julia
-alias     jj='julia --proj'
 alias     jl='julia --proj'
+alias     jj='julia +beta --proj'
 alias   jlts='julia +lts --proj'
 alias    jup='juliaup'
 

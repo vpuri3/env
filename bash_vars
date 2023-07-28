@@ -59,5 +59,6 @@ esac
 export JULIA_DEPOT_PATH="$HOME/.julia"
 # export JULIA_NUM_THREADS=$NPROCS 
 export JULIA_NUM_PRECOMPILE_TASKS=$NPROCS
+# export JULIA_NUM_GC_THREADS=$PROCS
 # export JULIA_CUDA_MEMORY_POOL=none # use only when running out of memory
 #
