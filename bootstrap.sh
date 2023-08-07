@@ -137,8 +137,8 @@ esac
 echo "alias cdj='cd \$JULIA_PKG_DEVDIR; s'" >> $HOME/.bash_profile
 
 # set default Julia environment
-ln -sf $HOME/env/JuliaProject.toml $JULIA_DEPOT_PATH/environments/v1.10/Project.toml
-ln -sf $HOME/env/JuliaProject.toml $JULIA_DEPOT_PATH/environments/v1.9/Project.toml
+ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.10/Project.toml
+ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.9/Project.toml
 
 ######
 # Spack
