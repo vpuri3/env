@@ -38,7 +38,7 @@ let
 end
 =#
 
-# utility
+# utils
 ls(x) = readdir(x)
 ls()  = readdir()
 ty(x) = typeof(x)
