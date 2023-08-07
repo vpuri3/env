@@ -1,4 +1,10 @@
 #
+
+@static if Sys.isapple() && Sys.ARCH == :aarch64
+    using AppleAccelerate
+    @info "Loaded AppleAccelerate"
+end
+
 """
  to run file `script.jl`, do
  ```julia
