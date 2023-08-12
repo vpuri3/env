@@ -117,9 +117,10 @@ case "$yn" in
     ;;
 esac
 
-read -p "Set Julia development directory? Enter full path. [$HOME/.julia/dev] " dir
 echo ""        >> $HOME/.bash_profile
 echo "# Julia" >> $HOME/.bash_profile
+
+read -p "Set Julia development directory? Enter full path. [$HOME/.julia/dev] " dir
 case "$dir" in
     [/]*)
         cd $HOME
@@ -134,9 +135,31 @@ case "$dir" in
         echo "export JULIA_PKG_DEVDIR=$HOME/.julia/dev" >> $HOME/.bash_profile
     ;;
 esac
+
 echo "alias cdj='cd \$JULIA_PKG_DEVDIR; s'" >> $HOME/.bash_profile
 
+read -p "Set Julia depot path? Enter full path. [$HOME/.julia] " dir
+case "$dir" in
+    [/]*)
+        cd $HOME
+        if [[ -d "$dir" ]]; then
+            echo "export JULIA_DEPOT_PATH=$dir" >> $HOME/.bash_profile
+        else
+            echo "$dir not valid directory"
+            exit 1
+        fi
+        JULIA_DEPOT_PATH="$dir"
+    ;;
+    *)
+        echo "export JULIA_DEPOT_PATH=$HOME/.julia" >> $HOME/.bash_profile
+        JULIA_DEPOT_PATH="$HOME/.julia"
+    ;;
+esac
+
 # set default Julia environment
+mkdir -p $JULIA_DEPOT_PATH/environments/v1.9/
+mkdir -p $JULIA_DEPOT_PATH/environments/v1.10/
+
 ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.10/Project.toml
 ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.9/Project.toml
 
