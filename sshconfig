@@ -30,6 +30,15 @@ Host falcon-jump
     ProxyJump vedantpu@unix.andrew.cmu.edu
     User vedantpu
 
+Host eagle
+    HostName vdel-eagle.andrew.cmu.edu
+    User vedantpu
+
+Host eagle-jump
+    HostName vdel-eagle.andrew.cmu.edu
+    ProxyJump vedantpu@unix.andrew.cmu.edu
+    User vedantpu
+
 # Viswanathan group
 Host arjuna
     HostName arjuna.psc.edu
