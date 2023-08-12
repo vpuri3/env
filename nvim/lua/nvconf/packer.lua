@@ -12,6 +12,8 @@ local ensure_packer = function()
     return false
 end
 
+local PACKER_BOOTSTRAP = ensure_packer()
+
 -- protected call to require packer
 local status, packer = pcall(require, "packer")
 if not status then
@@ -27,8 +29,6 @@ packer.init {
         end,
     },
 }
-
-local PACKER_BOOTSTRAP = ensure_packer()
 
 -- Only required if you have packer configured as `opt`
 vim.cmd [[packadd packer.nvim]]
