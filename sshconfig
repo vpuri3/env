@@ -31,11 +31,11 @@ Host falcon-jump
     User vedantpu
 
 Host eagle
-    HostName vdel-eagle.andrew.cmu.edu
+    HostName vdel-eagle.me.cmu.edu
     User vedantpu
 
 Host eagle-jump
-    HostName vdel-eagle.andrew.cmu.edu
+    HostName vdel-eagle.me.cmu.edu
     ProxyJump vedantpu@unix.andrew.cmu.edu
     User vedantpu
 
