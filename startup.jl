@@ -3,6 +3,9 @@
 @static if Sys.isapple() && Sys.ARCH == :aarch64
     using AppleAccelerate
     @info "Loaded AppleAccelerate"
+elseif Sys.ARCH == :86_64
+    using MKL
+    @info "Loaded MKL"
 end
 
 """

@@ -2,6 +2,7 @@
 AppleAccelerate = "13e28ba4-7ad8-5781-acae-3021b1ed3924"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 JuliaFormatter = "98e50ef6-434e-11e9-1051-2b60c6c9e899"
+MKL = "33e6dc65-8f57-5167-99aa-e5a354878fb2"
 PProf = "e4faabce-9ead-11e9-39d9-4379958e3056"
 PkgTemplates = "14b8a8f1-9102-5b29-a752-f990bacb7fe1"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
