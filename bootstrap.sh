@@ -54,19 +54,31 @@ cd $HOME
 
 case `uname` in
 Darwin)
-	echo "XCODE"
-	xcode-select -p > /dev/null
-	[ "$?" == "0" ] || xcode-select --install
 
-    ## Homebrew
-    if [ -d /opt/homebrew]; then
-        echo "# Homebrew"
-        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $HOME/.bashrc
-    fi
-	#if [ -f /opt/homebrew/bin/brew ]; then
-	#	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"")"
-	#fi
-    #echo "eval "$(/opt/homebrew/bin/brew shellenv)")" >> $HOME/.bash_profile
+    read -p "Install xcode command line tools? [Y/n] " yn
+    case "$yn" in
+        [nN]*)
+            ;;
+        *)
+            xcode-select -p > /dev/null
+            [ "$?" == "0" ] || xcode-select --install
+            ;;
+    esac
+
+    read -p "Install Homebrew? [Y/n] " yn
+    case "$yn" in
+        [nN]*)
+            ;;
+        *)
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"")"
+            echo "# Homebrew"                                >> $HOME./bashrc
+            echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $HOME/.bashrc
+            ;;
+    esac
+
+    # install utilities
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    brew install wget, vim, nvim
 	;;
 Linux)
 
