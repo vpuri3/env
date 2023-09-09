@@ -31,6 +31,7 @@ echo ""                                             >> $HOME/.bashrc
 echo "# https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bashrc
 echo "source $HOME/env/bash_vars"                   >> $HOME/.bashrc
 echo "source $HOME/env/bash_alias"                  >> $HOME/.bashrc
+echo ""                                             >> $HOME/.bashrc
 
 chmod +x $HOME/env/bin/*
 
@@ -58,6 +59,10 @@ Darwin)
 	[ "$?" == "0" ] || xcode-select --install
 
     ## Homebrew
+    if [ -d /opt/homebrew]; then
+        echo "# Homebrew"
+        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $HOME/.bashrc
+    fi
 	#if [ -f /opt/homebrew/bin/brew ]; then
 	#	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"")"
 	#fi
