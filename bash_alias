@@ -24,6 +24,7 @@ alias       pv='paraview'
 alias     nv="nvim"
 alias     em='emacs -nw'
 alias     tm='tmux -new'
+alias     ts='tmux ls'
 alias   mtlb='$MTLB_BIN/matlab -nodesktop'
 alias     qs='qstat  -u $(whoami)' 
 alias     sq='squeue -u $(whoami)' 
