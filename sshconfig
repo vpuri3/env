@@ -3,6 +3,7 @@ Host *
     ForwardAgent yes
     IgnoreUnknown UseKeychain
     UseKeychain yes
+    ForwardX11 yes
     IdentityFile ~/.ssh/id_ed25519
 
 # Julia Computing

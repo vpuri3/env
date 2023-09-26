@@ -55,6 +55,11 @@ Linux)
 	;;
 esac
 
+# X11
+if [[ ! -n $DISPLAY ]]; then
+    export DISPLAY=:0
+fi
+
 # Julia
 export JULIA_DEPOT_PATH="$HOME/.julia"
 # export JULIA_NUM_THREADS=$NPROCS 
