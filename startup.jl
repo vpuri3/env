@@ -1,5 +1,4 @@
 #
-
 @static if Sys.isapple() && Sys.ARCH == :aarch64
     using AppleAccelerate
     @info "Loaded AppleAccelerate"
@@ -7,24 +6,6 @@ elseif Sys.ARCH == :x86_64
     using MKL
     @info "Loaded MKL"
 end
-
-"""
- to run file `script.jl`, do
- ```julia
- @run script
- ```
-
- TODO:
- -add completion support
-"""
-
-#= # @run conflicts with Debugger.jl
-macro run(file)
-    fs = String(file)
-    fn = fs * ".jl"
-    return :(include($fn))
-end
-=#
 
 """
 macro for adding test dependencies to environment path
@@ -47,6 +28,22 @@ ls()  = readdir()
 ty(x) = typeof(x)
 fn(x) = fieldnames(x)
 fnty  = fn ∘ ty
+
+"""
+    _num_threads() -> Sys.CPU_THREADS
+
+Get the number of CPU threads on the machine.
+"""
+_num_threads() = Sys.CPU_THREADS
+
+"""
+    _num_cores()
+
+Get the number of CPU cores on the machine.
+On M-series Macs, `Sys.cpu_info()` returns all cores (even, e-cores).
+We take minimum here as we are only interested in the # of p-cores.
+"""
+_num_cores() = min(_num_threads(), length(Sys.cpu_info()))
 
 push(x::Tuple, val) = (x..., val)
 
