@@ -20,15 +20,12 @@ export UIUC='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 export NCORES=$(julia --startup-file=no -e 'Sys.cpu_info() |> length |> print')
 export NTHREADS=$(julia --startup-file=no -e 'Sys.CPU_THREADS |> print')
 # export NCORES=$(python3 -c 'import psutil; print(psutil.cpu_count(logical=False))')
-# export NPROCS=$(python3 -c 'import os; print(os.cpu_count())')
-
-# NEK
-export NEK_WD=$HOME'/Nek5000/run'
+# export NTHREADS=$(python3 -c 'import os; print(os.cpu_count())')
 
 ME=$(whoami)
 case `uname` in
 Darwin)
-    export NPROCS=$(sysctl -n hw.ncpu)
+    export NTHREADS=$(sysctl -n hw.ncpu)
 	MACHINE="MBP"
 
 	#Ensure user-installed binaries take precedence
@@ -56,15 +53,18 @@ Linux)
 	;;
 esac
 
+# NEK
+export NEK_WD=$HOME'/Nek5000/run'
+
+# Julia
+export JULIA_DEPOT_PATH="$HOME/.julia"
+# export JULIA_NUM_THREADS=$NTHREADS 
+export JULIA_NUM_PRECOMPILE_TASKS=$NTHREADS
+# export JULIA_NUM_GC_THREADS=$PROCS
+# export JULIA_CUDA_MEMORY_POOL=none # use only when running out of memory
+
 # X11
 if [[ ! -n $DISPLAY ]]; then
     export DISPLAY=:0
 fi
-
-# Julia
-export JULIA_DEPOT_PATH="$HOME/.julia"
-# export JULIA_NUM_THREADS=$NPROCS 
-export JULIA_NUM_PRECOMPILE_TASKS=$NPROCS
-# export JULIA_NUM_GC_THREADS=$PROCS
-# export JULIA_CUDA_MEMORY_POOL=none # use only when running out of memory
 #
