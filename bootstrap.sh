@@ -79,6 +79,10 @@ Darwin)
     # install utilities
     eval "$(/opt/homebrew/bin/brew shellenv)"
     brew install wget, vim, nvim
+
+    # disable press-and-hold on Mac
+    defaults write NSGlobalDomain ApplePressAndHoldEnabled -bool false
+
 	;;
 Linux)
 
