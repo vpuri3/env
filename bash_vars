@@ -16,13 +16,8 @@ export EDITOR="vi"
 export BRIDGES='vpuri1@bridges2.psc.edu:/ocean/projects/eng17006p/vpuri1'
 export UIUC='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
 
-## num of CPU cores
-export NCORES=$(julia --startup-file=no -e 'Sys.cpu_info() |> length |> print')
-export NTHREADS=$(julia --startup-file=no -e 'Sys.CPU_THREADS |> print')
-# export NCORES=$(python3 -c 'import psutil; print(psutil.cpu_count(logical=False))')
-# export NTHREADS=$(python3 -c 'import os; print(os.cpu_count())')
-
 ME=$(whoami)
+
 case `uname` in
 Darwin)
     export NTHREADS=$(sysctl -n hw.ncpu)
@@ -58,9 +53,16 @@ export NEK_WD=$HOME'/Nek5000/run'
 
 # Julia
 export JULIA_DEPOT_PATH="$HOME/.julia"
+
+## num of CPU cores
+export NCORES=$(julia --startup-file=no -e 'Sys.cpu_info() |> length |> print')
+export NTHREADS=$(julia --startup-file=no -e 'Sys.CPU_THREADS |> print')
+# export NCORES=$(python3 -c 'import psutil; print(psutil.cpu_count(logical=False))')
+# export NTHREADS=$(python3 -c 'import os; print(os.cpu_count())')
+
 # export JULIA_NUM_THREADS=$NTHREADS 
 export JULIA_NUM_PRECOMPILE_TASKS=$NTHREADS
-# export JULIA_NUM_GC_THREADS=$PROCS
+# export JULIA_NUM_GC_THREADS=$NTHREADS
 # export JULIA_CUDA_MEMORY_POOL=none # use only when running out of memory
 
 # X11
