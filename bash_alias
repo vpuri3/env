@@ -22,7 +22,7 @@ alias whereami='hostname'
 alias       pv='paraview'
 # 
 alias     nv="nvim"
-alias     sx="sxiv"
+alias     sx="sxiv -b"
 alias     em='emacs -nw'
 alias     tm='tmux -new'
 alias     ts='tmux ls'
