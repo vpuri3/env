@@ -40,6 +40,10 @@ Host eagle-jump
     ProxyJump vedantpu@unix.andrew.cmu.edu
     User vedantpu
 
+Host tomcat
+    HostName vdel-tomcat.andrew.cmu.edu
+    User wentai
+
 # Viswanathan group
 Host arjuna
     HostName arjuna.psc.edu

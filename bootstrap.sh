@@ -181,6 +181,7 @@ esac
 mkdir -p $JULIA_DEPOT_PATH/environments/v1.9/
 mkdir -p $JULIA_DEPOT_PATH/environments/v1.10/
 
+ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.11/Project.toml
 ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.10/Project.toml
 ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.9/Project.toml
 
