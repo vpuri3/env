@@ -7,10 +7,6 @@ elseif Sys.ARCH == :x86_64
     @info "Loaded MKL"
 end
 
-"""
-macro for adding test dependencies to environment path
-"""
-
 # add dependencies to env stack
 #=
 let
@@ -46,13 +42,3 @@ We take minimum here as we are only interested in the # of p-cores.
 _num_cores() = min(_num_threads(), length(Sys.cpu_info()))
 
 push(x::Tuple, val) = (x..., val)
-
-# TODO make macro @capture_out include("script.jl")
-function capture_out(script::AbstractString)
-    open(script * ".stdout", "w") do io
-        redirect_stdout(io) do
-            include(script * ".jl")
-        end
-    end
-end
-
