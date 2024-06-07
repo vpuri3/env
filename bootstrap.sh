@@ -1,6 +1,7 @@
 #!/bin/bash
 
 cd $HOME
+
 ## SSH
 #if [ ! -f $HOME/.ssh/*pub ]; then
 #    echo "generating SSH keys"
@@ -12,6 +13,15 @@ cd $HOME
 
 #touch $HOME/.ssh/config
 #printf "Host *\n    AddKeysToAgent yes\n    UseKeychain yes\n    IdentityFile ~/.ssh/id_ed25519" > $HOME/.ssh/config
+
+
+## Ubuntu
+# sudo apt update
+# sudo apt list --upgradable
+# sudo apt upgrade
+# sudo apt full-upgrade
+# sudo apt autoremove
+# sudo apt clean
 
 [ ! -d ~/env ] && git clone https://github.com/vpuri3/env.git
 cd $HOME/env
