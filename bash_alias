@@ -23,6 +23,7 @@ alias       pv='paraview'
 # 
 alias     nv="nvim"
 alias     sx="sxiv -b"
+alias     ok="okular"
 alias     em='emacs -nw'
 alias     tm='tmux -new'
 alias     ts='tmux ls'
