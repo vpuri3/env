@@ -15,7 +15,7 @@ local options = {
     tabstop = 4,
     softtabstop = 4,
     shiftwidth = 4,
-    expandtab = true,
+    expandtab = false,
 
     showtabline = 2,
 
@@ -49,7 +49,7 @@ local options = {
 
     smartindent = true,
     wrap = false,
-    scrolloff = 2,
+    scrolloff = 1,
     updatetime = 50,
 
     signcolumn = "yes",
@@ -69,6 +69,6 @@ end
 -- vim.opt.autochdir = true
 -- vim.cmd "set path+=**"
 
-vim.cmd [[set iskeyword+=-]] -- treat "-" as part of the word
+-- vim.cmd [[set iskeyword+=-]] -- treat "-" as part of the word
 
 --
