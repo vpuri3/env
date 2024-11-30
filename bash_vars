@@ -12,10 +12,6 @@ export QSTAT_HEADER="JobId:User:QueuedTime:RunTime:WallTime:State:Location:Nodes
 export TZ="America/New_York"
 export EDITOR="vi"
 
-# Clusters
-export BRIDGES='vpuri1@bridges2.psc.edu:/ocean/projects/eng17006p/vpuri1'
-export UIUC='vpuri3@linux.ews.illinois.edu:/home/vpuri3'
-
 ME=$(whoami)
 
 case `uname` in
@@ -52,13 +48,13 @@ esac
 export NEK_WD=$HOME'/Nek5000/run'
 
 # Julia
-export JULIA_DEPOT_PATH="$HOME/.julia"
+# export JULIA_DEPOT_PATH="$HOME/.julia"
 
-## num of CPU cores
-# export NCORES=$(julia --startup-file=no -e 'Sys.cpu_info() |> length |> print')
-# export NTHREADS=$(julia --startup-file=no -e 'Sys.CPU_THREADS |> print')
-export NCORES=$(python3 -c 'import psutil; print(psutil.cpu_count(logical=False))')
-export NTHREADS=$(python3 -c 'import os; print(os.cpu_count())')
+## num of CPU cores/ threads
+export NCORES=$(julia --startup-file=no -e 'min(Sys.CPU_THREADS, length(Sys.cpu_info())) |> print')
+export NTHREADS=$(julia --startup-file=no -e 'Sys.CPU_THREADS |> print')
+# export NCORES=$(python3 -c 'import psutil; print(psutil.cpu_count(logical=False))')
+# export NTHREADS=$(python3 -c 'import os; print(os.cpu_count())')
 
 # export JULIA_NUM_THREADS=$NTHREADS 
 export JULIA_NUM_PRECOMPILE_TASKS=$NTHREADS

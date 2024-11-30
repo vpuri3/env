@@ -2,31 +2,32 @@
 
 cd $HOME
 
-## SSH
-#if [ ! -f $HOME/.ssh/*pub ]; then
-#    echo "generating SSH keys"
-#    ssh-keygen -t ed25519 -C "vedantpuri@gmail.com"
-#    eval "$(ssh-agent -s)"
-#fi
+######
+# SSH
+######
 
-#ssh-add -K $HOME/.ssh/id_ed25519
+# if [ ! -f $HOME/.ssh/*pub ]; then
+#     echo "generating SSH keys"
+#     ssh-keygen -t ed25519 -C "vedantpuri@gmail.com"
+#     eval "$(ssh-agent -s)"
+# 	  ssh-add -K $HOME/.ssh/id_ed25519
+# fi
 
-#touch $HOME/.ssh/config
-#printf "Host *\n    AddKeysToAgent yes\n    UseKeychain yes\n    IdentityFile ~/.ssh/id_ed25519" > $HOME/.ssh/config
+# touch $HOME/.ssh/config
+# printf "Host *\n    AddKeysToAgent yes\n    UseKeychain yes\n    IdentityFile ~/.ssh/id_ed25519" > $HOME/.ssh/config
 
-
-## Ubuntu
-# sudo apt update
-# sudo apt list --upgradable
-# sudo apt upgrade
-# sudo apt full-upgrade
-# sudo apt autoremove
-# sudo apt clean
+#----------------------------------------------------------------------------#
+# load env from git
+#----------------------------------------------------------------------------#
 
 [ ! -d ~/env ] && git clone https://github.com/vpuri3/env.git
 cd $HOME/env
 git remote rm origin
 git remote add origin git@github.com:vpuri3/env.git
+
+#----------------------------------------------------------------------------#
+# source env/bash_vars, env/bash_alias in ~/.bash_profile
+#----------------------------------------------------------------------------#
 
 cd $HOME
 
@@ -36,13 +37,12 @@ touch $HOME/.bashrc
 echo ""                                             >> $HOME/.bash_profile
 echo "# https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bash_profile
 echo "[ -f $HOME/.bashrc ] && source $HOME/.bashrc" >> $HOME/.bash_profile
+echo "source $HOME/env/bash_vars"                   >> $HOME/.bash_profile
+echo "source $HOME/env/bash_alias"                  >> $HOME/.bash_profile
 
-echo ""                                             >> $HOME/.bashrc
-echo "# https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bashrc
-echo "source $HOME/env/bash_vars"                   >> $HOME/.bashrc
-echo "source $HOME/env/bash_alias"                  >> $HOME/.bashrc
-echo ""                                             >> $HOME/.bashrc
-
+#----------------------------------------------------------------------------#
+# symlink dotfiles
+#----------------------------------------------------------------------------#
 chmod +x $HOME/env/bin/*
 
 ln -sf $HOME/env/bin        $HOME/bin
@@ -62,6 +62,7 @@ ln -sf $HOME/env/nvim       $HOME/.config/nvim
 source ~/.bash_profile
 cd $HOME
 
+#----------------------------------------------------------------------------#
 case `uname` in
 Darwin)
 
@@ -96,13 +97,21 @@ Darwin)
 	;;
 Linux)
 
-    # figure out the right package manager
-	#sudo apt-get update
-	#sudo apt-get install git unzip wget curl vim imagemagick
+	## Ubuntu
+	# sudo apt update
+	# sudo apt list --upgradable
+	# sudo apt upgrade
+	# sudo apt full-upgrade
+	# sudo apt autoremove
+	# sudo apt clean
+
 	;;
 esac
 
-## vim
+######
+# vim
+######
+
 [ ! -d "$HOME/.vim" ] && mkdir -p $HOME/.vim
 cd $HOME/.vim
 mkdir -p pack/plugins/start && cd pack/plugins/start
@@ -111,6 +120,7 @@ git clone https://github.com/JuliaEditorSupport/julia-vim.git # julia-vim
 ######
 # neovim
 ######
+
 read -p "Install Neovim binary? [Y/n] " yn
 case "$yn" in
     [nN]*)
@@ -137,6 +147,7 @@ esac
 ######
 # Julia
 ######
+
 read -p "Install Julia via juliaup? [Y/n] " yn
 case "$yn" in
     [nN]*)
@@ -199,6 +210,7 @@ ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.11/Project.tom
 ######
 # Spack
 ######
+
 read -p "Install Spack? [Y/n] " yn
 case "$yn" in
     [nN]*)
@@ -218,6 +230,7 @@ esac
 ######
 # conda
 ######
+
 read -p "Install Miniconda3? [Y/n] " yn
 case "$yn" in
     [nN]*)
@@ -259,6 +272,7 @@ esac
 ######
 # NEK5000
 ######
+
 read -p "Install Nek5000? [y/N] " yn
 case "$yn" in
     [yY]*)
@@ -310,23 +324,34 @@ case "$yn" in
     ;;
 esac
 
+#----------------------------------------------------------------------------#
+
 ######
 # matlab
 ######
+
 cd $HOME
 [ ! -d $HOME/matlab ] && mkdir matlab
 cd matlab
 [ ! -d spec ] && git clone https://github.com/vpuri3/spec.git
 ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
 
-## PETSc
+
+######
+# PETSc
+######
+
 # export PETSC_DIR=/Users/vp/software/petsc
 # export PETSC_ARCH=arch-darwin-c-debug
 
-## Visit
+######
+# Visit
+######
+
 # export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
 
 ######
 # end
 ######
+
 eval "source $HOME/.bash_profile"
