@@ -40,7 +40,7 @@ return require('packer').startup(function(use)
 
     -- use 'nvim-telescope/telescope.nvim'
 
-    -- bye bye Telescope, Treesitter, Undo-list
+    -- bye bye Telescope, Treesitter, Undotree
     
     -- Enhanced text objects and motions
     -- use 'tpope/vim-surround'              -- Surround text objects

@@ -46,6 +46,19 @@
         "when": "terminalFocus"
     },
 
+    // resize terminal window
+    {
+        "key": "ctrl+a shift+j",
+        "command": "workbench.action.terminal.resizePaneDown",
+        "when": "terminalFocus || editorFocus"
+    },
+
+    {
+        "key": "ctrl+a shift+k",
+        "command": "workbench.action.terminal.resizePaneUp",
+        "when": "terminalFocus || editorFocus"
+    },
+
     //===============//
     // up/down from editor
     //===============//
