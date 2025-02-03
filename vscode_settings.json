@@ -1,3 +1,7 @@
+// Link/ append this file to
+// /Users/vp/Library/Application\ Support/Cursor/User/settings.json
+//
+
 {
     "extensions.experimental.affinity": {
         "asvetliakov.vscode-neovim": 1
