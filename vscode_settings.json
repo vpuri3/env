@@ -1,0 +1,37 @@
+{
+    "extensions.experimental.affinity": {
+        "asvetliakov.vscode-neovim": 1
+    },
+    "vscode-neovim.compositeKeys": {
+        
+    },
+    "workbench.settings.applyToAllProfiles": [
+        
+    ],
+    
+    "editor.quickSuggestions": {
+        "other": true,
+        "comments": true,
+        "strings": true
+    },
+    "editor.suggest.snippetsPreventQuickSuggestions": false,
+    "workbench.activityBar.iconClickBehavior": "focus",
+    
+    "terminal.integrated.profiles.linux": {
+        "tmux": {
+          "path": "/usr/bin/tmux",
+          "args": ["new-session", "-A", "-s", "main"]
+        }
+    },
+    "terminal.integrated.defaultProfile.linux": "tmux",
+    "terminal.integrated.defaultProfile.osx": "tmux",
+    "explorer.confirmDelete": false,
+    
+    // "editor.autoClosingPairs": [
+    //     {
+    //         "open": "`",
+    //         "close": "`",
+    //         "notIn": ["string", "comment"]
+    //     }
+    // ],
+}
