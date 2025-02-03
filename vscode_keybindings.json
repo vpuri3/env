@@ -35,26 +35,26 @@
     //===============//
 
     {
-        "key": "ctrl+a j",
+        "key": "ctrl+g j",
         "command": "workbench.action.focusActiveEditorGroup",
         "when": "terminalFocus"
     },
 
     {
-        "key": "ctrl+a k",
+        "key": "ctrl+g k",
         "command": "workbench.action.focusActiveEditorGroup",
         "when": "terminalFocus"
     },
 
     // resize terminal window
     {
-        "key": "ctrl+a shift+j",
+        "key": "ctrl+g shift+j",
         "command": "workbench.action.terminal.resizePaneDown",
         "when": "terminalFocus || editorFocus"
     },
 
     {
-        "key": "ctrl+a shift+k",
+        "key": "ctrl+g shift+k",
         "command": "workbench.action.terminal.resizePaneUp",
         "when": "terminalFocus || editorFocus"
     },
@@ -64,13 +64,13 @@
     //===============//
 
     {
-        "key": "ctrl+a j",
+        "key": "ctrl+g j",
         "command": "workbench.action.terminal.focus",
         "when": "editorTextFocus"
     },
 
     {
-        "key": "ctrl+a k",
+        "key": "ctrl+g k",
         "command": "workbench.action.terminal.focus",
         "when": "editorTextFocus"
     },
@@ -80,7 +80,7 @@
     //===============//
 
     {
-        "key": "ctrl+a h",
+        "key": "ctrl+g h",
         "command": "workbench.view.explorer",
         "when": "terminalFocus"
     },
@@ -90,7 +90,7 @@
     //===============//
 
     {
-        "key": "ctrl+a h",
+        "key": "ctrl+g h",
         "command": "workbench.view.explorer",
         "when": "editorTextFocus"
     },
@@ -100,7 +100,7 @@
     //===============//
 
     {
-        "key": "ctrl+a l",
+        "key": "ctrl+g l",
         "command": "workbench.action.focusActiveEditorGroup",
         "when": "explorerViewletVisible"
     },
@@ -112,7 +112,7 @@
     // hit the SecondarySideBar
 
     // {
-    //     "key": "ctrl+a l",
+    //     "key": "ctrl+g l",
     //     "command": "workbench.action.compareEditor.focusSecondarySide",
     //     // "when": "editorTextFocus"
     // },
