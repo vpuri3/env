@@ -1,97 +1,100 @@
 --
 
--- disable default file explorer (netrw)
-vim.g.loaded_netrw = 1
-vim.g.loaded_netrwPlugin = 1
+if not vim.g.vscode then
 
--- enable highlight groups (done in nfconf/set.lua)
---vim.opt.termguicolors = true
+    -- disable default file explorer (netrw)
+    vim.g.loaded_netrw = 1
+    vim.g.loaded_netrwPlugin = 1
 
-require("nvim-tree").setup({
-    sort_by = "case_sensitive",
+    -- enable highlight groups (done in nfconf/set.lua)
+    --vim.opt.termguicolors = true
 
-    filters = {
-        dotfiles = false,
-        exclude = {},
-    },
+    require("nvim-tree").setup({
+        sort_by = "case_sensitive",
 
-    disable_netrw = true,
-    hijack_netrw = true,
-    hijack_cursor = true,
-    hijack_unnamed_buffer_when_opening = false,
-    sync_root_with_cwd = true,
+        filters = {
+            dotfiles = false,
+            exclude = {},
+        },
 
-    update_focused_file = {
-        enable = true,
-        update_root = false,
-    },
+        disable_netrw = true,
+        hijack_netrw = true,
+        hijack_cursor = true,
+        hijack_unnamed_buffer_when_opening = false,
+        sync_root_with_cwd = true,
 
-    view = {
-        adaptive_size = false,
-        side = "left",
-        width = 30,
-        preserve_window_proportions = true,
-    },
+        update_focused_file = {
+            enable = true,
+            update_root = false,
+        },
 
-    git = {
-        enable = true,
-        ignore = false,
-    },
+        view = {
+            adaptive_size = false,
+            side = "left",
+            width = 30,
+            preserve_window_proportions = true,
+        },
 
-    filesystem_watchers = {
-        enable = true,
-    },
+        git = {
+            enable = true,
+            ignore = false,
+        },
 
-    actions = {
-        open_file = {
-            resize_window = true,
-        }
-    },
-
-    renderer = {
-        root_folder_label = true,
-        highlight_git = true,
-        highlight_opened_files = "none",
-
-        indent_markers = {
+        filesystem_watchers = {
             enable = true,
         },
-        icons = {
-            show = {
-                file = true,
-                folder = true,
-                folder_arrow = true,
-                git = true,
+
+        actions = {
+            open_file = {
+                resize_window = true,
+            }
+        },
+
+        renderer = {
+            root_folder_label = true,
+            highlight_git = true,
+            highlight_opened_files = "none",
+
+            indent_markers = {
+                enable = true,
             },
-            glyphs = {
-                default = "",
-                symlink = "",
-                folder = {
-                    default = "",
-                    empty = "",
-                    empty_open = "",
-                    open = "",
-                    symlink = "",
-                    symlink_open = "",
-                    arrow_open = "",
-                    arrow_closed = "",
+            icons = {
+                show = {
+                    file = true,
+                    folder = true,
+                    folder_arrow = true,
+                    git = true,
                 },
-                git = {
-                    unstaged = "✗",
-                    staged = "✓",
-                    unmerged = "",
-                    renamed = "➜",
-                    untracked = "★",
-                    deleted = "",
-                    ignored = "◌",
-                },
+                glyphs = {
+                    default = "",
+                    symlink = "",
+                    folder = {
+                        default = "",
+                        empty = "",
+                        empty_open = "",
+                        open = "",
+                        symlink = "",
+                        symlink_open = "",
+                        arrow_open = "",
+                        arrow_closed = "",
+                    },
+                    git = {
+                        unstaged = "✗",
+                        staged = "✓",
+                        unmerged = "",
+                        renamed = "➜",
+                        untracked = "★",
+                        deleted = "",
+                        ignored = "◌",
+                    },
+                }
             }
         }
-    }
-})
+    })
 
-vim.keymap.set("n", "<leader>e", ":NvimTreeToggle<CR>")
+    vim.keymap.set("n", "<leader>e", ":NvimTreeToggle<CR>")
 
--- TODO
--- open file in split
--- open file in new tab
+    -- TODO
+    -- open file in split
+    -- open file in new tab
+end
