@@ -1,6 +1,7 @@
 // Link/ append this file to
 // /Users/vp/Library/Application\ Support/Cursor/User/settings.json
-//
+// Can also find this file with
+// "Cmd + Shift + p" followed by "Preferences: Open user settings (JSON)"
 
 {
     "extensions.experimental.affinity": {
