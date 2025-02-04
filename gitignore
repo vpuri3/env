@@ -9,4 +9,13 @@
 # vi
 .*.swp                                                                                 
 .*.swo
+
+# vscode
+.vscode/
+
+# tmux
+.tmux.conf.local
+
+# cursor
+.cursorrules
 #

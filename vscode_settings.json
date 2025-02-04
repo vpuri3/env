@@ -28,9 +28,11 @@
           "args": ["new-session", "-A", "-s", "main"]
         }
     },
-    "terminal.integrated.defaultProfile.linux": "tmux",
+    // "terminal.integrated.defaultProfile.linux": "tmux",
     "terminal.integrated.defaultProfile.osx": "tmux",
     "explorer.confirmDelete": false,
+    "editor.scrollBeyondLastColumn": 0,
+    "editor.scrollBeyondLastLine": false,
     
     // "editor.autoClosingPairs": [
     //     {
