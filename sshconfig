@@ -21,6 +21,31 @@ Host cmu
     HostName unix.andrew.cmu.edu
     User vedantpu
 
+# MAIL LAB
+Host 147.73.193.6
+    HostName 147.73.193.6
+    User barati
+
+Host mail3
+    HostName gpu-node-3
+    User vedantpu
+    ProxyJump 147.73.193.6
+
+Host mail4
+    HostName gpu-node-4
+    User vedantpu
+    ProxyJump 147.73.193.6
+
+Host mail5
+    HostName gpu-node-5
+    User vedantpu
+    ProxyJump 147.73.193.6
+
+Host mail6
+    HostName gpu-node-6
+    User vedantpu
+    ProxyJump 147.73.193.6
+
 # VDEL
 Host falcon
     HostName vdel-falcon.andrew.cmu.edu
