@@ -247,7 +247,7 @@ case "$yn" in
                 ;;
             Linux)
                 case `uname -m` in
-                    x86*) CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linux-x86_64.sh"
+                    x86*) CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
                         ;;
                     *aarch64*) CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linux-aarch64.sh"
                         ;;
