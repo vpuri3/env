@@ -236,33 +236,42 @@ case "$yn" in
     [nN]*)
     ;;
     *)
+        cd $HOME
+
         case `uname` in
             Darwin)
                 case `uname -m` in
-                    x86*) CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh"
+                    x86*)
+                        curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
+                        chmod +x Miniconda3*.sh
+                        bash ~/Miniconda3-latest-MacOSX-x86_64.sh
+
                         ;;
-                    arm*) CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh"
+                    arm*)
+                        curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh
+                        chmod +x Miniconda3*.sh
+                        bash ~/Miniconda3-latest-MacOSX-arm64.sh
                         ;;
                 esac
                 ;;
             Linux)
                 case `uname -m` in
-                    x86*) CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+                    x86*)
+                        wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+                        chmod +x Miniconda3*.sh
+                        bash ~/Miniconda3-latest-Linux-x86_64.sh
                         ;;
-                    *aarch64*) CONDA_LINK="https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linux-aarch64.sh"
+                    *aarch64*)
+                        wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
+                        chmod +x Miniconda3*.sh
+                        bash ~/Miniconda3-latest-Linux-aarch64.sh
                         ;;
                 esac
                 ;;
         esac
 
-        cd $HOME
         CONDA_PATH=$(which conda)
         if [[ ! -f "$CONDA_PATH" ]]; then
-            echo $CONDA_LINK
-            wget $CONDA_LINK
-            chmod +x Miniconda3*.sh
-            ./Miniconda3*.sh
-
             echo ""        >> $HOME/.bash_profile
             echo "# conda" >> $HOME/.bash_profile
         fi
