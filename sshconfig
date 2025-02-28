@@ -22,38 +22,33 @@ Host cmu
     User vedantpu
 
 # MAIL LAB
-Host 147.73.193.6
+Host mail-head
     HostName 147.73.193.6
     User barati
 
 Host mail3
     HostName gpu-node-3
     User vedantpu
-    ProxyJump 147.73.193.6
+    ProxyJump mail-head
 
 Host mail4
     HostName gpu-node-4
     User vedantpu
-    ProxyJump 147.73.193.6
+    ProxyJump mail-head
 
 Host mail5
     HostName gpu-node-5
     User vedantpu
-    ProxyJump 147.73.193.6
+    ProxyJump mail-head
 
 Host mail6
     HostName gpu-node-6
     User vedantpu
-    ProxyJump 147.73.193.6
+    ProxyJump mail-head
 
 # VDEL
 Host falcon
     HostName vdel-falcon.andrew.cmu.edu
-    User vedantpu
-
-Host falcon-jump
-    HostName vdel-falcon.andrew.cmu.edu
-    ProxyJump vedantpu@unix.andrew.cmu.edu
     User vedantpu
 
 Host eagle
@@ -62,8 +57,8 @@ Host eagle
 
 Host eagle-jump
     HostName vdel-eagle.me.cmu.edu
-    ProxyJump vedantpu@unix.andrew.cmu.edu
     User vedantpu
+    ProxyJump cmu
 
 Host tomcat
     HostName vdel-tomcat.andrew.cmu.edu
@@ -97,9 +92,4 @@ Host bridges
 Host bebop
     HostName %h.lcrc.anl.gov
     User ac.vnpuri
-
-Host oracle-g
-    HostName 130.61.137.140
-    User ubuntu
-    RequestTTY yes
-    RemoteCommand sudo su opc
+#
