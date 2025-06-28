@@ -6,6 +6,12 @@ Host *
     ForwardX11 yes
     IdentityFile ~/.ssh/id_ed25519
 
+# GCloud
+Host h100-1x-XXXX
+    User milo
+    HostName XX.XX.XX.XXX
+    IdentityFile ~/.ssh/google_compute_engine
+
 # Julia Computing
 Host antarctic arctic1 cyclops
     HostName %h.juliacomputing.io
