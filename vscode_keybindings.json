@@ -3,6 +3,8 @@
 // Can also find this file with
 // "Cmd + Shift + p" followed by "Preferences: Open keyboard shortcuts (JSON)"
 
+// Link to ~/Library/Application\ Support/Cursor/User/keybindings.json
+
 // Place your key bindings in this file to override the defaults
 [
     {

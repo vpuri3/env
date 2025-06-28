@@ -3,6 +3,8 @@
 // Can also find this file with
 // "Cmd + Shift + p" followed by "Preferences: Open user settings (JSON)"
 
+// link to  ~/Library/Application\ Support/Cursor/User/settings.json
+
 {
     "extensions.experimental.affinity": {
         "asvetliakov.vscode-neovim": 1
