@@ -96,14 +96,21 @@ Darwin)
 
 	;;
 Linux)
-
-	## Ubuntu
-	# sudo apt update
-	# sudo apt list --upgradable
-	# sudo apt upgrade
-	# sudo apt full-upgrade
-	# sudo apt autoremove
-	# sudo apt clean
+    
+	# Check if we're on Ubuntu
+	if [ -f /etc/lsb-release ] && grep -q "Ubuntu" /etc/lsb-release; then
+		read -p "Update and install packages on Ubuntu? [Y/n] " yn
+		case "$yn" in
+			[nN]*)
+				;;
+			*)
+				sudo apt update
+				sudo apt list --upgradable
+				sudo apt upgrade -y
+				sudo apt install -y wget vim neovim python3-pip
+				;;
+		esac
+	fi
 
 	;;
 esac
@@ -112,10 +119,17 @@ esac
 # vim
 ######
 
-[ ! -d "$HOME/.vim" ] && mkdir -p $HOME/.vim
-cd $HOME/.vim
-mkdir -p pack/plugins/start && cd pack/plugins/start
-git clone https://github.com/JuliaEditorSupport/julia-vim.git # julia-vim
+read -p "Install Julia-vim plugin? [Y/n] " yn
+case "$yn" in
+    [nN]*)
+    ;;
+    *)
+        [ ! -d "$HOME/.vim" ] && mkdir -p $HOME/.vim
+        cd $HOME/.vim
+        mkdir -p pack/plugins/start && cd pack/plugins/start
+        git clone https://github.com/JuliaEditorSupport/julia-vim.git # julia-vim
+    ;;
+esac
 
 ######
 # neovim
@@ -148,6 +162,24 @@ esac
 # Julia
 ######
 
+echo ""        >> $HOME/.bash_profile
+echo "# Julia" >> $HOME/.bash_profile
+
+read -p "Set JULIA_DEPOT_PATH? Enter full path. [$HOME/.julia] " dir
+case "$dir" in
+    [/]*)
+        cd $HOME
+        echo "export JULIA_DEPOT_PATH=$dir" >> $HOME/.bash_profile
+        echo "export JULIAUP_DEPOT_PATH=$dir/juliaup" >> $HOME/.bash_profile
+    ;;
+    *)
+        echo "export JULIA_DEPOT_PATH=$HOME/.julia" >> $HOME/.bash_profile
+        echo "export JULIAUP_DEPOT_PATH=$HOME/.julia/juliaup" >> $HOME/.bash_profile
+    ;;
+esac
+
+echo "alias cdj='cd \$JULIA_DEPOT_PATH/dev; s'" >> $HOME/.bash_profile
+
 read -p "Install Julia via juliaup? [Y/n] " yn
 case "$yn" in
     [nN]*)
@@ -159,53 +191,16 @@ case "$yn" in
     ;;
 esac
 
-echo ""        >> $HOME/.bash_profile
-echo "# Julia" >> $HOME/.bash_profile
-
-read -p "Set Julia development directory? Enter full path. [$HOME/.julia/dev] " dir
-case "$dir" in
-    [/]*)
-        cd $HOME
-        if [[ -d "$dir" ]]; then
-            echo "export JULIA_PKG_DEVDIR=$dir" >> $HOME/.bash_profile
-        else
-            echo "$dir not valid directory"
-            exit 1
-        fi
-    ;;
-    *)
-        echo "export JULIA_PKG_DEVDIR=$HOME/.julia/dev" >> $HOME/.bash_profile
-    ;;
-esac
-
-echo "alias cdj='cd \$JULIA_PKG_DEVDIR; s'" >> $HOME/.bash_profile
-
-read -p "Set Julia depot path? Enter full path. [$HOME/.julia] " dir
-case "$dir" in
-    [/]*)
-        cd $HOME
-        if [[ -d "$dir" ]]; then
-            echo "export JULIA_DEPOT_PATH=$dir" >> $HOME/.bash_profile
-        else
-            echo "$dir not valid directory"
-            exit 1
-        fi
-        JULIA_DEPOT_PATH="$dir"
-    ;;
-    *)
-        echo "export JULIA_DEPOT_PATH=$HOME/.julia" >> $HOME/.bash_profile
-        JULIA_DEPOT_PATH="$HOME/.julia"
-    ;;
-esac
-
 # set default Julia environment
 mkdir -p $JULIA_DEPOT_PATH/environments/v1.9/
 mkdir -p $JULIA_DEPOT_PATH/environments/v1.10/
 mkdir -p $JULIA_DEPOT_PATH/environments/v1.11/
+mkdir -p $JULIA_DEPOT_PATH/environments/v1.12/
 
 ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.9/Project.toml
 ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.10/Project.toml
 ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.11/Project.toml
+ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.12/Project.toml
 
 ######
 # Spack
@@ -224,6 +219,25 @@ case "$yn" in
         echo ""                                            >> $HOME/.bash_profile
         echo "# spack"                                     >> $HOME/.bash_profile
         echo "source $HOME/spack/share/spack/setup-env.sh" >> $HOME/.bash_profile
+    ;;
+esac
+
+######
+# uv
+######
+
+read -p "Install uv? [Y/n] " yn
+case "$yn" in
+    [nN]*)
+    ;;
+    *)
+        if command -v uv &> /dev/null; then
+            echo "uv already installed, upgrading..."
+        else
+            echo "Installing uv..."
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+        fi
+        uv self update
     ;;
 esac
 
@@ -278,72 +292,74 @@ case "$yn" in
     ;;
 esac
 
-######
-# NEK5000
-######
 
-read -p "Install Nek5000? [y/N] " yn
-case "$yn" in
-    [yY]*)
-        cd $HOME
-        if [[ ! -d "$HOME/Nek5000" ]]; then
-            NEK_LINK="https://github.com/Nek5000/Nek5000/releases/download/v19.0/Nek5000-19.0.tar.gz"
-            wget $NEK_LINK
-            tar -xvf Nek5000-*.tar.gz > /dev/null # 2 > &1
-        fi
-        echo ""                                     >> $HOME/.bash_profile
-        echo "# Nek5000"                            >> $HOME/.bash_profile
-        echo "export PATH=$HOME/Nek5000/bin:\$PATH" >> $HOME/.bash_profile
-    ;;
-    *)
-    ;;
-esac
-
-######
-# SU2
-######
-read -p "Install SU2? [y/N] " yn
-case "$yn" in
-    [Yy]*)
-        case `uname` in
-            Darwin) SU2_LINK="https://github.com/su2code/SU2/releases/download/v7.4.0/SU2-v7.4.0-macos64-mpi.zip"
-                ;;
-            Linux) SU2_LINK="https://github.com/su2code/SU2/releases/download/v7.4.0/SU2-v7.4.0-linux64-mpi.zip"
-                ;;
-        esac
-
-        cd $HOME
-        SU2_CFD_PATH="$(which SU2_CFD)"
-        if [[ ! -f SU2_CFD_PATH ]]; then
-            SU2_HOME="$HOME/SU2"
-            SU2_RUN="$SU2_HOME/bin"
-
-            wget $SU2_LINK
-            unzip SU2-*.zip -d $SU2_HOME
-
-            echo ""                                        >> $HOME/.bash_profile
-            echo "# SU2"                                   >> $HOME/.bash_profile
-            echo "export SU2_RUN=$SU2_RUN"                 >> $HOME/.bash_profile
-            echo "export SU2_HOME=$SU2_HOME"               >> $HOME/.bash_profile
-            echo "export PATH=\$PATH:$SU2_RUN"             >> $HOME/.bash_profile
-            echo "export PYTHONPATH=\$PYTHONPATH:$SU2_RUN" >> $HOME/.bash_profile
-        fi
-    ;;
-    *)
-    ;;
-esac
 
 #----------------------------------------------------------------------------#
+
+# ######
+# # NEK5000
+# ######
+
+# read -p "Install Nek5000? [y/N] " yn
+# case "$yn" in
+#     [yY]*)
+#         cd $HOME
+#         if [[ ! -d "$HOME/Nek5000" ]]; then
+#             NEK_LINK="https://github.com/Nek5000/Nek5000/releases/download/v19.0/Nek5000-19.0.tar.gz"
+#             wget $NEK_LINK
+#             tar -xvf Nek5000-*.tar.gz > /dev/null # 2 > &1
+#         fi
+#         echo ""                                     >> $HOME/.bash_profile
+#         echo "# Nek5000"                            >> $HOME/.bash_profile
+#         echo "export PATH=$HOME/Nek5000/bin:\$PATH" >> $HOME/.bash_profile
+#     ;;
+#     *)
+#     ;;
+# esac
+
+# ######
+# # SU2
+# ######
+# read -p "Install SU2? [y/N] " yn
+# case "$yn" in
+#     [Yy]*)
+#         case `uname` in
+#             Darwin) SU2_LINK="https://github.com/su2code/SU2/releases/download/v7.4.0/SU2-v7.4.0-macos64-mpi.zip"
+#                 ;;
+#             Linux) SU2_LINK="https://github.com/su2code/SU2/releases/download/v7.4.0/SU2-v7.4.0-linux64-mpi.zip"
+#                 ;;
+#         esac
+
+#         cd $HOME
+#         SU2_CFD_PATH="$(which SU2_CFD)"
+#         if [[ ! -f SU2_CFD_PATH ]]; then
+#             SU2_HOME="$HOME/SU2"
+#             SU2_RUN="$SU2_HOME/bin"
+
+#             wget $SU2_LINK
+#             unzip SU2-*.zip -d $SU2_HOME
+
+#             echo ""                                        >> $HOME/.bash_profile
+#             echo "# SU2"                                   >> $HOME/.bash_profile
+#             echo "export SU2_RUN=$SU2_RUN"                 >> $HOME/.bash_profile
+#             echo "export SU2_HOME=$SU2_HOME"               >> $HOME/.bash_profile
+#             echo "export PATH=\$PATH:$SU2_RUN"             >> $HOME/.bash_profile
+#             echo "export PYTHONPATH=\$PYTHONPATH:$SU2_RUN" >> $HOME/.bash_profile
+#         fi
+#     ;;
+#     *)
+#     ;;
+# esac
 
 ######
 # matlab
 ######
 
-cd $HOME
-[ ! -d $HOME/matlab ] && mkdir matlab
-cd matlab
-[ ! -d spec ] && git clone https://github.com/vpuri3/spec.git
-ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
+# cd $HOME
+# [ ! -d $HOME/matlab ] && mkdir matlab
+# cd matlab
+# [ ! -d spec ] && git clone https://github.com/vpuri3/spec.git
+# ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
 
 
 ######
