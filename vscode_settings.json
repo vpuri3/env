@@ -13,7 +13,7 @@
         
     },
     "workbench.settings.applyToAllProfiles": [
-        
+        "editor.scrollBeyondLastColumn"
     ],
     
     "editor.quickSuggestions": {
@@ -31,11 +31,24 @@
         }
     },
     // "terminal.integrated.defaultProfile.linux": "tmux",
-    "terminal.integrated.defaultProfile.osx": "tmux",
+    // "terminal.integrated.defaultProfile.osx": "tmux",
     "explorer.confirmDelete": false,
     "editor.scrollBeyondLastColumn": 0,
     "editor.scrollBeyondLastLine": false,
-    
+    "remote.SSH.externalSSH_ASKPASS": true,
+    "terminal.integrated.fontSize": 13,
+    "terminal.integrated.enableMultiLinePasteWarning": false,
+    "git.autofetch": true,
+    "diffEditor.hideUnchangedRegions.enabled": true,
+    "explorer.confirmDragAndDrop": false,
+    "zenMode.hideLineNumbers": false,
+    "zenMode.centerLayout": false,
+    "zenMode.fullScreen": false,
+    "zenMode.hideStatusBar": false,
+    "zenMode.silentNotifications": false,
+    "zenMode.restore": false,
+    "zenMode.hideActivityBar": false,
+
     // "editor.autoClosingPairs": [
     //     {
     //         "open": "`",
@@ -43,4 +56,17 @@
     //         "notIn": ["string", "comment"]
     //     }
     // ],
+
+    // Python Linting
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.typeCheckingMode": "off",
+    // "python.linting.enabled": false,
+    "python.analysis.diagnosticSeverityOverrides": {
+        // "reportMissingImports": "none",
+        // "reportAttributeAccessIssue": "none",
+        // "reportGeneralTypeIssues": "none",
+        // "reportMissingParameterType": "none",
+        // "reportMissingTypeStubs": "none",
+    },
+
 }

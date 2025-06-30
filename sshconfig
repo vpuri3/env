@@ -8,7 +8,7 @@ Host *
 
 # GCloud
 Host h100-1x-XXXX
-    User milo
+    User vp
     HostName XX.XX.XX.XXX
     IdentityFile ~/.ssh/google_compute_engine
 
@@ -99,3 +99,7 @@ Host bebop
     HostName %h.lcrc.anl.gov
     User ac.vnpuri
 #
+
+# BEGIN MIGS MANAGED HOSTS
+
+# END MIGS MANAGED HOSTS

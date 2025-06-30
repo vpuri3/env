@@ -99,17 +99,33 @@ Linux)
     
 	# Check if we're on Ubuntu
 	if [ -f /etc/lsb-release ] && grep -q "Ubuntu" /etc/lsb-release; then
-		read -p "Update and install packages on Ubuntu? [Y/n] " yn
-		case "$yn" in
-			[nN]*)
-				;;
-			*)
-				sudo apt update
-				sudo apt list --upgradable
-				sudo apt upgrade -y
-				sudo apt install -y wget vim neovim python3-pip
-				;;
-		esac
+		if command -v apt >/dev/null 2>&1; then
+			read -p "Update and install packages on Ubuntu with apt? [Y/n] " yn
+			case "$yn" in
+				[nN]*)
+					;;
+				*)
+					sudo apt update
+					sudo apt list --upgradable
+					sudo apt upgrade -y
+					sudo apt install -y wget vim neovim python3-pip
+					;;
+			esac
+		elif command -v snap >/dev/null 2>&1; then
+			read -p "apt not available. Install packages on Ubuntu with snap? [Y/n] " yn
+			case "$yn" in
+				[nN]*)
+					;;
+				*)
+					sudo snap refresh
+					sudo snap install wget vim nvim
+					# Note: python3-pip typically comes with the system or needs different installation
+					echo "Note: You may need to install python3-pip separately using your system's package manager"
+					;;
+			esac
+		else
+			echo "Neither apt nor snap available on this Ubuntu system"
+		fi
 	fi
 
 	;;
@@ -226,20 +242,20 @@ esac
 # uv
 ######
 
-read -p "Install uv? [Y/n] " yn
-case "$yn" in
-    [nN]*)
-    ;;
-    *)
-        if command -v uv &> /dev/null; then
-            echo "uv already installed, upgrading..."
-        else
+if ! command -v uv &> /dev/null; then
+    read -p "Install uv? [Y/n] " yn
+    case "$yn" in
+        [nN]*)
+        ;;
+        *)
             echo "Installing uv..."
             curl -LsSf https://astral.sh/uv/install.sh | sh
-        fi
-        uv self update
-    ;;
-esac
+            uv self update
+        ;;
+    esac
+else
+    echo "uv is already installed, skipping installation"
+fi
 
 ######
 # conda

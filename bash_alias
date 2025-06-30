@@ -45,6 +45,8 @@ alias    gco='git checkout'
 alias     gb='git branch'
 alias     gd='git diff'
 alias    gdf='git difftool'
+# uv
+alias    uvr='uv run'
 # conda
 alias     ca='conda activate'
 alias    cde='conda deactivate'
