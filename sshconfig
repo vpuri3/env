@@ -6,11 +6,12 @@ Host *
     ForwardX11 yes
     IdentityFile ~/.ssh/id_ed25519
 
-# GCloud
-Host h100-1x-XXXX
-    User vp
-    HostName XX.XX.XX.XXX
+# CHMU Orchard
+Host orchard
+    HostName orchard-login-001
+    User vedantpu
     IdentityFile ~/.ssh/google_compute_engine
+    ProxyCommand ~/Downloads/google-cloud-sdk/bin/gcloud compute start-iap-tunnel %h 22 --listen-on-stdin --zone "us-central1-c" --project "cmu-gpu-cloud"
 
 # Julia Computing
 Host antarctic arctic1 cyclops
@@ -99,7 +100,3 @@ Host bebop
     HostName %h.lcrc.anl.gov
     User ac.vnpuri
 #
-
-# BEGIN MIGS MANAGED HOSTS
-
-# END MIGS MANAGED HOSTS
