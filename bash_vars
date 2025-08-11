@@ -5,6 +5,7 @@ export PS1='[\[\e[0;32m\]$ME\[\e[1;36m\]@$MACHINE\[\e[0m\] \W]:'
 
 # misc scripts
 export PATH=$HOME/bin:$PATH
+export PATH=$HOME/.local/bin:$PATH
 
 ## vars
 export email="vedantpuri@gmail.com"
