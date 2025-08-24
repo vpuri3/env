@@ -1,0 +1,2 @@
+#!/bin/bash
+srun --pty --overlap --jobid $1 bash
