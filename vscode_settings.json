@@ -6,6 +6,8 @@
 // link to  ~/Library/Application\ Support/Cursor/User/settings.json
 
 {
+    "window.commandCenter": true,
+
     "extensions.experimental.affinity": {
         "asvetliakov.vscode-neovim": 1
     },
@@ -57,16 +59,10 @@
     //     }
     // ],
 
-    // Python Linting
-    "python.analysis.autoImportCompletions": true,
-    "python.analysis.typeCheckingMode": "off",
-    // "python.linting.enabled": false,
-    "python.analysis.diagnosticSeverityOverrides": {
-        // "reportMissingImports": "none",
-        // "reportAttributeAccessIssue": "none",
-        // "reportGeneralTypeIssues": "none",
-        // "reportMissingParameterType": "none",
-        // "reportMissingTypeStubs": "none",
-    },
+    // Editor settings for better Python highlighting
+    "editor.semanticHighlighting.enabled": true,
+    "editor.bracketPairColorization.enabled": true,
+    "editor.guides.bracketPairs": true,
+    "editor.guides.indentation": true,
 
 }
