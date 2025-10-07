@@ -67,6 +67,12 @@
 
      // enable file watching
     "files.autoWatch": true,
+    // experimental file watcher
+    "files.useExperimentalFileWatcher": true,
+    // use exec server for ssh
+    "remote.SSH.useExecServer": true,
+    // auto reload
+    "files.autoReload": "afterDelay",
 
     // Hide from Explorer view
     "files.exclude": {
