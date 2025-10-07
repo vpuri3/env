@@ -65,4 +65,47 @@
     "editor.guides.bracketPairs": true,
     "editor.guides.indentation": true,
 
+     // enable file watching
+    "files.autoWatch": true,
+
+    // Hide from Explorer view
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/.mypy_cache": true,
+        "**/.pytest_cache": true,
+        "**/.ipynb_checkpoints": true,
+        "**/.git": true,
+        "**/.venv": true,
+        "**/venv": true,
+        "**/wandb": true,
+        "**/data/**": true,
+    },
+
+    // Exclude from file watching (saves CPU/memory)
+    "files.watcherExclude": {
+        "**/.git/**": true,
+        "**/.venv/**": true,
+        "**/wandb/**": true,
+        "**/data/**": true,
+    },
+
+    // Exclude from search
+    "search.exclude": {
+        "**/.git/**": true,
+        "**/.venv/**": true,
+        "**/wandb": true,
+        "**/data": true,
+    },
+
+    // Exclude from Python analysis (Pyright/Pylance)
+    "python.analysis.exclude": [
+        "**/__pycache__",
+        "**/.mypy_cache",
+        "**/.pytest_cache",
+        "**/.ipynb_checkpoints",
+        "**/wandb",
+        "**/cpkt*",
+        "**/data",
+    ]
+
 }
