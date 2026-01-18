@@ -37,8 +37,7 @@ touch $HOME/.bashrc
 echo ""                                             >> $HOME/.bash_profile
 echo "# https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bash_profile
 echo "[ -f $HOME/.bashrc ] && source $HOME/.bashrc" >> $HOME/.bash_profile
-echo "source $HOME/env/bash_vars"                   >> $HOME/.bash_profile
-echo "source $HOME/env/bash_alias"                  >> $HOME/.bash_profile
+echo ""                                             >> $HOME/.bash_profile
 
 #----------------------------------------------------------------------------#
 # symlink dotfiles
@@ -279,140 +278,17 @@ else
     echo "uv is already installed, skipping installation"
 fi
 
-######
-# conda
-######
-
-# read -p "Install Miniconda3? [Y/n] " yn
-# case "$yn" in
-#     [nN]*)
-#     ;;
-#     *)
-#         cd $HOME
-
-#         case `uname` in
-#             Darwin)
-#                 case `uname -m` in
-#                     x86*)
-#                         curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
-#                         chmod +x Miniconda3*.sh
-#                         bash ~/Miniconda3-latest-MacOSX-x86_64.sh
-
-#                         ;;
-#                     arm*)
-#                         curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh
-#                         chmod +x Miniconda3*.sh
-#                         bash ~/Miniconda3-latest-MacOSX-arm64.sh
-#                         ;;
-#                 esac
-#                 ;;
-#             Linux)
-#                 case `uname -m` in
-#                     x86*)
-#                         wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-#                         chmod +x Miniconda3*.sh
-#                         bash ~/Miniconda3-latest-Linux-x86_64.sh
-#                         ;;
-#                     *aarch64*)
-#                         wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
-#                         chmod +x Miniconda3*.sh
-#                         bash ~/Miniconda3-latest-Linux-aarch64.sh
-#                         ;;
-#                 esac
-#                 ;;
-#         esac
-
-#         CONDA_PATH=$(which conda)
-#         if [[ ! -f "$CONDA_PATH" ]]; then
-#             echo ""        >> $HOME/.bash_profile
-#             echo "# conda" >> $HOME/.bash_profile
-#         fi
-#     ;;
-# esac
-
 #----------------------------------------------------------------------------#
-
-# ######
-# # NEK5000
-# ######
-
-# read -p "Install Nek5000? [y/N] " yn
-# case "$yn" in
-#     [yY]*)
-#         cd $HOME
-#         if [[ ! -d "$HOME/Nek5000" ]]; then
-#             NEK_LINK="https://github.com/Nek5000/Nek5000/releases/download/v19.0/Nek5000-19.0.tar.gz"
-#             wget $NEK_LINK
-#             tar -xvf Nek5000-*.tar.gz > /dev/null # 2 > &1
-#         fi
-#         echo ""                                     >> $HOME/.bash_profile
-#         echo "# Nek5000"                            >> $HOME/.bash_profile
-#         echo "export PATH=$HOME/Nek5000/bin:\$PATH" >> $HOME/.bash_profile
-#     ;;
-#     *)
-#     ;;
-# esac
-
-# ######
-# # SU2
-# ######
-# read -p "Install SU2? [y/N] " yn
-# case "$yn" in
-#     [Yy]*)
-#         case `uname` in
-#             Darwin) SU2_LINK="https://github.com/su2code/SU2/releases/download/v7.4.0/SU2-v7.4.0-macos64-mpi.zip"
-#                 ;;
-#             Linux) SU2_LINK="https://github.com/su2code/SU2/releases/download/v7.4.0/SU2-v7.4.0-linux64-mpi.zip"
-#                 ;;
-#         esac
-
-#         cd $HOME
-#         SU2_CFD_PATH="$(which SU2_CFD)"
-#         if [[ ! -f SU2_CFD_PATH ]]; then
-#             SU2_HOME="$HOME/SU2"
-#             SU2_RUN="$SU2_HOME/bin"
-
-#             wget $SU2_LINK
-#             unzip SU2-*.zip -d $SU2_HOME
-
-#             echo ""                                        >> $HOME/.bash_profile
-#             echo "# SU2"                                   >> $HOME/.bash_profile
-#             echo "export SU2_RUN=$SU2_RUN"                 >> $HOME/.bash_profile
-#             echo "export SU2_HOME=$SU2_HOME"               >> $HOME/.bash_profile
-#             echo "export PATH=\$PATH:$SU2_RUN"             >> $HOME/.bash_profile
-#             echo "export PYTHONPATH=\$PYTHONPATH:$SU2_RUN" >> $HOME/.bash_profile
-#         fi
-#     ;;
-#     *)
-#     ;;
-# esac
-
-######
-# matlab
-######
-
-# cd $HOME
-# [ ! -d $HOME/matlab ] && mkdir matlab
-# cd matlab
-# [ ! -d spec ] && git clone https://github.com/vpuri3/spec.git
-# ln -sf $HOME/env/startup.m $HOME/matlab/startup.m
-
-
-######
-# PETSc
-######
-
-# export PETSC_DIR=/Users/vp/software/petsc
-# export PETSC_ARCH=arch-darwin-c-debug
-
-######
-# Visit
-######
-
-# export PATH=/Applications/VisIt.app/Contents/MacOS:$PATH
 
 ######
 # end
 ######
 
+echo ""                                >> $HOME/.bash_profile
+echo "# General environment variables" >> $HOME/.bash_profile
+echo "source $HOME/env/bash_vars"      >> $HOME/.bash_profile
+echo "source $HOME/env/bash_alias"     >> $HOME/.bash_profile
+echo ""                                >> $HOME/.bash_profile
+
 eval "source $HOME/.bash_profile"
+#
