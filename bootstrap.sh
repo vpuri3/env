@@ -212,11 +212,13 @@ mkdir -p $JULIA_DEPOT_PATH/environments/v1.9/
 mkdir -p $JULIA_DEPOT_PATH/environments/v1.10/
 mkdir -p $JULIA_DEPOT_PATH/environments/v1.11/
 mkdir -p $JULIA_DEPOT_PATH/environments/v1.12/
+mkdir -p $JULIA_DEPOT_PATH/environments/v1.13/
 
 ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.9/Project.toml
 ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.10/Project.toml
 ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.11/Project.toml
 ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.12/Project.toml
+ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.13/Project.toml
 
 ######
 # Spack
@@ -237,6 +239,26 @@ case "$yn" in
         echo "source $HOME/spack/share/spack/setup-env.sh" >> $HOME/.bash_profile
     ;;
 esac
+
+######
+# Set python work directory
+######
+
+echo ""         >> $HOME/.bash_profile
+echo "# Python" >> $HOME/.bash_profile
+
+read -p "Set Python work directory? Enter full path. [$HOME/python] " dir
+case "$dir" in
+    [/]*)
+        cd $HOME
+        echo "export PY_WD=$dir" >> $HOME/.bash_profile
+    ;;
+    *)
+        echo "export PY_WD=$HOME/python" >> $HOME/.bash_profile
+    ;;
+esac
+
+echo "alias cdp='cd \$PY_WD; s'" >> $HOME/.bash_profile
 
 ######
 # uv
@@ -261,52 +283,52 @@ fi
 # conda
 ######
 
-read -p "Install Miniconda3? [Y/n] " yn
-case "$yn" in
-    [nN]*)
-    ;;
-    *)
-        cd $HOME
+# read -p "Install Miniconda3? [Y/n] " yn
+# case "$yn" in
+#     [nN]*)
+#     ;;
+#     *)
+#         cd $HOME
 
-        case `uname` in
-            Darwin)
-                case `uname -m` in
-                    x86*)
-                        curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
-                        chmod +x Miniconda3*.sh
-                        bash ~/Miniconda3-latest-MacOSX-x86_64.sh
+#         case `uname` in
+#             Darwin)
+#                 case `uname -m` in
+#                     x86*)
+#                         curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
+#                         chmod +x Miniconda3*.sh
+#                         bash ~/Miniconda3-latest-MacOSX-x86_64.sh
 
-                        ;;
-                    arm*)
-                        curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh
-                        chmod +x Miniconda3*.sh
-                        bash ~/Miniconda3-latest-MacOSX-arm64.sh
-                        ;;
-                esac
-                ;;
-            Linux)
-                case `uname -m` in
-                    x86*)
-                        wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-                        chmod +x Miniconda3*.sh
-                        bash ~/Miniconda3-latest-Linux-x86_64.sh
-                        ;;
-                    *aarch64*)
-                        wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
-                        chmod +x Miniconda3*.sh
-                        bash ~/Miniconda3-latest-Linux-aarch64.sh
-                        ;;
-                esac
-                ;;
-        esac
+#                         ;;
+#                     arm*)
+#                         curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh
+#                         chmod +x Miniconda3*.sh
+#                         bash ~/Miniconda3-latest-MacOSX-arm64.sh
+#                         ;;
+#                 esac
+#                 ;;
+#             Linux)
+#                 case `uname -m` in
+#                     x86*)
+#                         wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+#                         chmod +x Miniconda3*.sh
+#                         bash ~/Miniconda3-latest-Linux-x86_64.sh
+#                         ;;
+#                     *aarch64*)
+#                         wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
+#                         chmod +x Miniconda3*.sh
+#                         bash ~/Miniconda3-latest-Linux-aarch64.sh
+#                         ;;
+#                 esac
+#                 ;;
+#         esac
 
-        CONDA_PATH=$(which conda)
-        if [[ ! -f "$CONDA_PATH" ]]; then
-            echo ""        >> $HOME/.bash_profile
-            echo "# conda" >> $HOME/.bash_profile
-        fi
-    ;;
-esac
+#         CONDA_PATH=$(which conda)
+#         if [[ ! -f "$CONDA_PATH" ]]; then
+#             echo ""        >> $HOME/.bash_profile
+#             echo "# conda" >> $HOME/.bash_profile
+#         fi
+#     ;;
+# esac
 
 #----------------------------------------------------------------------------#
 

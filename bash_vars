@@ -1,13 +1,19 @@
 #!/bin/bash
 
-# PS1
+###
+### PS1
+###
 export PS1='[\[\e[0;32m\]$ME\[\e[1;36m\]@$MACHINE\[\e[0m\] \W]:'
 
-# misc scripts
+###
+### misc scripts
+###
 export PATH=$HOME/bin:$PATH
 export PATH=$HOME/.local/bin:$PATH
 
-## vars
+###
+### misc vars
+###
 export email="vedantpuri@gmail.com"
 export QSTAT_HEADER="JobId:User:QueuedTime:RunTime:WallTime:State:Location:Nodes"
 export TZ="America/New_York"
@@ -45,7 +51,9 @@ Linux)
 	;;
 esac
 
-# X11
+###
+### X11
+###
 if [[ ! -n $DISPLAY ]]; then
     export DISPLAY=:0
 fi
@@ -70,5 +78,42 @@ else
         export NTHREADS=1
     fi
 fi
+
+###
+### Set python cache location
+###
+
+PY_CACHE_BASE="${PY_WD}/cache"
+
+export PIP_CACHE_DIR="${PY_CACHE_BASE}/pip"
+export UV_CACHE_DIR="${PY_CACHE_BASE}/uv"
+export XDG_CACHE_HOME="${PY_CACHE_BASE}"
+export HF_HOME="${PY_CACHE_BASE}/huggingface"
+export HUGGINGFACE_HUB_CACHE="${PY_CACHE_BASE}/huggingface"
+export TORCH_HOME="${PY_CACHE_BASE}/torch"
+export WANDB_CACHE_DIR="${PY_CACHE_BASE}/wandb"
+export TRITON_CACHE_DIR="${PY_CACHE_BASE}/triton"
+export TRANSFORMERS_CACHE="${PY_CACHE_BASE}/transformers"
+export DATASETS_CACHE="${PY_CACHE_BASE}/datasets"
+export MPLCONFIGDIR="${PY_CACHE_BASE}/matplotlib"
+export HF_DATASETS_CACHE="${PY_CACHE_BASE}/datasets"
+export HF_HUB_CACHE="${PY_CACHE_BASE}/huggingface"
+
+# Cache base
+mkdir -p "${PY_CACHE_BASE}"
+mkdir -p "${PIP_CACHE_DIR}"
+mkdir -p "${UV_CACHE_DIR}"
+mkdir -p "${XDG_CACHE_HOME}"
+mkdir -p "${TORCH_HOME}"
+mkdir -p "${WANDB_CACHE_DIR}"
+mkdir -p "${TRITON_CACHE_DIR}"
+mkdir -p "${TRANSFORMERS_CACHE}"
+mkdir -p "${DATASETS_CACHE}"
+mkdir -p "${HF_DATASETS_CACHE}"
+mkdir -p "${HF_HUB_CACHE}"
+mkdir -p "$MPLCONFIGDIR"
+mkdir -p "${HF_HOME}"
+mkdir -p "${HF_DATASETS_CACHE}"
+mkdir -p "${HF_HUB_CACHE}"
 
 #
