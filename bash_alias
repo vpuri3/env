@@ -11,6 +11,7 @@ alias    cdn='cd $NEK_WD; s'
 alias    cdp='cd $PY_WD; s'
 alias     kk='kill'
 alias     ka='killall'
+alias    ka9='killall -9'
 alias     k9='kill -9'
 alias     tc='tar -cvf'  # create
 alias     tx='tar -xvf'  # extract
@@ -51,6 +52,7 @@ alias    uvr='uv run'
 # conda
 alias     ca='conda activate'
 alias    cde='conda deactivate'
+alias   vact='source ~/.bash_profile && source "${PWD}/.venv/bin/activate"'
 # screen
 alias    sls='screen -ls'
 alias    sdr='screen -dr'
