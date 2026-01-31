@@ -7,6 +7,22 @@
 
 // Place your key bindings in this file to override the defaults
 [
+    //========================================//
+    // refresh file
+    //========================================//
+    {
+        "key": "cmd+r",
+        "command": "workbench.action.files.revert",
+        "when": "editorTextFocus && !editorReadonly"
+    },
+    {
+        "key": "ctrl+r",
+        "command": "workbench.action.files.revert",
+        "when": "editorTextFocus && !editorReadonly"
+    },
+
+    //========================================//
+    //========================================//
     {
         "key": "ctrl+p",
         "command": "workbench.action.previousEditor",
