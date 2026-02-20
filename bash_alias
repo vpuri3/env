@@ -31,6 +31,7 @@ alias   mtlb='$MTLB_BIN/matlab -nodesktop'
 # slurm
 alias     qs='qstat  -u $(whoami)' 
 alias     sq='squeue -u $(whoami)' 
+alias    sqw='watch squeue -u $(whoami)' 
 # file viewing
 alias     tf='tail -f'
 alias     le='less'
@@ -86,5 +87,6 @@ Linux)
 	alias  s='ls -lh  --color=tty'
 	alias la='ls -lA  --color=tty'
 	alias lt='ls -ltr --color=tty'
+    alias fgpu='sinfo -N -O "partition:15,nodelist:25,gres:15,gresused:15,statecompact:10" | awk '\''$4!="gpu:8" && $3~/gpu/'\'' | column -t'
 	;;
 esac
