@@ -83,6 +83,8 @@ fi
 ### Set python cache location
 ###
 
+# Ensure cache paths never resolve to /cache when PY_WD is unset.
+export PY_WD="${PY_WD:-$HOME/python}"
 PY_CACHE_BASE="${PY_WD}/cache"
 
 export PIP_CACHE_DIR="${PY_CACHE_BASE}/pip"
@@ -111,7 +113,5 @@ mkdir -p "${HF_DATASETS_CACHE}"
 mkdir -p "${HF_HUB_CACHE}"
 mkdir -p "$MPLCONFIGDIR"
 mkdir -p "${HF_HOME}"
-mkdir -p "${HF_DATASETS_CACHE}"
-mkdir -p "${HF_HUB_CACHE}"
 
 #
