@@ -87,6 +87,6 @@ Linux)
 	alias  s='ls -lh  --color=tty'
 	alias la='ls -lA  --color=tty'
 	alias lt='ls -ltr --color=tty'
-    alias fgpu='sinfo -N -O "partition:15,nodelist:25,gres:15,gresused:15,statecompact:10" | awk '\''$4!="gpu:8" && $3~/gpu/'\'' | column -t'
+		    alias fgpu='sinfo -N -O "partition:15,nodelist:25,gres:15,gresused:15,statecompact:10" | awk '\''NR==1 || ($4!="gpu:8" && $3~/gpu/)'\'' | column -t'
 	;;
 esac
