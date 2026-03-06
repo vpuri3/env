@@ -1,0 +1,8 @@
+# Copy this file to ~/.ssh/config.local and customize machine-specific overrides.
+#
+# Example:
+# Host github.com
+#     HostName github.com
+#     User git
+#     IdentityFile ~/.ssh/id_ed25519_github_orchard
+#     IdentitiesOnly yes

@@ -1,92 +1,93 @@
 #!/bin/bash
 
-# util
-alias   rmfr=`rm -fr`
-alias     cp='cp -r'
-alias    scp='scp -r'
-alias    ssh='ssh -Y'
-alias     ..='cd ..'
-alias     dc='cd -'
-alias    cdn='cd $NEK_WD; s'
-alias    cdp='cd $PY_WD; s'
-alias     kk='kill'
-alias     ka='killall'
-alias    ka9='killall -9'
-alias     k9='kill -9'
-alias     tc='tar -cvf'  # create
-alias     tx='tar -xvf'  # extract
-alias     hn='head -n'
-alias    hn1='head -n 1'
-alias whereami='hostname'
-#  paraview
-alias       pv='paraview'
-# 
-alias     nv="nvim"
-alias     sx="sxiv -b"
-alias     ok="okular"
-alias     em='emacs -nw'
-alias     tm='tmux -new'
-alias     ts='tmux ls'
-alias   mtlb='$MTLB_BIN/matlab -nodesktop'
-# slurm
-alias     qs='qstat  -u $(whoami)' 
-alias     sq='squeue -u $(whoami)' 
-alias    sqw='watch squeue -u $(whoami)' 
-# file viewing
-alias     tf='tail -f'
-alias     le='less'
-alias    lel='less logfile'
-# git
-alias     gs='git status'
-alias     ga='git add'
-alias    gau='git add -u'
-alias     gp='git push'
-alias     up='git push --set-upstream'
-alias     gc='git commit'
-alias    gcm='git commit -m'
-alias    gco='git checkout'
-alias     gb='git branch'
-alias     gd='git diff'
-alias    gdf='git difftool'
-# uv
-alias    uvr='uv run'
-# conda
-alias     ca='conda activate'
-alias    cde='conda deactivate'
-alias   vact='source ~/.bash_profile && source "${PWD}/.venv/bin/activate"'
-# screen
-alias    sls='screen -ls'
-alias    sdr='screen -dr'
-#. $HOME/Downloads/z-master/z.sh
-# Julia
-alias     jl='julia --proj'
-alias     jj='julia +beta --proj'
-alias   jlts='julia +lts --proj'
-alias    jup='juliaup'
+# navigation
+alias ..='cd ..'
+alias dc='cd -'
+alias cdn='cd $NEK_WD; s'
+alias cdp='cd $PY_WD; s'
 
-case `uname` in
+# file operations
+alias cp='cp -r'
+alias scp='scp -r'
+alias tc='tar -cvf'
+alias tx='tar -xvf'
+
+# process control
+alias kk='kill'
+alias ka='killall'
+alias ka9='killall -9'
+alias k9='kill -9'
+
+# shell and editor
+alias ssh='ssh -Y'
+alias nv='nvim'
+alias em='emacs -nw'
+alias tm='tmux -new'
+alias ts='tmux ls'
+alias vact='source ~/.bash_profile && source "${PWD}/.venv/bin/activate"'
+
+# viewers
+alias hn='head -n'
+alias hn1='head -n 1'
+alias tf='tail -f'
+alias le='less'
+alias lel='less logfile'
+alias whereami='hostname'
+alias pv='paraview'
+alias sx='sxiv -b'
+alias ok='okular'
+alias mtlb='$MTLB_BIN/matlab -nodesktop'
+
+# schedulers
+alias qs='qstat -u $(whoami)'
+alias sq='squeue -u $(whoami)'
+alias sqw='watch squeue -u $(whoami)'
+
+# git
+alias ga='git add'
+alias gau='git add -u'
+alias gb='git branch'
+alias gc='git commit'
+alias gcm='git commit -m'
+alias gco='git checkout'
+alias gd='git diff'
+alias gdf='git difftool'
+alias gp='git push'
+alias gs='git status'
+alias up='git push --set-upstream'
+
+# toolchains
+alias uvr='uv run'
+alias ca='conda activate'
+alias cde='conda deactivate'
+
+# julia
+alias jl='julia --proj'
+alias jj='julia +beta --proj'
+alias jlts='julia +lts --proj'
+alias jup='juliaup'
+
+case "$(uname)" in
 Darwin)
-	# util
-	alias      s='ls -lh  -G'
-	alias     la='ls -lA  -G'
-	alias     lt='ls -ltr -G'
-	alias    cdv='cd $HOME/vedant; s'
-    alias    cdg='cd $HOME/Google\ Drive; s'
-    alias    cdc='cd $HOME/cmu; s'
-    alias    cdd='cd $HOME/Downloads; s'
-    alias    cdr='cd $HOME/read; s'
-	# osx
-    alias   disp='open /System/Library/PreferencePanes/Displays.prefPane'
-    alias   opcr='open -a /Applications/Google\ Chrome.app/'
-    # brew
-    alias     bu='brew upgrade; brew update'
-    alias   bdep='brew deps --tree'
-	;;
+    # macOS utilities
+    alias s='ls -lh -G'
+    alias la='ls -lA -G'
+    alias lt='ls -ltr -G'
+    alias cdv='cd $HOME/vedant; s'
+    alias cdg='cd $HOME/Google\ Drive; s'
+    alias cdc='cd $HOME/cmu; s'
+    alias cdd='cd $HOME/Downloads; s'
+    alias cdr='cd $HOME/read; s'
+    alias disp='open /System/Library/PreferencePanes/Displays.prefPane'
+    alias opcr='open -a /Applications/Google\ Chrome.app/'
+    alias bu='brew upgrade; brew update'
+    alias bdep='brew deps --tree'
+    ;;
 Linux)
-	# util
-	alias  s='ls -lh  --color=tty'
-	alias la='ls -lA  --color=tty'
-	alias lt='ls -ltr --color=tty'
-		    alias fgpu='sinfo -N -O "partition:15,nodelist:25,gres:15,gresused:15,statecompact:10" | awk '\''NR==1 || ($4!="gpu:8" && $3~/gpu/)'\'' | column -t'
-	;;
+    # Linux utilities
+    alias s='ls -lh --color=tty'
+    alias la='ls -lA --color=tty'
+    alias lt='ls -ltr --color=tty'
+    alias fgpu='sinfo -N -O "partition:15,nodelist:25,gres:15,gresused:15,statecompact:10" | awk '\''NR==1 || ($4!="gpu:8" && $3~/gpu/)'\'' | column -t'
+    ;;
 esac

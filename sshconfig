@@ -4,7 +4,7 @@ Host *
     IgnoreUnknown UseKeychain
     UseKeychain yes
     ForwardX11 yes
-    IdentityFile ~/.ssh/id_ed25519
+Include ~/.ssh/config.local
 
 # CHMU Orchard
 Host orchard

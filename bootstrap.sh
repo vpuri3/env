@@ -1,65 +1,100 @@
 #!/bin/bash
 
-cd $HOME
+set -e
 
-######
-# SSH
-######
+ENV_REPO_DIR="$HOME/env"
+ENV_REPO_HTTPS="https://github.com/vpuri3/env.git"
+ENV_REPO_SSH="git@github.com:vpuri3/env.git"
+PROFILE_FILE="$HOME/.bash_profile"
+BASHRC_FILE="$HOME/.bashrc"
 
-# if [ ! -f $HOME/.ssh/*pub ]; then
-#     echo "generating SSH keys"
-#     ssh-keygen -t ed25519 -C "vedantpuri@gmail.com"
-#     eval "$(ssh-agent -s)"
-# 	  ssh-add -K $HOME/.ssh/id_ed25519
-# fi
+append_line_if_missing() {
+    local file line
+    file="$1"
+    line="$2"
 
-# touch $HOME/.ssh/config
-# printf "Host *\n    AddKeysToAgent yes\n    UseKeychain yes\n    IdentityFile ~/.ssh/id_ed25519" > $HOME/.ssh/config
+    touch "$file"
+    grep -Fqx "$line" "$file" || printf '%s\n' "$line" >> "$file"
+}
 
-#----------------------------------------------------------------------------#
-# load env from git
-#----------------------------------------------------------------------------#
+upsert_prefix_line() {
+    local file prefix line tmp_file
+    file="$1"
+    prefix="$2"
+    line="$3"
+    tmp_file=$(mktemp)
 
-[ ! -d ~/env ] && git clone https://github.com/vpuri3/env.git
-cd $HOME/env
-git remote rm origin
-git remote add origin git@github.com:vpuri3/env.git
+    touch "$file"
+    awk -v prefix="$prefix" 'index($0, prefix) != 1' "$file" > "$tmp_file"
+    printf '%s\n' "$line" >> "$tmp_file"
+    mv "$tmp_file" "$file"
+}
 
-#----------------------------------------------------------------------------#
-# source env/bash_vars, env/bash_alias in ~/.bash_profile
-#----------------------------------------------------------------------------#
+prompt_yes_no() {
+    local prompt reply
+    prompt="$1"
 
-cd $HOME
+    read -r -p "$prompt [Y/n] " reply
+    case "$reply" in
+        [nN]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
 
-touch $HOME/.bash_profile
-touch $HOME/.bashrc
+ensure_profile_bootstrap() {
+    touch "$PROFILE_FILE" "$BASHRC_FILE"
+    append_line_if_missing "$PROFILE_FILE" "# https://github.com/vpuri3/env/bootstrap.sh"
+    append_line_if_missing "$PROFILE_FILE" "[ -f \$HOME/.bashrc ] && source \$HOME/.bashrc"
+}
 
-echo ""                                             >> $HOME/.bash_profile
-echo "# https://github.com/vpuri3/env/bootstrap.sh" >> $HOME/.bash_profile
-echo "[ -f $HOME/.bashrc ] && source $HOME/.bashrc" >> $HOME/.bash_profile
-echo ""                                             >> $HOME/.bash_profile
+clone_env_repo() {
+    cd "$HOME"
 
-#----------------------------------------------------------------------------#
-# symlink dotfiles
-#----------------------------------------------------------------------------#
-chmod +x $HOME/env/bin/*
+    if [ ! -d "$ENV_REPO_DIR" ]; then
+        git clone "$ENV_REPO_HTTPS" "$ENV_REPO_DIR"
+    fi
 
-ln -sf $HOME/env/bin        $HOME/bin
-ln -sf $HOME/env/emacs.conf $HOME/.emacs
-ln -sf $HOME/env/vimrc      $HOME/.vimrc
-ln -sf $HOME/env/gitconfig  $HOME/.gitconfig
-ln -sf $HOME/env/gitignore  $HOME/.gitignore
-ln -sf $HOME/env/tmux.conf  $HOME/.tmux.conf
-ln -sf $HOME/env/condarc    $HOME/.condarc
+    cd "$ENV_REPO_DIR"
+    if git remote get-url origin >/dev/null 2>&1; then
+        git remote set-url origin "$ENV_REPO_SSH"
+    else
+        git remote add origin "$ENV_REPO_SSH"
+    fi
+}
 
-mkdir -p $HOME/.ssh
-ln -sf $HOME/env/sshconfig  $HOME/.ssh/config
+link_file() {
+    local source_path target_path
+    source_path="$1"
+    target_path="$2"
 
-[ ! -d "$HOME/.config" ] && mkdir -p $HOME/.config
-ln -sf $HOME/env/nvim       $HOME/.config/nvim
+    mkdir -p "$(dirname "$target_path")"
+    ln -sfn "$source_path" "$target_path"
+}
 
-source ~/.bash_profile
-cd $HOME
+ensure_ssh_local_config() {
+    local target_path
+    target_path="$HOME/.ssh/config.local"
+
+    mkdir -p "$HOME/.ssh"
+    if [ ! -f "$target_path" ]; then
+        cp "$ENV_REPO_DIR/sshconfig.local.example" "$target_path"
+    fi
+}
+
+symlink_dotfiles() {
+    chmod +x "$ENV_REPO_DIR"/bin/*
+
+    link_file "$ENV_REPO_DIR/bin" "$HOME/bin"
+    link_file "$ENV_REPO_DIR/emacs.conf" "$HOME/.emacs"
+    link_file "$ENV_REPO_DIR/vimrc" "$HOME/.vimrc"
+    link_file "$ENV_REPO_DIR/gitconfig" "$HOME/.gitconfig"
+    link_file "$ENV_REPO_DIR/gitignore" "$HOME/.gitignore"
+    link_file "$ENV_REPO_DIR/tmux.conf" "$HOME/.tmux.conf"
+    link_file "$ENV_REPO_DIR/condarc" "$HOME/.condarc"
+    link_file "$ENV_REPO_DIR/sshconfig" "$HOME/.ssh/config"
+    ensure_ssh_local_config
+    link_file "$ENV_REPO_DIR/nvim" "$HOME/.config/nvim"
+}
 
 install_neovim() {
     local os arch archive_url archive_name install_root bin_dir tmp_dir extracted_dir
@@ -127,220 +162,200 @@ install_neovim() {
     rm -rf "$tmp_dir"
 }
 
-#----------------------------------------------------------------------------#
-case `uname` in
-Darwin)
+install_macos_packages() {
+    if prompt_yes_no "Install xcode command line tools?"; then
+        xcode-select -p >/dev/null 2>&1 || xcode-select --install
+    fi
 
-    read -p "Install xcode command line tools? [Y/n] " yn
-    case "$yn" in
-        [nN]*)
-            ;;
-        *)
-            xcode-select -p > /dev/null
-            [ "$?" == "0" ] || xcode-select --install
-            ;;
-    esac
+    if prompt_yes_no "Install Homebrew?"; then
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        append_line_if_missing "$BASHRC_FILE" "# Homebrew"
+        append_line_if_missing "$BASHRC_FILE" 'eval "$(/opt/homebrew/bin/brew shellenv)"'
+    fi
 
-    read -p "Install Homebrew? [Y/n] " yn
-    case "$yn" in
-        [nN]*)
-            ;;
-        *)
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"")"
-            echo "# Homebrew"                                >> $HOME./bashrc
-            echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $HOME/.bashrc
-            ;;
-    esac
+    if [ -x /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+        brew install wget vim
+    fi
 
-    # install utilities
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-    brew install wget vim
-
-    # disable press-and-hold on Mac
     defaults write NSGlobalDomain ApplePressAndHoldEnabled -bool false
+}
 
-	;;
-Linux)
-    
-	# Check if we're on Ubuntu
-	if [ -f /etc/lsb-release ] && grep -q "Ubuntu" /etc/lsb-release; then
-		if command -v apt >/dev/null 2>&1; then
-			read -p "Update and install packages on Ubuntu with apt? [Y/n] " yn
-			case "$yn" in
-				[nN]*)
-					;;
-				*)
-					sudo apt update
-					sudo apt list --upgradable
-					sudo apt upgrade -y
-					sudo apt install -y wget vim python3-pip
-					;;
-			esac
-		elif command -v snap >/dev/null 2>&1; then
-			read -p "apt not available. Install packages on Ubuntu with snap? [Y/n] " yn
-			case "$yn" in
-				[nN]*)
-					;;
-				*)
-					sudo snap refresh
-					sudo snap install wget vim
-					# Note: python3-pip typically comes with the system or needs different installation
-					echo "Note: You may need to install python3-pip separately using your system's package manager"
-					;;
-			esac
-		else
-			echo "Neither apt nor snap available on this Ubuntu system"
-		fi
-	fi
-
-	;;
-esac
-
-######
-# vim
-######
-
-read -p "Install Julia-vim plugin? [Y/n] " yn
-case "$yn" in
-    [nN]*)
-    ;;
-    *)
-        [ ! -d "$HOME/.vim" ] && mkdir -p $HOME/.vim
-        cd $HOME/.vim
-        mkdir -p pack/plugins/start && cd pack/plugins/start
-        git clone https://github.com/JuliaEditorSupport/julia-vim.git # julia-vim
-    ;;
-esac
-
-######
-# neovim
-######
-
-read -p "Install Neovim binary? [Y/n] " yn
-case "$yn" in
-    [nN]*)
-    ;;
-    *)
-        install_neovim
-    ;;
-esac
-
-######
-# Julia
-######
-
-echo ""        >> $HOME/.bash_profile
-echo "# Julia" >> $HOME/.bash_profile
-
-read -p "Set JULIA_DEPOT_PATH? Enter full path. [$HOME/.julia] " dir
-case "$dir" in
-    [/]*)
-        cd $HOME
-        echo "export JULIA_DEPOT_PATH=$dir" >> $HOME/.bash_profile
-        echo "export JULIAUP_DEPOT_PATH=$dir/juliaup" >> $HOME/.bash_profile
-    ;;
-    *)
-        echo "export JULIA_DEPOT_PATH=$HOME/.julia" >> $HOME/.bash_profile
-        echo "export JULIAUP_DEPOT_PATH=$HOME/.julia/juliaup" >> $HOME/.bash_profile
-    ;;
-esac
-
-echo "alias cdj='cd \$JULIA_DEPOT_PATH/dev; s'" >> $HOME/.bash_profile
-
-read -p "Install Julia via juliaup? [Y/n] " yn
-case "$yn" in
-    [nN]*)
-    ;;
-    *)
-        curl -fsSL https://install.julialang.org | sh # juliaup
-        [ ! -d $HOME/.julia/config ] && mkdir -p $HOME/.julia/config
-        ln -sf $HOME/env/startup.jl $HOME/.julia/config/startup.jl
-    ;;
-esac
-
-# set default Julia environment
-mkdir -p $JULIA_DEPOT_PATH/environments/v1.9/
-mkdir -p $JULIA_DEPOT_PATH/environments/v1.10/
-mkdir -p $JULIA_DEPOT_PATH/environments/v1.11/
-mkdir -p $JULIA_DEPOT_PATH/environments/v1.12/
-mkdir -p $JULIA_DEPOT_PATH/environments/v1.13/
-
-ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.9/Project.toml
-ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.10/Project.toml
-ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.11/Project.toml
-ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.12/Project.toml
-ln -f $HOME/env/JL_Project.toml $JULIA_DEPOT_PATH/environments/v1.13/Project.toml
-
-######
-# Spack
-######
-
-read -p "Install Spack? [Y/n] " yn
-case "$yn" in
-    [nN]*)
-    ;;
-    *)
-        if [[ ! -d "$HOME/spack" ]]; then
-            git clone https://github.com/spack/spack.git $HOME/spack
-            $HOME/share/spack/setup-env.sh
+install_linux_packages() {
+    if [ -f /etc/lsb-release ] && grep -q "Ubuntu" /etc/lsb-release; then
+        if command -v apt >/dev/null 2>&1; then
+            if prompt_yes_no "Update and install packages on Ubuntu with apt?"; then
+                sudo apt update
+                sudo apt list --upgradable
+                sudo apt upgrade -y
+                sudo apt install -y wget vim python3-pip
+            fi
+        elif command -v snap >/dev/null 2>&1; then
+            if prompt_yes_no "apt not available. Install packages on Ubuntu with snap?"; then
+                sudo snap refresh
+                sudo snap install wget vim
+                echo "Note: You may need to install python3-pip separately using your system's package manager"
+            fi
+        else
+            echo "Neither apt nor snap available on this Ubuntu system"
         fi
+    fi
+}
 
-        echo ""                                            >> $HOME/.bash_profile
-        echo "# spack"                                     >> $HOME/.bash_profile
-        echo "source $HOME/spack/share/spack/setup-env.sh" >> $HOME/.bash_profile
-    ;;
-esac
-
-######
-# Set python work directory
-######
-
-echo ""         >> $HOME/.bash_profile
-echo "# Python" >> $HOME/.bash_profile
-
-read -p "Set Python work directory? Enter full path. [$HOME/python] " dir
-case "$dir" in
-    [/]*)
-        cd $HOME
-        echo "export PY_WD=$dir" >> $HOME/.bash_profile
-    ;;
-    *)
-        echo "export PY_WD=$HOME/python" >> $HOME/.bash_profile
-    ;;
-esac
-
-echo "alias cdp='cd \$PY_WD; s'" >> $HOME/.bash_profile
-
-######
-# uv
-######
-
-if ! command -v uv &> /dev/null; then
-    read -p "Install uv? [Y/n] " yn
-    case "$yn" in
-        [nN]*)
-        ;;
-        *)
-            echo "Installing uv..."
-            curl -LsSf https://astral.sh/uv/install.sh | sh
-            uv self update
-        ;;
+install_platform_packages() {
+    case "$(uname -s)" in
+        Darwin) install_macos_packages ;;
+        Linux) install_linux_packages ;;
     esac
-else
-    echo "uv is already installed, skipping installation"
-fi
+}
 
-#----------------------------------------------------------------------------#
+install_julia_vim() {
+    if ! prompt_yes_no "Install Julia-vim plugin?"; then
+        return 0
+    fi
 
-######
-# end
-######
+    mkdir -p "$HOME/.vim/pack/plugins/start"
+    if [ ! -d "$HOME/.vim/pack/plugins/start/julia-vim" ]; then
+        git clone https://github.com/JuliaEditorSupport/julia-vim.git "$HOME/.vim/pack/plugins/start/julia-vim"
+    fi
+}
 
-echo ""                                >> $HOME/.bash_profile
-echo "# General environment variables" >> $HOME/.bash_profile
-echo "source $HOME/env/bash_vars"      >> $HOME/.bash_profile
-echo "source $HOME/env/bash_alias"     >> $HOME/.bash_profile
-echo ""                                >> $HOME/.bash_profile
+configure_julia_paths() {
+    local dir depot_path
 
-eval "source $HOME/.bash_profile"
-#
+    read -r -p "Set JULIA_DEPOT_PATH? Enter full path. [$HOME/.julia] " dir
+    if [[ "$dir" = /* ]]; then
+        depot_path="$dir"
+    else
+        depot_path="$HOME/.julia"
+    fi
+
+    export JULIA_DEPOT_PATH="$depot_path"
+    export JULIAUP_DEPOT_PATH="$depot_path/juliaup"
+
+    append_line_if_missing "$PROFILE_FILE" "# Julia"
+    upsert_prefix_line "$PROFILE_FILE" "export JULIA_DEPOT_PATH=" "export JULIA_DEPOT_PATH=$JULIA_DEPOT_PATH"
+    upsert_prefix_line "$PROFILE_FILE" "export JULIAUP_DEPOT_PATH=" "export JULIAUP_DEPOT_PATH=$JULIAUP_DEPOT_PATH"
+    upsert_prefix_line "$PROFILE_FILE" "alias cdj=" "alias cdj='cd \$JULIA_DEPOT_PATH/dev; s'"
+}
+
+install_juliaup() {
+    if ! prompt_yes_no "Install Julia via juliaup?"; then
+        return 0
+    fi
+
+    curl -fsSL https://install.julialang.org | sh
+    mkdir -p "$HOME/.julia/config"
+    ln -sfn "$ENV_REPO_DIR/startup.jl" "$HOME/.julia/config/startup.jl"
+}
+
+link_julia_projects() {
+    local version
+
+    : "${JULIA_DEPOT_PATH:=$HOME/.julia}"
+
+    for version in v1.9 v1.10 v1.11 v1.12 v1.13; do
+        mkdir -p "$JULIA_DEPOT_PATH/environments/$version"
+        ln -sfn "$ENV_REPO_DIR/JL_Project.toml" "$JULIA_DEPOT_PATH/environments/$version/Project.toml"
+    done
+}
+
+install_spack() {
+    if ! prompt_yes_no "Install Spack?"; then
+        return 0
+    fi
+
+    if [ ! -d "$HOME/spack" ]; then
+        git clone https://github.com/spack/spack.git "$HOME/spack"
+    fi
+
+    append_line_if_missing "$PROFILE_FILE" "# spack"
+    append_line_if_missing "$PROFILE_FILE" "source \$HOME/spack/share/spack/setup-env.sh"
+}
+
+configure_python_workdir() {
+    local dir py_wd
+
+    read -r -p "Set Python work directory? Enter full path. [$HOME/python] " dir
+    if [[ "$dir" = /* ]]; then
+        py_wd="$dir"
+    else
+        py_wd="$HOME/python"
+    fi
+
+    export PY_WD="$py_wd"
+
+    append_line_if_missing "$PROFILE_FILE" "# Python"
+    upsert_prefix_line "$PROFILE_FILE" "export PY_WD=" "export PY_WD=$PY_WD"
+    upsert_prefix_line "$PROFILE_FILE" "alias cdp=" "alias cdp='cd \$PY_WD; s'"
+}
+
+install_uv() {
+    if command -v uv >/dev/null 2>&1; then
+        echo "uv is already installed, skipping installation"
+        return 0
+    fi
+
+    if prompt_yes_no "Install uv?"; then
+        echo "Installing uv..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        uv self update
+    fi
+}
+
+install_codex_cli() {
+    if ! prompt_yes_no "Install OpenAI Codex CLI?"; then
+        return 0
+    fi
+
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "Skipping Codex CLI install: npm is required. Install Node.js first, then run: npm install -g @openai/codex"
+        return 0
+    fi
+
+    npm install -g @openai/codex
+}
+
+install_claude_code() {
+    if ! prompt_yes_no "Install Claude Code?"; then
+        return 0
+    fi
+
+    curl -fsSL https://claude.ai/install.sh | bash
+}
+
+configure_shell_sources() {
+    append_line_if_missing "$PROFILE_FILE" "# General environment variables"
+    append_line_if_missing "$PROFILE_FILE" "source \$HOME/env/bash_vars"
+    append_line_if_missing "$PROFILE_FILE" "source \$HOME/env/bash_alias"
+}
+
+main() {
+    cd "$HOME"
+
+    clone_env_repo
+    ensure_profile_bootstrap
+    symlink_dotfiles
+
+    install_platform_packages
+    install_julia_vim
+
+    if prompt_yes_no "Install Neovim binary?"; then
+        install_neovim
+    fi
+
+    configure_julia_paths
+    install_juliaup
+    link_julia_projects
+    install_spack
+    configure_python_workdir
+    install_uv
+    install_codex_cli
+    install_claude_code
+    configure_shell_sources
+
+    # shellcheck disable=SC1090
+    source "$PROFILE_FILE"
+}
+
+main "$@"

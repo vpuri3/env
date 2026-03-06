@@ -1,15 +1,53 @@
 #!/bin/bash
 
-###
-### PS1
-###
-export PS1='[\[\e[0;32m\]$ME\[\e[1;36m\]@$MACHINE\[\e[0m\] \W]:'
+path_prepend() {
+    case ":$PATH:" in
+        *":$1:"*) ;;
+        *) PATH="$1:$PATH" ;;
+    esac
+}
+
+compute_cpu_counts() {
+    if command -v getconf >/dev/null 2>&1; then
+        NTHREADS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1')
+    elif command -v nproc >/dev/null 2>&1; then
+        NTHREADS=$(nproc 2>/dev/null || printf '1')
+    else
+        NTHREADS=1
+    fi
+
+    NCORES="$NTHREADS"
+}
+
+ensure_cache_dirs() {
+    local cache_dir
+
+    for cache_dir in \
+        "$PY_CACHE_BASE" \
+        "$PIP_CACHE_DIR" \
+        "$UV_CACHE_DIR" \
+        "$XDG_CACHE_HOME" \
+        "$TORCH_HOME" \
+        "$WANDB_CACHE_DIR" \
+        "$TRITON_CACHE_DIR" \
+        "$DATASETS_CACHE" \
+        "$MPLCONFIGDIR" \
+        "$HF_HOME"; do
+        mkdir -p "$cache_dir"
+    done
+}
+
+ensure_python_cache_dirs() {
+    ensure_cache_dirs
+}
+
+ME=$(whoami)
 
 ###
 ### misc scripts
 ###
-export PATH=$HOME/bin:$PATH
-export PATH=$HOME/.local/bin:$PATH
+path_prepend "$HOME/bin"
+path_prepend "$HOME/.local/bin"
 
 ###
 ### misc vars
@@ -19,71 +57,32 @@ export QSTAT_HEADER="JobId:User:QueuedTime:RunTime:WallTime:State:Location:Nodes
 export TZ="America/New_York"
 export EDITOR="vi"
 
-ME=$(whoami)
-
-case `uname` in
+case "$(uname)" in
 Darwin)
-    export NTHREADS=$(sysctl -n hw.ncpu)
-	MACHINE="MBP"
-
-	#Ensure user-installed binaries take precedence
-	export PATH=/usr/local/bin:$PATH
-
-	## homebrew
-	export PATH=/usr/local/sbin:$PATH
-
-	# MATLAB
-	export MTLB_BIN=/Applications/MATLAB_R2022b.app/bin
-
-	# NEK
-	export NEK_WD=$HOME'/Nek5000/run'
-
-    # python
-    # export PYTHONPATH=$PYTHONPATH:/usr/local/lib/python3.7/site-packages
-
-	;;
+    MACHINE="MBP"
+    path_prepend "/usr/local/sbin"
+    path_prepend "/usr/local/bin"
+    export MTLB_BIN="/Applications/MATLAB_R2022b.app/bin"
+    export NEK_WD="$HOME/Nek5000/run"
+    ;;
 Linux)
-	MACHINE=$(hostname)
-
-    # python tooling
-	export PATH=$HOME/.local/bin:$PATH
-
-	;;
+    MACHINE=$(hostname)
+    ;;
 esac
 
-###
-### X11
-###
-if [[ ! -n $DISPLAY ]]; then
-    export DISPLAY=:0
-fi
+compute_cpu_counts
+export NCORES
+export NTHREADS
+export JULIA_NUM_PRECOMPILE_TASKS="$NTHREADS"
 
-## num of CPU cores/ threads
-if command -v julia >/dev/null 2>&1; then
-    export NCORES=$(julia --startup-file=no -e 'min(Sys.CPU_THREADS, length(Sys.cpu_info())) |> print')
-    export NTHREADS=$(julia --startup-file=no -e 'Sys.CPU_THREADS |> print')
-    
-    # export JULIA_NUM_THREADS=$NTHREADS 
-    export JULIA_NUM_PRECOMPILE_TASKS=$NTHREADS
-    # export JULIA_NUM_GC_THREADS=$NTHREADS
-    # export JULIA_CUDA_MEMORY_POOL=none # when running out of GPU memory
-else
-    # Fallback to Python or system commands when Julia is not available
-    if command -v python3 >/dev/null 2>&1; then
-        export NCORES=$(python3 -c 'import psutil; print(psutil.cpu_count(logical=False))' 2>/dev/null || echo "1")
-        export NTHREADS=$(python3 -c 'import os; print(os.cpu_count())' 2>/dev/null || echo "1")
-    else
-        # Final fallback to system-specific commands
-        export NCORES=1
-        export NTHREADS=1
-    fi
-fi
+###
+### PS1
+###
+export PS1="[\[\e[0;32m\]$ME\[\e[1;36m\]@$MACHINE\[\e[0m\] \W]:"
 
 ###
 ### Set python cache location
 ###
-
-# Ensure cache paths never resolve to /cache when PY_WD is unset.
 export PY_WD="${PY_WD:-$HOME/python}"
 PY_CACHE_BASE="${PY_WD}/cache"
 
@@ -99,19 +98,3 @@ export DATASETS_CACHE="${PY_CACHE_BASE}/datasets"
 export MPLCONFIGDIR="${PY_CACHE_BASE}/matplotlib"
 export HF_DATASETS_CACHE="${PY_CACHE_BASE}/datasets"
 export HF_HUB_CACHE="${PY_CACHE_BASE}/huggingface"
-
-# Cache base
-mkdir -p "${PY_CACHE_BASE}"
-mkdir -p "${PIP_CACHE_DIR}"
-mkdir -p "${UV_CACHE_DIR}"
-mkdir -p "${XDG_CACHE_HOME}"
-mkdir -p "${TORCH_HOME}"
-mkdir -p "${WANDB_CACHE_DIR}"
-mkdir -p "${TRITON_CACHE_DIR}"
-mkdir -p "${DATASETS_CACHE}"
-mkdir -p "${HF_DATASETS_CACHE}"
-mkdir -p "${HF_HUB_CACHE}"
-mkdir -p "$MPLCONFIGDIR"
-mkdir -p "${HF_HOME}"
-
-#
