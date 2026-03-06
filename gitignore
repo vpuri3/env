@@ -9,6 +9,7 @@
 # vi
 .*.swp                                                                                 
 .*.swo
+*.swx
 
 # vscode
 .vscode/
@@ -18,4 +19,9 @@
 
 # cursor
 .cursorrules
-#
+
+# slurm
+slurm*
+
+# misc
+.#*
