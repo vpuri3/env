@@ -61,6 +61,72 @@ ln -sf $HOME/env/nvim       $HOME/.config/nvim
 source ~/.bash_profile
 cd $HOME
 
+install_neovim() {
+    local os arch archive_url archive_name install_root bin_dir tmp_dir extracted_dir
+
+    os=$(uname -s)
+    arch=$(uname -m)
+    install_root="$HOME/.local/neovim"
+    bin_dir="$HOME/.local/bin"
+    tmp_dir=$(mktemp -d)
+
+    case "$os" in
+        Darwin)
+            case "$arch" in
+                arm64) archive_name="nvim-macos-arm64.tar.gz" ;;
+                x86_64) archive_name="nvim-macos-x86_64.tar.gz" ;;
+                *)
+                    echo "Unsupported macOS architecture for Neovim: $arch"
+                    rm -rf "$tmp_dir"
+                    return 1
+                    ;;
+            esac
+            ;;
+        Linux)
+            case "$arch" in
+                x86_64) archive_name="nvim-linux-x86_64.tar.gz" ;;
+                aarch64|arm64) archive_name="nvim-linux-arm64.tar.gz" ;;
+                *)
+                    echo "Unsupported Linux architecture for Neovim: $arch"
+                    rm -rf "$tmp_dir"
+                    return 1
+                    ;;
+            esac
+            ;;
+        *)
+            echo "Unsupported OS for Neovim install: $os"
+            rm -rf "$tmp_dir"
+            return 1
+            ;;
+    esac
+
+    archive_url="https://github.com/neovim/neovim/releases/download/stable/$archive_name"
+
+    mkdir -p "$bin_dir"
+    curl -fL "$archive_url" -o "$tmp_dir/$archive_name" || {
+        rm -rf "$tmp_dir"
+        return 1
+    }
+
+    tar -C "$tmp_dir" -xzf "$tmp_dir/$archive_name" || {
+        rm -rf "$tmp_dir"
+        return 1
+    }
+
+    extracted_dir=$(find "$tmp_dir" -maxdepth 1 -mindepth 1 -type d -name 'nvim-*' | head -n 1)
+    if [ -z "$extracted_dir" ]; then
+        echo "Failed to locate extracted Neovim directory"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    rm -rf "$install_root"
+    mv "$extracted_dir" "$install_root"
+    ln -sfn "$install_root/bin/nvim" "$bin_dir/nvim"
+    ln -sfn "$install_root/bin/nvim" "$bin_dir/nv"
+    rm -rf "$tmp_dir"
+}
+
 #----------------------------------------------------------------------------#
 case `uname` in
 Darwin)
@@ -88,7 +154,7 @@ Darwin)
 
     # install utilities
     eval "$(/opt/homebrew/bin/brew shellenv)"
-    brew install wget, vim, nvim
+    brew install wget vim
 
     # disable press-and-hold on Mac
     defaults write NSGlobalDomain ApplePressAndHoldEnabled -bool false
@@ -107,7 +173,7 @@ Linux)
 					sudo apt update
 					sudo apt list --upgradable
 					sudo apt upgrade -y
-					sudo apt install -y wget vim neovim python3-pip
+					sudo apt install -y wget vim python3-pip
 					;;
 			esac
 		elif command -v snap >/dev/null 2>&1; then
@@ -117,7 +183,7 @@ Linux)
 					;;
 				*)
 					sudo snap refresh
-					sudo snap install wget vim nvim
+					sudo snap install wget vim
 					# Note: python3-pip typically comes with the system or needs different installation
 					echo "Note: You may need to install python3-pip separately using your system's package manager"
 					;;
@@ -155,21 +221,7 @@ case "$yn" in
     [nN]*)
     ;;
     *)
-        cd $HOME
-        echo ""       >> $HOME/.bash_profile
-        echo "# nvim" >> $HOME/.bash_profile
-        case `uname` in
-            Darwin)
-                curl -LO https://github.com/neovim/neovim/releases/download/nightly/nvim-macos.tar.gz
-                tar xzf nvim-macos.tar.gz $HOME/nvim-macos/bin/nvim
-                echo "alias nvim='$HOME/nvim-macos/bin/nvim'" >> $HOME/.bash_profile
-                ;;
-            Linux)
-                curl -LO https://github.com/neovim/neovim/releases/latest/download/nvim.appimage
-                chmod u+x nvim.appimage $HOME/nvim.appimage
-                echo "alias nvim='$HOME/nvim.appimage'" >> $HOME/.bash_profile
-                ;;
-        esac
+        install_neovim
     ;;
 esac
 
