@@ -303,13 +303,140 @@ install_uv() {
     fi
 }
 
+can_use_sudo() {
+    command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1
+}
+
+install_nodejs_user_local() {
+    local os arch node_arch version json_url archive_name archive_url install_root bin_dir tmp_dir extracted_dir
+
+    os=$(uname -s)
+    arch=$(uname -m)
+    install_root="$HOME/.local/node"
+    bin_dir="$HOME/.local/bin"
+    tmp_dir=$(mktemp -d)
+    json_url="https://nodejs.org/dist/index.json"
+
+    case "$os" in
+        Darwin) ;;
+        Linux) ;;
+        *)
+            echo "Unsupported OS for user-local Node.js install: $os"
+            rm -rf "$tmp_dir"
+            return 1
+            ;;
+    esac
+
+    case "$arch" in
+        x86_64) node_arch="x64" ;;
+        aarch64|arm64) node_arch="arm64" ;;
+        *)
+            echo "Unsupported architecture for user-local Node.js install: $arch"
+            rm -rf "$tmp_dir"
+            return 1
+            ;;
+    esac
+
+    version=$(curl -fsSL "$json_url" | grep -m1 '"lts":' | sed -E 's/.*"version":"([^"]+)".*/\1/')
+    if [ -z "$version" ]; then
+        echo "Failed to determine latest Node.js LTS version"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    archive_name="node-$version-$os-$node_arch.tar.xz"
+    archive_url="https://nodejs.org/dist/$version/$archive_name"
+
+    mkdir -p "$bin_dir"
+    curl -fL "$archive_url" -o "$tmp_dir/$archive_name" || {
+        rm -rf "$tmp_dir"
+        return 1
+    }
+
+    tar -C "$tmp_dir" -xf "$tmp_dir/$archive_name" || {
+        rm -rf "$tmp_dir"
+        return 1
+    }
+
+    extracted_dir="$tmp_dir/node-$version-$os-$node_arch"
+    if [ ! -d "$extracted_dir" ]; then
+        echo "Failed to locate extracted Node.js directory"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    rm -rf "$install_root"
+    mv "$extracted_dir" "$install_root"
+    ln -sfn "$install_root/bin/node" "$bin_dir/node"
+    ln -sfn "$install_root/bin/npm" "$bin_dir/npm"
+    ln -sfn "$install_root/bin/npx" "$bin_dir/npx"
+    rm -rf "$tmp_dir"
+}
+
+ensure_npm_available() {
+    if command -v npm >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "npm is not installed. Codex CLI currently installs via npm."
+
+    case "$(uname -s)" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                if prompt_yes_no "Install Node.js (includes npm) with Homebrew for Codex CLI?"; then
+                    brew install node
+                fi
+            else
+                if prompt_yes_no "Homebrew is unavailable. Install Node.js user-local under \$HOME/.local for Codex CLI?"; then
+                    install_nodejs_user_local
+                else
+                    return 1
+                fi
+            fi
+            ;;
+        Linux)
+            if [ -f /etc/lsb-release ] && grep -q "Ubuntu" /etc/lsb-release && can_use_sudo; then
+                if command -v apt >/dev/null 2>&1; then
+                    if prompt_yes_no "Install Node.js and npm with apt for Codex CLI?"; then
+                        sudo apt update
+                        sudo apt install -y nodejs npm
+                    fi
+                elif command -v snap >/dev/null 2>&1; then
+                    if prompt_yes_no "Install Node.js (includes npm) with snap for Codex CLI?"; then
+                        sudo snap install node --classic
+                    fi
+                else
+                    echo "Neither apt nor snap is available to install Node.js/npm automatically."
+                    return 1
+                fi
+            else
+                if prompt_yes_no "Install Node.js user-local under \$HOME/.local for Codex CLI?"; then
+                    install_nodejs_user_local
+                else
+                    return 1
+                fi
+            fi
+            ;;
+        *)
+            echo "Unsupported OS for automatic Node.js/npm installation."
+            return 1
+            ;;
+    esac
+
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "npm is still unavailable. Install Node.js manually, then run: npm install -g @openai/codex"
+        return 1
+    fi
+
+    return 0
+}
+
 install_codex_cli() {
     if ! prompt_yes_no "Install OpenAI Codex CLI?"; then
         return 0
     fi
 
-    if ! command -v npm >/dev/null 2>&1; then
-        echo "Skipping Codex CLI install: npm is required. Install Node.js first, then run: npm install -g @openai/codex"
+    if ! ensure_npm_available; then
         return 0
     fi
 
