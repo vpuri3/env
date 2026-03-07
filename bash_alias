@@ -24,7 +24,7 @@ alias nv='nvim'
 alias em='emacs -nw'
 alias tm='tmux -new'
 alias ts='tmux ls'
-alias cc='claude --permission-mode dontAsk'
+alias cc='claude --dangerously-skip-permissions'
 alias cx='codex -s danger-full-access'
 alias vact='source ~/.bash_profile && source "${PWD}/.venv/bin/activate"'
 
