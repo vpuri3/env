@@ -1,6 +1,7 @@
 --
 
 if not vim.g.vscode then
+    local api = require("nvim-tree.api")
 
     -- disable default file explorer (netrw)
     vim.g.loaded_netrw = 1
@@ -92,7 +93,15 @@ if not vim.g.vscode then
         }
     })
 
-    vim.keymap.set("n", "<leader>e", ":NvimTreeToggle<CR>")
+    vim.keymap.set("n", "<leader>e", ":NvimTreeToggle<CR>", { noremap = true, silent = true, nowait = true })
+    vim.api.nvim_create_autocmd("FileType", {
+        pattern = "NvimTree",
+        callback = function(args)
+            vim.keymap.set("n", ":e", function()
+                api.tree.reload()
+            end, { buffer = args.buf, noremap = true, silent = true })
+        end,
+    })
 
     -- TODO
     -- open file in split
