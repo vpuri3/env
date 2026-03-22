@@ -46,6 +46,7 @@ local options = {
     -- misc
     guicursor = "",
     fileencoding = "utf-8",
+    clipboard = "unnamedplus",
 
     smartindent = true,
     wrap = false,

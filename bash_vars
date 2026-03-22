@@ -57,6 +57,11 @@ export QSTAT_HEADER="JobId:User:QueuedTime:RunTime:WallTime:State:Location:Nodes
 export TZ="America/New_York"
 export EDITOR="vi"
 
+# Disable XON/XOFF flow control so Ctrl-S remains usable for tmux over SSH.
+if [ -t 0 ]; then
+    stty -ixon
+fi
+
 case "$(uname)" in
 Darwin)
     MACHINE="MBP"

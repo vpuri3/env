@@ -29,8 +29,8 @@ vim.keymap.set("n", "<C-U>", "<C-U>zz", opts)
 vim.keymap.set("x", "<leader>p", "\"_dp", opts)
 
 -- yank to system clipboard register
-vim.keymap.set({"n", "v"}, "<leader>y", [[\"+y]], opts)
-vim.keymap.set("n", "<leader>Y", [[\"+Y]], opts)
+vim.keymap.set({"n", "v"}, "<leader>y", [["+y]], opts)
+vim.keymap.set("n", "<leader>Y", [["+Y]], opts)
 
 -- delete to void register
 vim.keymap.set({"n", "v"}, "<leader>d", [["_d]], opts)
