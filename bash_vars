@@ -57,6 +57,13 @@ export QSTAT_HEADER="JobId:User:QueuedTime:RunTime:WallTime:State:Location:Nodes
 export TZ="America/New_York"
 export EDITOR="vi"
 
+# tmux uses TMUX_TMPDIR (not TMPDIR) for its socket directory.
+if [ -n "${TMPDIR:-}" ]; then
+    export TMUX_TMPDIR="$TMPDIR"
+elif [ -n "${TMP:-}" ]; then
+    export TMUX_TMPDIR="$TMP"
+fi
+
 # Disable XON/XOFF flow control so Ctrl-S remains usable for tmux over SSH.
 if [ -t 0 ]; then
     stty -ixon
