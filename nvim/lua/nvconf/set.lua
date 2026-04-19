@@ -4,6 +4,14 @@
 -- leader
 vim.g.mapleader = " "
 
+local tmpdir = vim.env.TMPDIR
+if not tmpdir or tmpdir == "" then
+    tmpdir = vim.fn.expand("~/.cache")
+end
+local nvim_tmp_root = tmpdir .. "/nvim"
+vim.fn.mkdir(nvim_tmp_root .. "/swap", "p")
+vim.fn.mkdir(nvim_tmp_root .. "/backup", "p")
+
 local options = {
 
     -- line-number
@@ -32,6 +40,8 @@ local options = {
     -- undo
     swapfile = true,
     backup = false,
+    directory = nvim_tmp_root .. "/swap//",
+    backupdir = nvim_tmp_root .. "/backup//",
     undofile = true,
     undodir = os.getenv("HOME") .. "/.vim/undodir",
 

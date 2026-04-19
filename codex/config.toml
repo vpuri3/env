@@ -1,0 +1,49 @@
+model = "gpt-5.4-mini"
+model_reasoning_effort = "medium"
+personality = "pragmatic"
+[projects."/project/community/vedantpu/flash-linear-attention"]
+trust_level = "trusted"
+
+[projects."/project/community/vedantpu/FLARE-dev.py"]
+trust_level = "trusted"
+
+[projects."/home/vedantpu/env"]
+trust_level = "trusted"
+
+[projects."/project/community/vedantpu/flash-linear-attention-pvt"]
+trust_level = "trusted"
+
+[projects."/project/community/vedantpu/causal_flare"]
+trust_level = "trusted"
+
+[projects."/tmp"]
+trust_level = "trusted"
+
+[projects."/home/vedantpu"]
+trust_level = "trusted"
+
+[projects."/project/community/vedantpu/Transolver_plus"]
+trust_level = "trusted"
+
+[features]
+unified_exec = true
+shell_snapshot = true
+multi_agent = true
+steer = true
+use_legacy_landlock = true
+
+[notice]
+hide_rate_limit_model_nudge = true
+
+[notice.model_migrations]
+"gpt-5.2-codex" = "gpt-5.3-codex"
+"gpt-5.1-codex-mini" = "gpt-5.4"
+"gpt-5.3-codex" = "gpt-5.4"
+
+[tui]
+status_line = ["model-with-reasoning", "context-remaining", "current-dir"]
+
+[model_providers.openrouter]
+name = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+env_key = "OPENROUTER_API_KEY"

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+env_file="$HOME/env/codex/openrouter.env"
+
+if [ -f "$env_file" ]; then
+    # shellcheck disable=SC1090
+    source "$env_file"
+elif [ -f "$HOME/.codex/openrouter.env" ]; then
+    # shellcheck disable=SC1090
+    source "$HOME/.codex/openrouter.env"
+fi
+
+if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+    printf '%s\n' "OPENROUTER_API_KEY is not set. Add it to $env_file." >&2
+    exit 1
+fi
+
+exec codex \
+    -s danger-full-access \
+    -c model_provider=openrouter \
+    -c model='openai/gpt-5.3-codex' \
+    -c model_reasoning_effort=high \
+    -c 'model_providers.openrouter.name="openrouter"' \
+    -c 'model_providers.openrouter.base_url="https://openrouter.ai/api/v1"' \
+    -c 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"' \
+    "$@"

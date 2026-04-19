@@ -28,6 +28,17 @@ set fileformat=unix
 set encoding=utf-8
 set fileencoding=utf-8
 
+" Keep swap/backup data off /tmp to avoid shared temp stalls.
+if exists('$TMPDIR') && isdirectory($TMPDIR)
+  let s:vim_tmp_root = $TMPDIR . '/vim'
+else
+  let s:vim_tmp_root = expand('~/.vim/tmp')
+endif
+call mkdir(s:vim_tmp_root . '/swap', 'p')
+call mkdir(s:vim_tmp_root . '/backup', 'p')
+let &directory = s:vim_tmp_root . '/swap//'
+let &backupdir = s:vim_tmp_root . '/backup//'
+
 " split-screen
 nnoremap <C-J> <C-W><C-J>
 nnoremap <C-K> <C-W><C-K>
