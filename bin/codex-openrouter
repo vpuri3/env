@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-env_file="$HOME/env/codex/openrouter.env"
+env_file="$HOME/env/codex/openrouter.env.local"
 
 if [ -f "$env_file" ]; then
     # shellcheck disable=SC1090
@@ -15,6 +15,8 @@ if [ -z "${OPENROUTER_API_KEY:-}" ]; then
     printf '%s\n' "OPENROUTER_API_KEY is not set. Add it to $env_file." >&2
     exit 1
 fi
+
+export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 
 exec codex \
     -s danger-full-access \

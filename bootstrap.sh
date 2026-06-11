@@ -86,7 +86,7 @@ symlink_dotfiles() {
 
     link_file "$ENV_REPO_DIR/bin" "$HOME/bin"
     link_file "$ENV_REPO_DIR/codex/config.toml" "$HOME/.codex/config.toml"
-    link_file "$ENV_REPO_DIR/codex/openrouter.env" "$HOME/.codex/openrouter.env"
+    link_file "$ENV_REPO_DIR/codex/openrouter.env.local" "$HOME/.codex/openrouter.env"
     link_file "$ENV_REPO_DIR/emacs.conf" "$HOME/.emacs"
     link_file "$ENV_REPO_DIR/vimrc" "$HOME/.vimrc"
     link_file "$ENV_REPO_DIR/gitconfig" "$HOME/.gitconfig"

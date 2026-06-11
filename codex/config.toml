@@ -1,4 +1,4 @@
-model = "gpt-5.4-mini"
+model = "gpt-5.5"
 model_reasoning_effort = "medium"
 personality = "pragmatic"
 [projects."/project/community/vedantpu/flash-linear-attention"]
@@ -25,12 +25,22 @@ trust_level = "trusted"
 [projects."/project/community/vedantpu/Transolver_plus"]
 trust_level = "trusted"
 
+[projects."/project/community/vedantpu/flash-linear-attention-pvt/causal-flare/causal_flare/autoregressive"]
+trust_level = "trusted"
+
+[projects."/project/community/vedantpu/flash-linear-attention-pvt/causal-flare"]
+trust_level = "trusted"
+
 [features]
 unified_exec = true
 shell_snapshot = true
 multi_agent = true
 steer = true
 use_legacy_landlock = true
+terminal_resize_reflow = true
+memories = true
+mentions_v2 = true
+prevent_idle_sleep = true
 
 [notice]
 hide_rate_limit_model_nudge = true
@@ -42,8 +52,22 @@ hide_rate_limit_model_nudge = true
 
 [tui]
 status_line = ["model-with-reasoning", "context-remaining", "current-dir"]
+session_picker_view = "dense"
+
+[tui.model_availability_nux]
+"gpt-5.5" = 4
+
+[profiles.openrouter]
+model_provider = "openrouter"
+model = "openai/gpt-5.3-codex"
+model_reasoning_effort = "high"
 
 [model_providers.openrouter]
 name = "openrouter"
 base_url = "https://openrouter.ai/api/v1"
 env_key = "OPENROUTER_API_KEY"
+
+[hooks.state]
+
+[hooks.state."/project/community/vedantpu/FLARE-dev.py/.codex/hooks.json:pre_tool_use:0:0"]
+trusted_hash = "sha256:00728cd5bb40b1692e4011981865cb80f9146e0d90906a62c85c62f22495d6d8"
