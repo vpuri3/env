@@ -16,8 +16,6 @@ ENV_REPO_DIR="$HOME/env"
 ENV_REPO_HTTPS="https://github.com/vpuri3/env.git"
 ENV_REPO_SSH="git@github.com:vpuri3/env.git"
 LOCAL_CONFIG="$HOME/.config/env/local.sh"
-BLOCK_BEGIN="# >>> env (managed by ~/env/bootstrap.sh) >>>"
-BLOCK_END="# <<< env <<<"
 LEGACY_HEADER="# https://github.com/vpuri3/env/bootstrap.sh"
 
 # Pinned so every machine runs the same editor; bump and re-run to upgrade.
@@ -207,8 +205,14 @@ backup_move() {
     info "moved existing $1 to $dest"
 }
 
+# Marker lines for a managed block; $1 is an optional tag for files that
+# hold more than one block.
+block_begin() { printf '# >>> env%s (managed by ~/env/bootstrap.sh) >>>' "${1:+:$1}"; }
+block_end() { printf '# <<< env%s <<<' "${1:+:$1}"; }
+
+# Prints $1 without the managed block tagged $2 (default: untagged).
 strip_managed_block() {
-    awk -v b="$BLOCK_BEGIN" -v e="$BLOCK_END" '
+    awk -v b="$(block_begin "${2:-}")" -v e="$(block_end "${2:-}")" '
         $0 == b { skip = 1; next }
         skip && $0 == e { skip = 0; next }
         !skip
@@ -217,11 +221,15 @@ strip_managed_block() {
 
 # Replaces (or adds) the bootstrap-managed block in $1 and leaves the rest of
 # the file untouched. $2 is "top" or "bottom".
+# write_managed_block FILE top|bottom CONTENT [TAG]
 write_managed_block() {
-    local file position content tmp_body tmp_new
+    local file position content tag begin end tmp_body tmp_new
     file="$1"
     position="$2"
     content="$3"
+    tag="${4:-}"
+    begin=$(block_begin "$tag")
+    end=$(block_end "$tag")
 
     mkdir -p "$(dirname "$file")"
     if [ ! -e "$file" ]; then
@@ -230,11 +238,11 @@ write_managed_block() {
 
     tmp_body=$(mktemp)
     tmp_new=$(mktemp)
-    strip_managed_block "$file" > "$tmp_body"
+    strip_managed_block "$file" "$tag" > "$tmp_body"
 
     if [ "$position" = top ]; then
         {
-            printf '%s\n%s\n%s\n' "$BLOCK_BEGIN" "$content" "$BLOCK_END"
+            printf '%s\n%s\n%s\n' "$begin" "$content" "$end"
             if grep -q '[^[:space:]]' "$tmp_body"; then
                 printf '\n'
                 awk 'NF { started = 1 } started' "$tmp_body"
@@ -246,7 +254,7 @@ write_managed_block() {
             if [ -s "$tmp_body" ] && [ -n "$(tail -n 1 "$tmp_body")" ]; then
                 printf '\n'
             fi
-            printf '%s\n%s\n%s\n' "$BLOCK_BEGIN" "$content" "$BLOCK_END"
+            printf '%s\n%s\n%s\n' "$begin" "$content" "$end"
         } > "$tmp_new"
     fi
 
@@ -261,10 +269,18 @@ write_managed_block() {
 }
 
 file_mentions_outside_block() {
+    local tmp found
     if [ ! -f "$1" ]; then
         return 1
     fi
-    strip_managed_block "$1" | grep -Fq "$2"
+    tmp=$(mktemp)
+    strip_managed_block "$1" early > "$tmp"
+    found=1
+    if strip_managed_block "$tmp" | grep -Fq "$2"; then
+        found=0
+    fi
+    rm -f "$tmp"
+    return "$found"
 }
 
 points_into_repo() {
@@ -749,6 +765,12 @@ configure_shell_startup() {
 $source_line"
     fi
     write_managed_block "$HOME/.bashrc" bottom "$rc_content"
+    # Distribution .bashrc files often return early when not interactive, so
+    # the block above would never run for `ssh host cmd`, cron and friends.
+    # Interactive shells load shellrc from the bottom block instead, after
+    # the distribution's prompt and aliases, so ours win.
+    write_managed_block "$HOME/.bashrc" top \
+        'case $- in *i*) ;; *) if [ -f "$HOME/env/shellrc" ]; then . "$HOME/env/shellrc"; fi ;; esac' early
 
     # Login bash reads only ~/.bash_profile. Keep ~/.profile (Ubuntu adds
     # ~/.local/bin there) and load ~/.bashrc exactly once.

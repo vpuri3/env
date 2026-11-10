@@ -99,6 +99,10 @@ echo "# $os + $shell_name"
 ###
 home=$(new_home personal)
 printf 'set number\n' > "$home/.vimrc"
+if [ "$shell_name" = bash ]; then
+    # Like Ubuntu's /etc/skel/.bashrc: returns early when not interactive.
+    printf '%s\n' 'case $- in *i*) ;; *) return;; esac' "alias ll='ls -alF'" > "$home/.bashrc"
+fi
 if [ "$os" = Darwin ]; then
     cursor_user="$home/Library/Application Support/Cursor/User"
 else
@@ -112,7 +116,7 @@ check "re-run succeeds" bootstrap "$home"
 check "re-run changes nothing" [ "$first" = "$(snapshot "$home")" ]
 
 for f in $(rc_files); do
-    check "one managed block in $f" [ "$(grep -c '^# >>> env' "$home/$f")" = 1 ]
+    check "one managed block in $f" [ "$(grep -c '^# >>> env (managed' "$home/$f")" = 1 ]
 done
 check "existing ~/.vimrc backed up" [ -n "$(find "$home/.env-backup" -name .vimrc -type f)" ]
 check "~/.vimrc linked into repo" [ "$(readlink "$home/.vimrc")" = "$home/env/vimrc" ]
@@ -139,6 +143,11 @@ out=$(noninteractive_probe "$home" 'printf "%s" "$PY_WD"')
 check "non-interactive shell is silent and has PY_WD" [ "$out" = "$home/python" ]
 out=$(noninteractive_probe "$home" 'alias tmls 2>/dev/null || printf none')
 check "non-interactive shell has no aliases" [ "$out" = none ]
+if [ "$shell_name" = bash ]; then
+    check "one early block in .bashrc" [ "$(grep -c '^# >>> env:early' "$home/.bashrc")" = 1 ]
+    out=$(interactive_probe "$home" 'alias ll')
+    check "our ll wins over the distribution's" [ "${out#*=}" != "'ls -alF'" ]
+fi
 
 check "shared gitconfig included" [ -n "$(run_in_home "$home" -- git config --get alias.alog)" ]
 check "git identity left unset under --defaults" bash -c "! env -i HOME='$home' PATH='$base_path' git config --get user.email"
