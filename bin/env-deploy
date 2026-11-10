@@ -73,9 +73,13 @@ q() { printf '%q' "$1"; }
 
 if [ "$mode" = probe ]; then
     printf '== probing %s\n' "$SSH_HOST"
+    pubkey=""
+    if [ -f "$key" ]; then
+        pubkey=$(awk '{ print $2 }' "$key")
+    fi
     # Values expand here on purpose, quoted with %q for the remote shell.
     # shellcheck disable=SC2029
-    ssh "${cm[@]}" "$SSH_HOST" "PROBE_PATHS=$(q "$PY_WD $STORAGE_DIR $CACHE_ROOT $PROBE_PATHS") bash -s" << 'EOF'
+    ssh "${cm[@]}" "$SSH_HOST" "PROBE_PATHS=$(q "$PY_WD $STORAGE_DIR $CACHE_ROOT $PROBE_PATHS") PUBKEY=$(q "$pubkey") bash -s" << 'EOF'
 set +e
 echo "host:   $(hostname -f 2>/dev/null || hostname)"
 echo "arch:   $(uname -m)"
@@ -89,9 +93,20 @@ echo "home:   $HOME"
 df -h "$HOME" | tail -n 1
 echo "== paths"
 for p in $PROBE_PATHS; do ls -ld "$p" 2>&1; done
+echo "== ssh"
+if [ -f "$HOME/.ssh/authorized_keys" ]; then
+    echo "authorized_keys entries: $(grep -c . "$HOME/.ssh/authorized_keys")"
+    if [ -n "$PUBKEY" ] && grep -qF "$PUBKEY" "$HOME/.ssh/authorized_keys"; then
+        echo "this machine's key: installed"
+    else
+        echo "this machine's key: not in authorized_keys"
+    fi
+else
+    echo "no ~/.ssh/authorized_keys"
+fi
 if [ -x /cm/shared/apps/scripts/fs-quota-status ]; then
-    echo "== quotas"
-    /cm/shared/apps/scripts/fs-quota-status 2>&1 | head -n 40
+    echo "== quotas (stops after 30s)"
+    timeout 30 /cm/shared/apps/scripts/fs-quota-status 2>&1 | head -n 40
 fi
 echo "== existing setup"
 if [ -d "$HOME/env/.git" ]; then (cd "$HOME/env" && git log --oneline -1); else echo "no ~/env"; fi

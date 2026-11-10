@@ -633,7 +633,9 @@ relocate_editor_servers() {
         if ! ask_yes_no "Keep ~/$name in $target_dir (symlinked from home)?" y; then
             continue
         fi
+        # Project storage is often group-readable; editor servers hold tokens.
         mkdir -p "$(dirname "$target_dir")"
+        chmod 700 "$(dirname "$target_dir")"
         if [ -d "$source_dir" ] && [ ! -L "$source_dir" ]; then
             if [ -e "$target_dir" ]; then
                 warn "$target_dir already exists; leaving ~/$name in place"

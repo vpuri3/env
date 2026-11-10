@@ -188,6 +188,8 @@ check "caches exported under STORAGE_DIR" [ "$out" = "$storage/cache" ]
 check "~/.cursor-server moved to STORAGE_DIR" [ "$(readlink "$home/.cursor-server")" = "$storage/home/.cursor-server" ]
 check "~/.cursor-server contents kept" [ -f "$storage/home/.cursor-server/bin/server" ]
 check "~/.vscode-server kept in STORAGE_DIR" [ "$(readlink "$home/.vscode-server")" = "$storage/home/.vscode-server" ]
+mode=$(stat -c %a "$storage/home" 2>/dev/null || stat -f %Lp "$storage/home")
+check "relocated editor servers are private (700)" [ "$mode" = 700 ]
 out=$(interactive_probe "$home" 'cds >/dev/null; pwd')
 check "cds goes to STORAGE_DIR" [ "$out" = "$storage" ]
 if [ "$shell_name" = zsh ]; then rc=.zshrc; else rc=.bashrc; fi
