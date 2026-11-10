@@ -207,6 +207,17 @@ check "prompt names the node inside a Slurm job" [ "$out" = "dfw:$(hostname -s)"
 check "re-run with new env-deploy PY_WD" bootstrap "$home" ENV_MACHINE=dfw ENV_PY_WD="$work/fsw/projects2/vpuri" ENV_STORAGE_DIR="$storage"
 check "env-deploy PY_WD replaces the saved one" grep -Fqx "export PY_WD='$work/fsw/projects2/vpuri'" "$home/.config/env/local.sh"
 
+machine_in() {
+    run_in_home "$1" -- "$shell_name" -c ". \"\$HOME/$rc\"; printf '%s' \"\$MACHINE\"" </dev/null 2>/dev/null
+}
+home=$(new_home named-nodes)
+check "bootstrap with node names" bootstrap "$home" ENV_MACHINE=dfw ENV_MACHINE_NAMES="other-01=dfw1 $(hostname -s)=dfw2" ENV_PY_WD="$work/fsw-named/vpuri" ENV_STORAGE_DIR="$work/fsw-named/vpuri"
+check "node names recorded" grep -Fqx "MACHINE_NAMES='other-01=dfw1 $(hostname -s)=dfw2'" "$home/.config/env/local.sh"
+check "listed node shows its ssh alias" [ "$(machine_in "$home")" = dfw2 ]
+home=$(new_home unnamed-node)
+check "bootstrap with names for other nodes" bootstrap "$home" ENV_MACHINE=dfw ENV_MACHINE_NAMES="other-01=dfw1 x$(hostname -s)=dfw9" ENV_PY_WD="$work/fsw-unnamed/vpuri" ENV_STORAGE_DIR="$work/fsw-unnamed/vpuri"
+check "unlisted node shows cluster:node" [ "$(machine_in "$home")" = "dfw:$(hostname -s)" ]
+
 ###
 ### earlier layout: editor servers under $STORAGE_DIR/home
 ###

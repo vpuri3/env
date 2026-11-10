@@ -9,7 +9,11 @@
 # ~/.config/env/clusters/CLUSTER.sh:
 #
 #   SSH_HOST=dfw2          ssh alias to deploy through (see ~/.ssh/config.local)
-#   MACHINE=dfw            prompt name on the cluster
+#   MACHINE=dfw            cluster name; nodes with an ssh alias starting
+#                          with it (dfw1, dfw-vs1, ...) show that alias in the
+#                          prompt, other nodes show dfw:<node>
+#   MACHINE_NAMES="..."    optional "host=name ..." pairs instead of reading
+#                          them from ~/.ssh/config.local
 #   PY_WD=/lustre/...      project directory; `cdp` goes here
 #   STORAGE_DIR=/lustre/...  personal storage; caches go to $STORAGE_DIR/cache
 #   CACHE_ROOT=            optional override for the cache directory
@@ -33,7 +37,7 @@ esac
 
 config="$HOME/.config/env/clusters/$cluster.sh"
 [ -f "$config" ] || die "no $config"
-SSH_HOST="" MACHINE="" PY_WD="" STORAGE_DIR="" CACHE_ROOT="" PROBE_PATHS=""
+SSH_HOST="" MACHINE="" MACHINE_NAMES="" PY_WD="" STORAGE_DIR="" CACHE_ROOT="" PROBE_PATHS=""
 # shellcheck disable=SC1090
 . "$config"
 [ -n "$SSH_HOST" ] || die "SSH_HOST is not set in $config"
@@ -119,6 +123,22 @@ fi
 [ -n "$PY_WD" ] || die "PY_WD is not set in $config"
 [ -n "$STORAGE_DIR" ] || die "STORAGE_DIR is not set in $config"
 
+# "short-hostname=alias" for every single-name Host in ~/.ssh/config.local
+# whose alias starts with $MACHINE, e.g. cw-dfw-cs-001-login-01=dfw1.
+if [ -z "$MACHINE_NAMES" ] && [ -n "$MACHINE" ] && [ -f "$HOME/.ssh/config.local" ]; then
+    MACHINE_NAMES=$(awk -v prefix="$MACHINE" '
+        tolower($1) == "host" { alias = (NF == 2 && $2 !~ /[*?!]/) ? $2 : ""; next }
+        alias != "" && tolower($1) == "hostname" {
+            if (index(alias, prefix) == 1) {
+                split($2, label, ".")
+                printf "%s%s=%s", sep, label[1], alias
+                sep = " "
+            }
+            alias = ""
+        }
+    ' "$HOME/.ssh/config.local")
+fi
+
 repo="$HOME/env"
 branch=$(cd "$repo" && git rev-parse --abbrev-ref HEAD)
 (cd "$repo" && git fetch -q origin)
@@ -136,7 +156,8 @@ git checkout -q "$ENV_BRANCH"
 git merge -q --ff-only "origin/$ENV_BRANCH"
 exec bash "$HOME/env/bootstrap.sh"'
 
-remote_env="ENV_BRANCH=$(q "$branch") ENV_MACHINE=$(q "$MACHINE") ENV_PY_WD=$(q "$PY_WD")"
+remote_env="ENV_BRANCH=$(q "$branch") ENV_MACHINE=$(q "$MACHINE") ENV_MACHINE_NAMES=$(q "$MACHINE_NAMES")"
+remote_env="$remote_env ENV_PY_WD=$(q "$PY_WD")"
 remote_env="$remote_env ENV_STORAGE_DIR=$(q "$STORAGE_DIR") ENV_CACHE_ROOT=$(q "$CACHE_ROOT")"
 
 printf '== bootstrapping ~/env (branch %s) on %s\n' "$branch" "$SSH_HOST"

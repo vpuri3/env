@@ -33,12 +33,24 @@ load_homebrew() {
 }
 
 ME=$(whoami)
-MACHINE="${MACHINE:-$(hostname -s)}"
-# MACHINE names the whole cluster (all nodes share one home); inside a Slurm
-# job, also show which compute node this shell is on.
-if [ -n "${SLURM_JOB_ID:-}" ]; then
-    MACHINE="$MACHINE:$(hostname -s)"
+# On clusters every node shares one home, so local.sh holds the cluster name
+# (MACHINE) plus MACHINE_NAMES, "host=name ..." pairs matching the ssh aliases
+# on the Mac. Nodes not listed (compute nodes) show as cluster:host.
+_env_host=$(hostname -s)
+if [ -n "${MACHINE_NAMES:-}" ]; then
+    case " $MACHINE_NAMES " in
+        *" $_env_host="*)
+            _env_name=" $MACHINE_NAMES"
+            _env_name="${_env_name#*" $_env_host="}"
+            MACHINE="${_env_name%% *}"
+            ;;
+        *) MACHINE="${MACHINE:-$_env_host}:$_env_host" ;;
+    esac
+elif [ -n "${SLURM_JOB_ID:-}" ]; then
+    MACHINE="${MACHINE:-$_env_host}:$_env_host"
 fi
+MACHINE="${MACHINE:-$_env_host}"
+unset _env_host _env_name
 
 ###
 ### misc vars
