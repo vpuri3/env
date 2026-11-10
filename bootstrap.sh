@@ -19,8 +19,6 @@ LOCAL_CONFIG="$HOME/.config/env/local.sh"
 BLOCK_BEGIN="# >>> env (managed by ~/env/bootstrap.sh) >>>"
 BLOCK_END="# <<< env <<<"
 LEGACY_HEADER="# https://github.com/vpuri3/env/bootstrap.sh"
-DEFAULT_GIT_NAME="Vedant Puri"
-DEFAULT_GIT_EMAIL="vedantpuri@gmail.com"
 
 # Pinned so every machine runs the same editor; bump and re-run to upgrade.
 NVIM_VERSION="v0.12.6"
@@ -99,6 +97,26 @@ ask_value() {
         "~") ANSWER="$HOME" ;;
         "~/"*) ANSWER="$HOME/${ANSWER#"~/"}" ;;
     esac
+}
+
+# Asks until the answer is non-empty. $2 is the machine's current value, if any.
+ask_required() {
+    local question current reply
+    question="$1"
+    current="$2"
+
+    while :; do
+        if [ -n "$current" ]; then
+            read -r -p "$question [$current] " reply || reply=""
+            ANSWER="${reply:-$current}"
+        else
+            read -r -p "$question " reply || die "no answer given for: $question"
+            ANSWER="$reply"
+        fi
+        if [ -n "$ANSWER" ]; then
+            return 0
+        fi
+    done
 }
 
 ###
@@ -565,13 +583,16 @@ configure_git() {
 
     name=$(git config --file "$file" --get user.name || true)
     email=$(git config --file "$file" --get user.email || true)
-    if [ "$ASSUME_DEFAULTS" = 1 ] && [ -z "$email" ]; then
-        info "git identity not set; run: git config --file ~/.gitconfig user.email <email>"
+    if [ "$ASSUME_DEFAULTS" = 1 ]; then
+        if [ -z "$name" ] || [ -z "$email" ]; then
+            info "git identity not set; run: git config --file ~/.gitconfig user.name \"<name>\""
+            info "                           git config --file ~/.gitconfig user.email <email>"
+        fi
         return 0
     fi
-    ask_value "git user.name on this machine?" "${name:-$DEFAULT_GIT_NAME}"
+    ask_required "git user.name on this machine?" "$name"
     git config --file "$file" user.name "$ANSWER"
-    ask_value "git user.email on this machine (work email on company machines)?" "${email:-$DEFAULT_GIT_EMAIL}"
+    ask_required "git user.email on this machine (work email on company machines)?" "$email"
     git config --file "$file" user.email "$ANSWER"
 }
 
