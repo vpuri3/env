@@ -131,6 +131,8 @@ probe=$(interactive_probe "$home" "alias tmls >/dev/null && printf '%s' \"\$$pro
 check "interactive shell has aliases and prompt" [ -n "$probe" ]
 if [ "$shell_name" = zsh ]; then
     check "zsh prompt uses zsh escapes" bash -c "case '$probe' in *%F*) exit 0;; esac; exit 1"
+    keymap=$(run_in_home "$home" EDITOR=vi -- zsh -i -c 'bindkey "^R"' </dev/null 2>/dev/null) || keymap=""
+    check "zsh keeps emacs keys when started with EDITOR=vi (tmux)" [ "$keymap" = '"^R" history-incremental-search-backward' ]
 fi
 
 out=$(noninteractive_probe "$home" 'printf "%s" "$PY_WD"')

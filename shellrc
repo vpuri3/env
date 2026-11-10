@@ -22,5 +22,11 @@ case $- in
     *) return 0 ;;
 esac
 
+# zsh switches to vi keys if EDITOR=vi is already set when it starts (e.g.
+# under tmux), which unbinds ^P, ^N and ^R. Keep emacs keys, like bash.
+if [ -n "${ZSH_VERSION:-}" ]; then
+    bindkey -e
+fi
+
 # shellcheck source=aliases.sh
 . "$HOME/env/aliases.sh"
