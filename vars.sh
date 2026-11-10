@@ -34,6 +34,11 @@ load_homebrew() {
 
 ME=$(whoami)
 MACHINE="${MACHINE:-$(hostname -s)}"
+# MACHINE names the whole cluster (all nodes share one home); inside a Slurm
+# job, also show which compute node this shell is on.
+if [ -n "${SLURM_JOB_ID:-}" ]; then
+    MACHINE="$MACHINE:$(hostname -s)"
+fi
 
 ###
 ### misc vars

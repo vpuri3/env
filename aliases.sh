@@ -5,6 +5,7 @@
 alias ..='cd ..'
 alias dc='cd -'
 alias cdp='cd $PY_WD; ll'
+alias cds='cd "${STORAGE_DIR:-$HOME}"; ll'
 
 # file operations
 alias scp='scp -r'

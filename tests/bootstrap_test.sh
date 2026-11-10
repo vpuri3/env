@@ -172,6 +172,31 @@ if [ "$os" = Linux ] && [ -d /dev/shm ]; then
 fi
 
 ###
+### cluster set up by env-deploy: values passed in as ENV_*
+###
+home=$(new_home deployed)
+storage="$work/fsw/users/vpuri"
+mkdir -p "$home/.cursor-server/bin"
+printf 'x\n' > "$home/.cursor-server/bin/server"
+check "bootstrap with env-deploy values" bootstrap "$home" ENV_MACHINE=dfw ENV_PY_WD="$work/fsw/projects/vpuri" ENV_STORAGE_DIR="$storage"
+check "MACHINE from env-deploy" grep -Fqx "MACHINE='dfw'" "$home/.config/env/local.sh"
+check "PY_WD from env-deploy" grep -Fqx "export PY_WD='$work/fsw/projects/vpuri'" "$home/.config/env/local.sh"
+check "STORAGE_DIR recorded" grep -Fqx "export STORAGE_DIR='$storage'" "$home/.config/env/local.sh"
+check "CACHE_ROOT under STORAGE_DIR" grep -Fqx "CACHE_ROOT='$storage/cache'" "$home/.config/env/local.sh"
+out=$(noninteractive_probe "$home" 'printf "%s" "$XDG_CACHE_HOME"')
+check "caches exported under STORAGE_DIR" [ "$out" = "$storage/cache" ]
+check "~/.cursor-server moved to STORAGE_DIR" [ "$(readlink "$home/.cursor-server")" = "$storage/home/.cursor-server" ]
+check "~/.cursor-server contents kept" [ -f "$storage/home/.cursor-server/bin/server" ]
+check "~/.vscode-server kept in STORAGE_DIR" [ "$(readlink "$home/.vscode-server")" = "$storage/home/.vscode-server" ]
+out=$(interactive_probe "$home" 'cds >/dev/null; pwd')
+check "cds goes to STORAGE_DIR" [ "$out" = "$storage" ]
+if [ "$shell_name" = zsh ]; then rc=.zshrc; else rc=.bashrc; fi
+out=$(run_in_home "$home" SLURM_JOB_ID=1 -- "$shell_name" -c ". \"\$HOME/$rc\"; printf '%s' \"\$MACHINE\"" </dev/null 2>/dev/null)
+check "prompt names the node inside a Slurm job" [ "$out" = "dfw:$(hostname -s)" ]
+check "re-run with new env-deploy PY_WD" bootstrap "$home" ENV_MACHINE=dfw ENV_PY_WD="$work/fsw/projects2/vpuri" ENV_STORAGE_DIR="$storage"
+check "env-deploy PY_WD replaces the saved one" grep -Fqx "export PY_WD='$work/fsw/projects2/vpuri'" "$home/.config/env/local.sh"
+
+###
 ### refusals: nothing may be written
 ###
 home=$(new_home tmp-py-wd)

@@ -1,0 +1,129 @@
+#!/bin/bash
+# Sets up ~/env on a cluster from this machine.
+#
+#   env-deploy CLUSTER           install your ssh key, then clone/update ~/env
+#                                there and run bootstrap.sh with the values below
+#   env-deploy CLUSTER --probe   only show what the cluster looks like
+#
+# Values live on this machine only (not in the public repo), in
+# ~/.config/env/clusters/CLUSTER.sh:
+#
+#   SSH_HOST=dfw2          ssh alias to deploy through (see ~/.ssh/config.local)
+#   MACHINE=dfw            prompt name on the cluster
+#   PY_WD=/lustre/...      project directory; `cdp` goes here
+#   STORAGE_DIR=/lustre/...  personal storage; caches go to $STORAGE_DIR/cache
+#   CACHE_ROOT=            optional override for the cache directory
+#   PROBE_PATHS="..."      optional extra paths for --probe to check
+#
+# bootstrap.sh saves them in the cluster's ~/.config/env/local.sh, so they also
+# apply in Slurm jobs, editor terminals and cron, not just ssh logins.
+set -eo pipefail
+
+die() { printf 'env-deploy: %s\n' "$*" >&2; exit 1; }
+usage() { printf 'usage: env-deploy CLUSTER [--probe]\n' >&2; exit 2; }
+
+[ $# -ge 1 ] || usage
+cluster="$1"
+mode=deploy
+case "${2:-}" in
+    "") ;;
+    --probe) mode=probe ;;
+    *) usage ;;
+esac
+
+config="$HOME/.config/env/clusters/$cluster.sh"
+[ -f "$config" ] || die "no $config"
+SSH_HOST="" MACHINE="" PY_WD="" STORAGE_DIR="" CACHE_ROOT="" PROBE_PATHS=""
+# shellcheck disable=SC1090
+. "$config"
+[ -n "$SSH_HOST" ] || die "SSH_HOST is not set in $config"
+
+key="${ENV_DEPLOY_KEY:-$HOME/.ssh/id_ed25519.pub}"
+mkdir -p "$HOME/.ssh/cm"
+chmod 700 "$HOME/.ssh/cm"
+cm=(-o "ControlPath=$HOME/.ssh/cm/%C")
+
+# One authenticated connection that every step below reuses, so a password
+# is asked at most once.
+if ! ssh "${cm[@]}" -O check "$SSH_HOST" 2>/dev/null; then
+    printf '== connecting to %s (enter your password if asked)\n' "$SSH_HOST"
+    ssh "${cm[@]}" -o ControlMaster=yes -o ControlPersist=15m -fN "$SSH_HOST"
+fi
+
+key_login_works() {
+    ssh -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=20 "$SSH_HOST" true 2>/dev/null
+}
+
+if key_login_works; then
+    printf '== key login to %s already works\n' "$SSH_HOST"
+else
+    [ -f "$key" ] || die "no public key at $key (set ENV_DEPLOY_KEY)"
+    printf '== installing %s on %s\n' "$key" "$SSH_HOST"
+    # -f: ssh-copy-id's "already installed?" check would pass through the
+    # shared connection and wrongly skip the key.
+    ssh-copy-id -f -i "$key" "${cm[@]}" "$SSH_HOST"
+    if key_login_works; then
+        printf '== key login to %s works now\n' "$SSH_HOST"
+    else
+        printf 'env-deploy: key login still fails; %s may not accept keys\n' "$SSH_HOST" >&2
+    fi
+fi
+
+q() { printf '%q' "$1"; }
+
+if [ "$mode" = probe ]; then
+    printf '== probing %s\n' "$SSH_HOST"
+    # Values expand here on purpose, quoted with %q for the remote shell.
+    # shellcheck disable=SC2029
+    ssh "${cm[@]}" "$SSH_HOST" "PROBE_PATHS=$(q "$PY_WD $STORAGE_DIR $CACHE_ROOT $PROBE_PATHS") bash -s" << 'EOF'
+set +e
+echo "host:   $(hostname -f 2>/dev/null || hostname)"
+echo "arch:   $(uname -m)"
+echo "id:     $(id)"
+echo "shell:  $SHELL"
+echo "glibc:  $(ldd --version 2>&1 | head -n 1)"
+echo "git:    $(git --version 2>&1)"
+echo "curl:   $(curl --version 2>&1 | head -n 1)"
+curl -fsS -o /dev/null --max-time 15 -w 'github: HTTP %{http_code}\n' https://github.com || echo "github: unreachable"
+echo "home:   $HOME"
+df -h "$HOME" | tail -n 1
+echo "== paths"
+for p in $PROBE_PATHS; do ls -ld "$p" 2>&1; done
+if [ -x /cm/shared/apps/scripts/fs-quota-status ]; then
+    echo "== quotas"
+    /cm/shared/apps/scripts/fs-quota-status 2>&1 | head -n 40
+fi
+echo "== existing setup"
+if [ -d "$HOME/env/.git" ]; then (cd "$HOME/env" && git log --oneline -1); else echo "no ~/env"; fi
+if [ -f "$HOME/.config/env/local.sh" ]; then cat "$HOME/.config/env/local.sh"; else echo "no ~/.config/env/local.sh"; fi
+ls -la "$HOME"
+EOF
+    exit 0
+fi
+
+[ -n "$PY_WD" ] || die "PY_WD is not set in $config"
+[ -n "$STORAGE_DIR" ] || die "STORAGE_DIR is not set in $config"
+
+repo="$HOME/env"
+branch=$(cd "$repo" && git rev-parse --abbrev-ref HEAD)
+(cd "$repo" && git fetch -q origin)
+if [ "$(cd "$repo" && git rev-parse HEAD)" != "$(cd "$repo" && git rev-parse "origin/$branch" 2>/dev/null)" ]; then
+    printf 'env-deploy: local ~/env differs from origin/%s; the cluster gets origin/%s\n' "$branch" "$branch" >&2
+fi
+
+remote_script='set -e
+if [ ! -d "$HOME/env/.git" ]; then
+    git clone https://github.com/vpuri3/env.git "$HOME/env"
+fi
+cd "$HOME/env"
+git fetch -q origin
+git checkout -q "$ENV_BRANCH"
+git merge -q --ff-only "origin/$ENV_BRANCH"
+exec bash "$HOME/env/bootstrap.sh"'
+
+remote_env="ENV_BRANCH=$(q "$branch") ENV_MACHINE=$(q "$MACHINE") ENV_PY_WD=$(q "$PY_WD")"
+remote_env="$remote_env ENV_STORAGE_DIR=$(q "$STORAGE_DIR") ENV_CACHE_ROOT=$(q "$CACHE_ROOT")"
+
+printf '== bootstrapping ~/env (branch %s) on %s\n' "$branch" "$SSH_HOST"
+# shellcheck disable=SC2029
+ssh -t "${cm[@]}" "$SSH_HOST" "$remote_env bash -c $(q "$remote_script")"
