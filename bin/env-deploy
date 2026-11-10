@@ -17,7 +17,9 @@
 #   PY_WD=/lustre/...      project directory; `cdp` goes here
 #   STORAGE_DIR=/lustre/...  personal storage; caches go to $STORAGE_DIR/cache
 #   CACHE_ROOT=            optional override for the cache directory
-#   PROBE_PATHS="..."      optional extra paths for --probe to check
+#
+# --probe checks PY_WD and STORAGE_DIR: if one doesn't exist yet it shows the
+# deepest parent that does, with its contents, to help pick the right path.
 #
 # bootstrap.sh saves them in the cluster's ~/.config/env/local.sh, so they also
 # apply in Slurm jobs, editor terminals and cron, not just ssh logins.
@@ -37,7 +39,7 @@ esac
 
 config="$HOME/.config/env/clusters/$cluster.sh"
 [ -f "$config" ] || die "no $config"
-SSH_HOST="" MACHINE="" MACHINE_NAMES="" PY_WD="" STORAGE_DIR="" CACHE_ROOT="" PROBE_PATHS=""
+SSH_HOST="" MACHINE="" MACHINE_NAMES="" PY_WD="" STORAGE_DIR="" CACHE_ROOT=""
 # shellcheck disable=SC1090
 . "$config"
 [ -n "$SSH_HOST" ] || die "SSH_HOST is not set in $config"
@@ -83,7 +85,7 @@ if [ "$mode" = probe ]; then
     fi
     # Values expand here on purpose, quoted with %q for the remote shell.
     # shellcheck disable=SC2029
-    ssh "${cm[@]}" "$SSH_HOST" "PROBE_PATHS=$(q "$PY_WD $STORAGE_DIR $CACHE_ROOT $PROBE_PATHS") PUBKEY=$(q "$pubkey") bash -s" << 'EOF'
+    ssh "${cm[@]}" "$SSH_HOST" "CHECK_PATHS=$(q "$PY_WD $STORAGE_DIR $CACHE_ROOT") PUBKEY=$(q "$pubkey") bash -s" << 'EOF'
 set +e
 echo "host:   $(hostname -f 2>/dev/null || hostname)"
 echo "arch:   $(uname -m)"
@@ -96,7 +98,21 @@ curl -fsS -o /dev/null --max-time 15 -w 'github: HTTP %{http_code}\n' https://gi
 echo "home:   $HOME"
 df -h "$HOME" | tail -n 1
 echo "== paths"
-for p in $PROBE_PATHS; do ls -ld "$p" 2>&1; done
+for p in $CHECK_PATHS; do
+    if [ -e "$p" ]; then
+        ls -ld "$p"
+        continue
+    fi
+    echo "missing: $p"
+    d=$(dirname "$p")
+    while [ ! -e "$d" ] && [ "$d" != / ]; do
+        echo "missing: $d"
+        d=$(dirname "$d")
+    done
+    ls -ld "$d"
+    echo "  contents of $d:"
+    ls "$d" 2>&1 | head -n 20 | sed 's/^/    /'
+done
 echo "== ssh"
 if [ -f "$HOME/.ssh/authorized_keys" ]; then
     echo "authorized_keys entries: $(grep -c . "$HOME/.ssh/authorized_keys")"
