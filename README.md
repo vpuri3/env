@@ -47,7 +47,9 @@ for that. Output goes to `~/.local/share/nvim/env-bootstrap.log`.
 
 Bootstrap edits rc files, `~/.gitconfig` and `~/.ssh/config` only inside a
 `# >>> env ... >>>` block and leaves the rest alone. `vimrc`, `tmux.conf`,
-`emacs.conf`, `nvim/` and `bin/` are symlinked. Anything it replaces is saved
+`emacs.conf`, `nvim/` and `bin/` are symlinked, as are `vscode_settings.json`
+and `vscode_keybindings.json` into Cursor and VS Code, for whichever has been
+opened on the machine. Anything it replaces is saved
 under `~/.env-backup/<timestamp>/`.
 
 This repo is public: machine-specific and work hosts go in `~/.ssh/config`

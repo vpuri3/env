@@ -1,11 +1,6 @@
-// Link/ append this file to
-// /Users/vp/Library/Application\ Support/Cursor/User/keybindings.json
-// Can also find this file with
-// "Cmd + Shift + p" followed by "Preferences: Open keyboard shortcuts (JSON)"
-
-// Link to ~/Library/Application\ Support/Cursor/User/keybindings.json
-
-// Place your key bindings in this file to override the defaults
+// Keybindings for Cursor and VS Code. bootstrap.sh links this file to
+// <editor>/User/keybindings.json.
+// Open it with "Cmd + Shift + p" -> "Preferences: Open Keyboard Shortcuts (JSON)".
 [
     //========================================//
     // refresh file

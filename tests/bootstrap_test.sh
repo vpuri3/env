@@ -99,6 +99,13 @@ echo "# $os + $shell_name"
 ###
 home=$(new_home personal)
 printf 'set number\n' > "$home/.vimrc"
+if [ "$os" = Darwin ]; then
+    cursor_user="$home/Library/Application Support/Cursor/User"
+else
+    cursor_user="$home/.config/Cursor/User"
+fi
+mkdir -p "$cursor_user"
+printf '{}\n' > "$cursor_user/settings.json"
 check "bootstrap succeeds" bootstrap "$home"
 first=$(snapshot "$home")
 check "re-run succeeds" bootstrap "$home"
@@ -109,6 +116,10 @@ for f in $(rc_files); do
 done
 check "existing ~/.vimrc backed up" [ -n "$(find "$home/.env-backup" -name .vimrc -type f)" ]
 check "~/.vimrc linked into repo" [ "$(readlink "$home/.vimrc")" = "$home/env/vimrc" ]
+check "existing Cursor settings backed up" [ -n "$(find "$home/.env-backup" -name settings.json -type f)" ]
+check "Cursor settings linked into repo" [ "$(readlink "$cursor_user/settings.json")" = "$home/env/vscode_settings.json" ]
+check "Cursor keybindings linked into repo" [ "$(readlink "$cursor_user/keybindings.json")" = "$home/env/vscode_keybindings.json" ]
+check "no VS Code settings created when VS Code is absent" is_absent "$(dirname "$(dirname "$cursor_user")")/Code"
 check "~/.gitconfig is a real file" is_real_file "$home/.gitconfig"
 check "~/.ssh/config is a real file" is_real_file "$home/.ssh/config"
 check "PY_WD recorded" grep -Fqx "export PY_WD='$home/python'" "$home/.config/env/local.sh"

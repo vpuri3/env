@@ -1,12 +1,14 @@
-// Link/ append this file to
-// /Users/vp/Library/Application\ Support/Cursor/User/settings.json
-// Can also find this file with
-// "Cmd + Shift + p" followed by "Preferences: Open user settings (JSON)"
-
-// link to  ~/Library/Application\ Support/Cursor/User/settings.json
+// User settings for Cursor and VS Code. bootstrap.sh links this file to
+// <editor>/User/settings.json, so changes made in the settings UI land here.
+// Open it with "Cmd + Shift + p" -> "Preferences: Open User Settings (JSON)".
 
 {
     "window.commandCenter": true,
+    "window.autoDetectColorScheme": true,
+    "extensions.installCooldownHours": 24,
+
+    "cursor.composer.queueMessageDefaultBehavior": "steer",
+    "cursor.composer.queueManualSendBehavior2": "steer",
 
     "extensions.experimental.affinity": {
         "asvetliakov.vscode-neovim": 1

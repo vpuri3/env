@@ -574,6 +574,27 @@ link_dotfiles() {
     link_file "$ENV_REPO_DIR/nvim" "$HOME/.config/nvim"
 }
 
+# Links shared settings into each VS Code-family editor that has been opened
+# on this machine. Changes made in the editor's settings UI land in the repo.
+configure_editors() {
+    local app_support name user_dir
+    case "$(uname -s)" in
+        Darwin) app_support="$HOME/Library/Application Support" ;;
+        *) app_support="$HOME/.config" ;;
+    esac
+    for name in Cursor Code; do
+        if [ ! -d "$app_support/$name" ]; then
+            continue
+        fi
+        if ! ask_yes_no "Link shared settings and keybindings into $name (current files are backed up)?" y; then
+            continue
+        fi
+        user_dir="$app_support/$name/User"
+        link_file "$ENV_REPO_DIR/vscode_settings.json" "$user_dir/settings.json"
+        link_file "$ENV_REPO_DIR/vscode_keybindings.json" "$user_dir/keybindings.json"
+    done
+}
+
 configure_git() {
     local file name email
     file="$HOME/.gitconfig"
@@ -1020,6 +1041,7 @@ main() {
     write_local_config
 
     link_dotfiles
+    configure_editors
     configure_git
     configure_ssh
     configure_codex
