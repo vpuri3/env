@@ -636,22 +636,30 @@ link_dotfiles() {
 # Remote editor servers grow to several GB; on clusters with small home
 # quotas keep them in STORAGE_DIR behind a symlink.
 relocate_editor_servers() {
-    local name source_dir target_dir
+    local name source_dir target_dir old_dir
     if [ -z "$STORAGE_DIR_VALUE" ]; then
         return 0
     fi
     for name in .cursor-server .vscode-server; do
         source_dir="$HOME/$name"
-        target_dir="$STORAGE_DIR_VALUE/home/$name"
+        target_dir="$STORAGE_DIR_VALUE/$name"
+        # Earlier versions used $STORAGE_DIR/home/<name>.
+        old_dir="$STORAGE_DIR_VALUE/home/$name"
+        if [ -L "$source_dir" ] && [ "$(readlink "$source_dir")" = "$old_dir" ] \
+            && [ -d "$old_dir" ] && [ ! -e "$target_dir" ]; then
+            mv "$old_dir" "$target_dir"
+            rm "$source_dir"
+            ln -s "$target_dir" "$source_dir"
+            rmdir "$STORAGE_DIR_VALUE/home" 2>/dev/null || true
+            info "moved $old_dir to $target_dir"
+            continue
+        fi
         if [ -L "$source_dir" ] && [ "$(readlink "$source_dir")" = "$target_dir" ]; then
             continue
         fi
         if ! ask_yes_no "Keep ~/$name in $target_dir (symlinked from home)?" y; then
             continue
         fi
-        # Project storage is often group-readable; editor servers hold tokens.
-        mkdir -p "$(dirname "$target_dir")"
-        chmod 700 "$(dirname "$target_dir")"
         if [ -d "$source_dir" ] && [ ! -L "$source_dir" ]; then
             if [ -e "$target_dir" ]; then
                 warn "$target_dir already exists; leaving ~/$name in place"
@@ -665,6 +673,8 @@ relocate_editor_servers() {
                 backup_move "$source_dir"
             fi
         fi
+        # Project storage is often group-readable; editor servers hold tokens.
+        chmod 700 "$target_dir"
         ln -s "$target_dir" "$source_dir"
         info "linked ~/$name -> $target_dir"
     done

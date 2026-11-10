@@ -194,10 +194,10 @@ check "STORAGE_DIR recorded" grep -Fqx "export STORAGE_DIR='$storage'" "$home/.c
 check "CACHE_ROOT under STORAGE_DIR" grep -Fqx "CACHE_ROOT='$storage/cache'" "$home/.config/env/local.sh"
 out=$(noninteractive_probe "$home" 'printf "%s" "$XDG_CACHE_HOME"')
 check "caches exported under STORAGE_DIR" [ "$out" = "$storage/cache" ]
-check "~/.cursor-server moved to STORAGE_DIR" [ "$(readlink "$home/.cursor-server")" = "$storage/home/.cursor-server" ]
-check "~/.cursor-server contents kept" [ -f "$storage/home/.cursor-server/bin/server" ]
-check "~/.vscode-server kept in STORAGE_DIR" [ "$(readlink "$home/.vscode-server")" = "$storage/home/.vscode-server" ]
-mode=$(stat -c %a "$storage/home" 2>/dev/null || stat -f %Lp "$storage/home")
+check "~/.cursor-server moved to STORAGE_DIR" [ "$(readlink "$home/.cursor-server")" = "$storage/.cursor-server" ]
+check "~/.cursor-server contents kept" [ -f "$storage/.cursor-server/bin/server" ]
+check "~/.vscode-server kept in STORAGE_DIR" [ "$(readlink "$home/.vscode-server")" = "$storage/.vscode-server" ]
+mode=$(stat -c %a "$storage/.cursor-server" 2>/dev/null || stat -f %Lp "$storage/.cursor-server")
 check "relocated editor servers are private (700)" [ "$mode" = 700 ]
 out=$(interactive_probe "$home" 'cds >/dev/null; pwd')
 check "cds goes to STORAGE_DIR" [ "$out" = "$storage" ]
@@ -206,6 +206,20 @@ out=$(run_in_home "$home" SLURM_JOB_ID=1 -- "$shell_name" -c ". \"\$HOME/$rc\"; 
 check "prompt names the node inside a Slurm job" [ "$out" = "dfw:$(hostname -s)" ]
 check "re-run with new env-deploy PY_WD" bootstrap "$home" ENV_MACHINE=dfw ENV_PY_WD="$work/fsw/projects2/vpuri" ENV_STORAGE_DIR="$storage"
 check "env-deploy PY_WD replaces the saved one" grep -Fqx "export PY_WD='$work/fsw/projects2/vpuri'" "$home/.config/env/local.sh"
+
+###
+### earlier layout: editor servers under $STORAGE_DIR/home
+###
+home=$(new_home old-layout)
+storage="$work/fsw-old/users/vpuri"
+mkdir -p "$storage/home/.cursor-server/bin" "$storage/home/.vscode-server"
+printf 'x\n' > "$storage/home/.cursor-server/bin/server"
+ln -s "$storage/home/.cursor-server" "$home/.cursor-server"
+ln -s "$storage/home/.vscode-server" "$home/.vscode-server"
+check "bootstrap migrates the old layout" bootstrap "$home" ENV_PY_WD="$storage" ENV_STORAGE_DIR="$storage"
+check "editor server moved to the top of STORAGE_DIR" [ "$(readlink "$home/.cursor-server")" = "$storage/.cursor-server" ]
+check "editor server contents kept" [ -f "$storage/.cursor-server/bin/server" ]
+check "empty home/ removed" is_absent "$storage/home"
 
 ###
 ### refusals: nothing may be written
