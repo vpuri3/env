@@ -1,1 +1,2 @@
-codex/openrouter.env.local
+.claude/settings.local.json
+.bootstrap-test.*

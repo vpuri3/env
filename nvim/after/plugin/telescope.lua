@@ -1,5 +1,8 @@
 --
-if not vim.g.vscode then
+if vim.g.vscode then
+elseif not pcall(require, 'telescope') then
+    vim.notify("telescope.nvim is not installed; run :PackerInstall", vim.log.levels.WARN)
+else
     if vim.treesitter and vim.treesitter.language then
         if vim.treesitter.language.ft_to_lang == nil and vim.treesitter.language.get_lang ~= nil then
             vim.treesitter.language.ft_to_lang = vim.treesitter.language.get_lang

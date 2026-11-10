@@ -1,15 +1,15 @@
 #!/bin/bash
+# Replaces each symlink with a regular copy of what it points to, in place.
+set -eu
 
-# converts symbolic link into a regular file
-#[   -L "$1" ] && cp --remove-destination "$(readlink "$1")" "$1" 
-
-for file in "$@"
-do
-	#[ !  -L "$file" ] && echo "ABORT: $file is not a link";
-	if [ -L "$file" ]; then
-	    P=$(readlink "$file")
-	    rm "$file"
-	    cp -v "$P" .
-	fi
+for file in "$@"; do
+    if [ ! -L "$file" ]; then
+        echo "delink: $file is not a symlink, skipping" >&2
+        continue
+    fi
+    tmp="$file.delink.$$"
+    cp -RL "$file" "$tmp"
+    rm "$file"
+    mv "$tmp" "$file"
+    echo "delinked $file"
 done
-

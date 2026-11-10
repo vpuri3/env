@@ -1,2 +1,0 @@
-grep -Irni $1 ~/Nek5000/core/ | grep -i subroutine
-grep -Irni $1 ~/Nek5000/bin/  | grep -i function

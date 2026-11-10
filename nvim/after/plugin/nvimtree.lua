@@ -1,6 +1,9 @@
 --
 
-if not vim.g.vscode then
+if vim.g.vscode then
+elseif not pcall(require, "nvim-tree.api") then
+    vim.notify("nvim-tree.lua is not installed; run :PackerInstall", vim.log.levels.WARN)
+else
     local api = require("nvim-tree.api")
 
     -- disable default file explorer (netrw)

@@ -1,2 +1,0 @@
-grep -Irn
-i $1 *.f | grep -i PARAM

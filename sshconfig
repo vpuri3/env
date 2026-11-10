@@ -1,102 +1,32 @@
-Host *
-    AddKeysToAgent yes
-    ForwardAgent yes
-    IgnoreUnknown UseKeychain
-    UseKeychain yes
-    ForwardX11 yes
-Include ~/.ssh/config.local
+# Shared SSH hosts, included from the bottom of each machine's ~/.ssh/config.
+# Machine-specific and work hosts go in ~/.ssh/config above the env block,
+# never here: this repo is public.
+#
+# ssh uses the first value it finds for each option, so per-host settings must
+# come before the `Host *` defaults at the end of this file.
+#
+# ForwardAgent lets the remote host use your local keys while you are
+# connected (e.g. to push to GitHub). It is enabled only for hosts where you
+# log in as yourself, not for shared or other people's accounts.
 
 # CHMU Orchard
 Host orchard
     HostName orchard-login-001
     User vedantpu
+    ForwardAgent yes
     IdentityFile ~/.ssh/google_compute_engine
     ProxyCommand ~/Downloads/google-cloud-sdk/bin/gcloud compute start-iap-tunnel %h 22 --listen-on-stdin --zone "us-central1-c" --project "cmu-gpu-cloud"
 
-# Julia Computing
-Host antarctic arctic1 cyclops
-    HostName %h.juliacomputing.io
-    User vpuri3
-
-Host arctic2 arctic3 arctic4
-    HostName %h.juliacomputing.io
-    ProxyJump arctic1
-    User vpuri3
-
-# Carnegie Mellon University
-Host cmu
-    HostName unix.andrew.cmu.edu
-    User vedantpu
-
-# MAIL LAB
-Host mail-head
-    HostName 147.73.193.6
-    User barati
-
-Host mail3
-    HostName gpu-node-3
-    User vedantpu
-    ProxyJump mail-head
-
-Host mail4
-    HostName gpu-node-4
-    User vedantpu
-    ProxyJump mail-head
-
-Host mail5
-    HostName gpu-node-5
-    User vedantpu
-    ProxyJump mail-head
-
-Host mail6
-    HostName gpu-node-6
-    User vedantpu
-    ProxyJump mail-head
-
 # VDEL
-Host falcon
-    HostName vdel-falcon.andrew.cmu.edu
-    User vedantpu
-
 Host eagle
     HostName vdel-eagle.me.cmu.edu
     User vedantpu
+    ForwardAgent yes
 
-Host eagle-jump
-    HostName vdel-eagle.me.cmu.edu
-    User vedantpu
-    ProxyJump cmu
-
-Host tomcat
-    HostName vdel-tomcat.andrew.cmu.edu
-    User wentai
-
-# Viswanathan group
-Host arjuna
-    HostName arjuna.psc.edu
-    User vedantpu
-
-Host arjuna-jump
-    HostName arjuna.psc.edu
-    ProxyJump vedantpu@unix.andrew.cmu.edu
-    User vedantpu
-
-Host h001
-    HostName h001
-    ProxyJump vedantpu@arjuna.psc.edu
-    User vedantpu
-
-Host h001-jump
-    HostName h001
-    ProxyJump arjuna-jump
-    User vedantpu
-
-Host bridges
-    HostName bridges2.psc.edu
-    User vpuri1
-
-# Argonne National Laboratory
-Host bebop
-    HostName %h.lcrc.anl.gov
-    User ac.vnpuri
-#
+# Defaults for every host. Keep this block last.
+Host *
+    AddKeysToAgent yes
+    IgnoreUnknown UseKeychain
+    UseKeychain yes
+    ForwardAgent no
+    ForwardX11 yes

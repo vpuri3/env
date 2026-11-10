@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck and zsh
+        run: sudo apt-get update && sudo apt-get install -y shellcheck zsh
+      - name: shellcheck
+        run: shellcheck -x bootstrap.sh shellrc vars.sh aliases.sh tests/bootstrap_test.sh
+      - name: zsh can parse the shared shell files
+        run: for f in shellrc vars.sh aliases.sh; do zsh -n "$f"; done
+      - name: bootstrap.sh stays user-level (no root, no system package managers)
+        run: |
+          if grep -nE '\b(sudo|apt|apt-get|snap|yum|dnf|pacman)\b|brew (install|update|upgrade)' bootstrap.sh; then
+            exit 1
+          fi
+
+  bootstrap:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, shell: /bin/bash }
+          - { os: macos-latest, shell: /bin/bash }
+          - { os: macos-latest, shell: /bin/zsh }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install zsh (Linux, to test the linux + zsh refusal)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Bootstrap in throwaway homes
+        run: SHELL=${{ matrix.shell }} tests/bootstrap_test.sh

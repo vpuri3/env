@@ -1,55 +1,38 @@
-if not vim.g.vscode then
-  require('nvim-treesitter').setup {
-    -- A list of parser names, or "all" (the five listed parsers should always be installed)
-    ensure_installed = {
-	    "bash", "make", "markdown", "lua",
-	    "vim", "vimdoc", "query",
-	    "julia", "python", "javascript", "matlab",
-	    "latex", "bibtex",
-	    "c", "cpp", "fortran",
-	    "git_rebase", "gitattributes", "gitcommit", "gitignore",
-    },
-
-    -- Install parsers synchronously (only applied to `ensure_installed`)
-    sync_install = false,
-
-    -- Automatically install missing parsers when entering buffer
-    -- Recommendation: set to false if you don't have `tree-sitter` CLI installed locally
-    auto_install = true,
-
-    -- List of parsers to ignore installing (for "all")
-    ignore_install = {}, --{ "javascript" },
-
-    ---- If you need to change the installation directory of the parsers (see -> Advanced Setup)
-    -- parser_install_dir = "/some/path/to/store/parsers", -- Remember to run vim.opt.runtimepath:append("/some/path/to/store/parsers")!
-
-    highlight = {
-      enable = true,
-      use_languagetree = true,
-
-      -- NOTE: these are the names of the parsers and not the filetype. (for example if you want to
-      -- disable highlighting for the `tex` filetype, you need to include `latex` in this list as this is
-      -- the name of the parser)
-      -- list of language that will be disabled
-      disable = {}, --{ "c", "rust" },
-      -- Or use a function for more flexibility, e.g. to disable slow treesitter highlight for large files
-      disable = function(lang, buf)
-          local max_filesize = 100 * 1024 -- 100 KB
-          local ok, stats = pcall(vim.loop.fs_stat, vim.api.nvim_buf_get_name(buf))
-          if ok and stats and stats.size > max_filesize then
-              return true
-          end
-      end,
-
-      -- Setting this to true will run `:h syntax` and tree-sitter at the same time.
-      -- Set this to `true` if you depend on 'syntax' being enabled (like for indentation).
-      -- Using this option may slow down your editor, and you may see some duplicate highlights.
-      -- Instead of true it can also be a list of languages
-      additional_vim_regex_highlighting = false,
-    },
-
-    indent = {
-        enable = true
-    },
-  }
+-- nvim-treesitter `main` branch: needs Neovim 0.12+, the tree-sitter CLI and
+-- a C compiler. Parsers are installed by bootstrap.sh (or :TSInstall), never
+-- at startup, so a machine without a compiler does not retry on every launch.
+if vim.g.vscode then
+    return
 end
+if vim.fn.has('nvim-0.12') == 0 then
+    vim.notify("treesitter highlighting needs Neovim 0.12+; re-run ~/env/bootstrap.sh", vim.log.levels.WARN)
+    return
+end
+if not pcall(require, 'nvim-treesitter') then
+    vim.notify("nvim-treesitter is not installed; run :PackerInstall", vim.log.levels.WARN)
+    return
+end
+
+vim.g.env_treesitter_parsers = {
+    "bash", "make", "markdown", "lua",
+    "vim", "vimdoc", "query",
+    "julia", "python", "javascript",
+    "latex", "bibtex",
+    "c", "cpp", "fortran",
+    "git_rebase", "gitattributes", "gitcommit", "gitignore",
+}
+
+local max_filesize = 100 * 1024 -- 100 KB
+
+vim.api.nvim_create_autocmd('FileType', {
+    group = vim.api.nvim_create_augroup('env_treesitter', { clear = true }),
+    callback = function(args)
+        local stats = vim.uv.fs_stat(vim.api.nvim_buf_get_name(args.buf))
+        if stats and stats.size > max_filesize then
+            return
+        end
+        if pcall(vim.treesitter.start, args.buf) then
+            vim.bo[args.buf].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
+        end
+    end,
+})

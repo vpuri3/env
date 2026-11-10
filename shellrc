@@ -1,0 +1,26 @@
+#!/bin/bash
+# Entry point sourced from ~/.bashrc (bash) and ~/.zshrc (macOS zsh).
+# Supported: macOS bash, macOS zsh, Linux bash.
+
+if [ -n "${ZSH_VERSION:-}" ] && [ "$(uname -s)" != Darwin ]; then
+    printf '%s\n' "~/env/shellrc: zsh is only supported on macOS; skipping. Use bash on Linux." >&2
+    return 0
+fi
+
+# Machine-specific values (MACHINE, PY_WD, CACHE_ROOT, ...) written by bootstrap.sh.
+if [ -f "$HOME/.config/env/local.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$HOME/.config/env/local.sh"
+fi
+
+# shellcheck source=vars.sh
+. "$HOME/env/vars.sh"
+
+# Non-interactive shells (scp, rsync, ssh host cmd) get the environment only.
+case $- in
+    *i*) ;;
+    *) return 0 ;;
+esac
+
+# shellcheck source=aliases.sh
+. "$HOME/env/aliases.sh"

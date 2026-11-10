@@ -1,6 +1,5 @@
-[user]
-	name  = Vedant Puri
-	email = vedantpuri@gmail.com
+# Shared settings, included from each machine's own ~/.gitconfig.
+# Identity ([user]) and credential helpers are machine-specific and live there.
 [core]
 	editor = vim
 	excludesfile = ~/env/gitignore
@@ -12,8 +11,7 @@
 	co = checkout
 	unstage = reset HEAD --
 	ls = ls-tree --full-name --name-only -r HEAD
-	vis = log --graph --decorate --oneline --all
-	today = log --since "yesterday"
+	today = log --since=midnight
 	squash = "!_git_squash() { git rebase -i HEAD~$1; }; _git_squash"
 	stashed = stash list --pretty=format:'%gd: %h [%ar] %s'
 	history = log -p
@@ -29,9 +27,3 @@
 	ui = auto
 [pull]
 	rebase = true
-[credential "https://github.com"]
-	helper = 
-	helper = !/home/vedantpu/.local/bin/gh auth git-credential
-[credential "https://gist.github.com"]
-	helper = 
-	helper = !/home/vedantpu/.local/bin/gh auth git-credential

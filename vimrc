@@ -73,9 +73,6 @@ set  timeoutlen=1000
 set ttimeoutlen=0
 
 au BufRead .gitconfig,gitconfig setf make
-au BufRead SIZE  setf fortran " nek
-au BufRead *.usr setf fortran " nek
-au BufRead *.geo setf c       " gmsh
 
 set tabstop=4
 set shiftwidth=4
@@ -91,10 +88,6 @@ set wildmenu
 
 colorscheme default
 highlight Visual ctermfg=Black ctermbg=Yellow cterm=NONE
-
-" youcompleteme
-au bufenter *jl let g:ycm_auto_trigger=0
-
 
 "
 " TERMINAL navigation help

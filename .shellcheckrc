@@ -1,0 +1,3 @@
+# SC2016: bootstrap.sh writes literal "$HOME/..." lines into rc files on purpose.
+# SC2088: "~" appears in messages and in a tilde-expansion pattern on purpose.
+disable=SC2016,SC2088

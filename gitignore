@@ -3,25 +3,19 @@
 
 # emacs
 *~
-.*~                                                                                    
+.*~
 \#*#
 
 # vi
-.*.swp                                                                                 
+.*.swp
 .*.swo
 *.swx
-
-# vscode
-.vscode/
 
 # tmux
 .tmux.conf.local
 
-# cursor
-.cursorrules
-
-# slurm
-slurm*
+# slurm job logs
+slurm-*.out
 
 # misc
 .#*
