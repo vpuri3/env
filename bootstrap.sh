@@ -738,18 +738,25 @@ configure_ssh() {
     chmod 700 "$HOME/.ssh"
     # ssh rejects included files that are group- or world-writable
     # (common on clusters with umask 002).
-    chmod go-w "$ENV_REPO_DIR/sshconfig"
+    chmod go-w "$ENV_REPO_DIR/sshconfig" "$ENV_REPO_DIR/sshconfig_defaults"
 
-    # `Host *` resets any Host/Match block above, so the includes always apply.
-    content="# Machine-specific hosts go above this block (ssh uses the first value it finds).
-Host *"
+    # Hosts are included at the top, outside any Host block: Cursor and VS
+    # Code don't follow Includes nested in a Host block. The trailing `Host *`
+    # keeps the included files' last Host block from capturing this file's
+    # own top-level options.
+    content=""
     if [ -f "$HOME/.ssh/config.local" ]; then
-        content="$content
-    Include $HOME/.ssh/config.local"
+        content="Include $HOME/.ssh/config.local
+"
     fi
-    content="$content
-    Include $ENV_REPO_DIR/sshconfig"
+    content="${content}Include $ENV_REPO_DIR/sshconfig
+Host *"
+    write_managed_block "$file" top "$content" hosts
 
+    # Defaults go last so every host-specific value above wins.
+    content="# Machine-specific hosts go above this block (ssh uses the first value it finds).
+Host *
+    Include $ENV_REPO_DIR/sshconfig_defaults"
     write_managed_block "$file" bottom "$content"
     chmod 600 "$file"
 }

@@ -1,9 +1,8 @@
-# Shared SSH hosts, included from the bottom of each machine's ~/.ssh/config.
-# Machine-specific and work hosts go in ~/.ssh/config above the env block,
-# never here: this repo is public.
-#
-# ssh uses the first value it finds for each option, so per-host settings must
-# come before the `Host *` defaults at the end of this file.
+# Shared SSH hosts, included from the top of each machine's ~/.ssh/config
+# (Cursor and VS Code list only hosts reached by top-level Includes).
+# Machine-specific and work hosts go in ~/.ssh/config or ~/.ssh/config.local,
+# never here: this repo is public. Defaults for every host are in
+# sshconfig_defaults, included last.
 #
 # ForwardAgent lets the remote host use your local keys while you are
 # connected (e.g. to push to GitHub). It is enabled only for hosts where you
@@ -22,11 +21,3 @@ Host eagle
     HostName vdel-eagle.me.cmu.edu
     User vedantpu
     ForwardAgent yes
-
-# Defaults for every host. Keep this block last.
-Host *
-    AddKeysToAgent yes
-    IgnoreUnknown UseKeychain
-    UseKeychain yes
-    ForwardAgent no
-    ForwardX11 yes

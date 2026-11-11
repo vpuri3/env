@@ -110,6 +110,9 @@ else
 fi
 mkdir -p "$cursor_user"
 printf '{}\n' > "$cursor_user/settings.json"
+mkdir -p "$home/.ssh"
+printf 'Host mybox\n    ForwardAgent yes\n' > "$home/.ssh/config"
+printf 'Host cl1\n    HostName cl-login-01.example.org\nHost cl*\n    ForwardAgent yes\n' > "$home/.ssh/config.local"
 check "bootstrap succeeds" bootstrap "$home"
 first=$(snapshot "$home")
 check "re-run succeeds" bootstrap "$home"
@@ -155,6 +158,11 @@ check "git identity left unset under --defaults" bash -c "! env -i HOME='$home' 
 ssh_opt() { run_in_home "$home" -- ssh -G -F "$home/.ssh/config" "$1" 2>/dev/null | awk -v k="$2" '$1 == k { print $2 }'; }
 check "agent forwarded to own cluster account" [ "$(ssh_opt eagle forwardagent)" = yes ]
 check "no agent forwarding to unknown hosts" [ "$(ssh_opt example.org forwardagent)" = no ]
+check "machine's own host settings beat the defaults" [ "$(ssh_opt mybox forwardagent)" = yes ]
+check "hosts from ~/.ssh/config.local apply" [ "$(ssh_opt cl1 hostname)" = cl-login-01.example.org ]
+check "wildcards from ~/.ssh/config.local apply" [ "$(ssh_opt cl1 forwardagent)" = yes ]
+first_directive=$(awk '!/^[[:space:]]*(#|$)/ { print $1; exit }' "$home/.ssh/config")
+check "host includes are top-level (visible to Cursor)" [ "$first_directive" = Include ]
 
 check "fetch over https" [ "$(cd "$home/env" && git config --get remote.origin.url)" = https://github.com/vpuri3/env.git ]
 check "push over ssh" [ "$(cd "$home/env" && git config --get remote.origin.pushurl)" = git@github.com:vpuri3/env.git ]

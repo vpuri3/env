@@ -43,7 +43,8 @@ for that. Output goes to `~/.local/share/nvim/env-bootstrap.log`.
 | `~/env/aliases.sh` | interactive aliases (not loaded in non-interactive shells) |
 | `~/.config/env/local.sh` | this machine only: `MACHINE`, `PY_WD`, `CACHE_ROOT`, ... (generated, untracked) |
 | `~/.gitconfig` | this machine's identity and credential helpers; includes `~/env/gitconfig` |
-| `~/.ssh/config` | this machine's (and work) hosts; includes `~/env/sshconfig` |
+| `~/.ssh/config` | this machine's hosts; includes `~/.ssh/config.local`, `~/env/sshconfig` and `~/env/sshconfig_defaults` |
+| `~/.ssh/config.local` | optional, private hosts such as work clusters (never in this repo) |
 
 Bootstrap edits rc files, `~/.gitconfig` and `~/.ssh/config` only inside a
 `# >>> env ... >>>` block and leaves the rest alone. `vimrc`, `tmux.conf`,
@@ -53,7 +54,10 @@ opened on the machine. Anything it replaces is saved
 under `~/.env-backup/<timestamp>/`.
 
 This repo is public: machine-specific and work hosts go in `~/.ssh/config`
-above the env block, never in `sshconfig`. For example:
+between the env blocks, or in `~/.ssh/config.local`, never in `sshconfig`.
+Bootstrap includes `config.local` and `sshconfig` at the top of
+`~/.ssh/config`, so Cursor and VS Code list their hosts, and the `Host *`
+defaults at the bottom, so every host-specific value wins. For example:
 
 ```
 Host github.com
