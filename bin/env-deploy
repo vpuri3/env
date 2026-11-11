@@ -83,9 +83,16 @@ if [ "$mode" = probe ]; then
     if [ -f "$key" ]; then
         pubkey=$(awk '{ print $2 }' "$key")
     fi
+    check_paths="$PY_WD"
+    for p in "$STORAGE_DIR" "$CACHE_ROOT"; do
+        case " $check_paths " in
+            *" $p "*) ;;
+            *) check_paths="$check_paths $p" ;;
+        esac
+    done
     # Values expand here on purpose, quoted with %q for the remote shell.
     # shellcheck disable=SC2029
-    ssh "${cm[@]}" "$SSH_HOST" "CHECK_PATHS=$(q "$PY_WD $STORAGE_DIR $CACHE_ROOT") PUBKEY=$(q "$pubkey") bash -s" << 'EOF'
+    ssh "${cm[@]}" "$SSH_HOST" "CHECK_PATHS=$(q "$check_paths") PUBKEY=$(q "$pubkey") bash -s" << 'EOF'
 set +e
 echo "host:   $(hostname -f 2>/dev/null || hostname)"
 echo "arch:   $(uname -m)"
