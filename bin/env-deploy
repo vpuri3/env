@@ -101,6 +101,8 @@ echo "== paths"
 for p in $CHECK_PATHS; do
     if [ -e "$p" ]; then
         ls -ld "$p"
+        echo "  real path: $(readlink -f "$p")"
+        df -h "$p" | tail -n 1 | sed 's/^/  disk: /'
         continue
     fi
     echo "missing: $p"
@@ -126,7 +128,12 @@ else
 fi
 if [ -x /cm/shared/apps/scripts/fs-quota-status ]; then
     echo "== quotas (stops after 30s)"
-    timeout 30 /cm/shared/apps/scripts/fs-quota-status 2>&1 | head -n 40
+    # Into a file, not a pipe: helpers it starts can outlive the timeout and
+    # would hold a pipe open.
+    quota_out=$(mktemp)
+    timeout -k 5 30 /cm/shared/apps/scripts/fs-quota-status > "$quota_out" 2>&1 < /dev/null
+    head -n 40 "$quota_out"
+    rm -f "$quota_out"
 fi
 echo "== existing setup"
 if [ -d "$HOME/env/.git" ]; then (cd "$HOME/env" && git log --oneline -1); else echo "no ~/env"; fi
