@@ -1,0 +1,10 @@
+{
+  "$schema": "https://pi.dev/schemas/keybindings.schema.json",
+  "tui.altScreen.searchNext": "ctrl+g",
+  "tui.altScreen.searchPrevious": "ctrl+shift+g",
+  "tui.select.up": ["up", "ctrl+p"],
+  "tui.select.down": ["down", "ctrl+n"],
+  "app.session.togglePath": "alt+p",
+  "app.session.toggleNamedFilter": "alt+n",
+  "app.models.toggleProvider": "alt+p"
+}

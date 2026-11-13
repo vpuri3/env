@@ -126,6 +126,9 @@ check "~/.vimrc linked into repo" [ "$(readlink "$home/.vimrc")" = "$home/env/vi
 check "existing Cursor settings backed up" [ -n "$(find "$home/.env-backup" -name settings.json -type f)" ]
 check "Cursor settings linked into repo" [ "$(readlink "$cursor_user/settings.json")" = "$home/env/vscode_settings.json" ]
 check "Cursor keybindings linked into repo" [ "$(readlink "$cursor_user/keybindings.json")" = "$home/env/vscode_keybindings.json" ]
+check "pi keybindings linked into repo" [ "$(readlink "$home/.pi/agent/keybindings.json")" = "$home/env/pi/keybindings.json" ]
+check "pi extensions linked into repo" [ "$(readlink "$home/.pi/agent/extensions")" = "$home/env/pi/extensions" ]
+check "pi settings.json is a real file" is_real_file "$home/.pi/agent/settings.json"
 check "no VS Code settings created when VS Code is absent" is_absent "$(dirname "$(dirname "$cursor_user")")/Code"
 check "~/.gitconfig is a real file" is_real_file "$home/.gitconfig"
 check "~/.ssh/config is a real file" is_real_file "$home/.ssh/config"

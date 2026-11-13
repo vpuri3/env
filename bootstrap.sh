@@ -770,6 +770,19 @@ configure_codex() {
     info "copied codex/config.toml to ~/.codex/config.toml"
 }
 
+# pi rewrites settings.json (changelog version, saved model), so it is copied
+# once; keybindings and extensions are never written by pi and are linked.
+configure_pi() {
+    local agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+    link_file "$ENV_REPO_DIR/pi/keybindings.json" "$agent_dir/keybindings.json"
+    link_file "$ENV_REPO_DIR/pi/extensions" "$agent_dir/extensions"
+    if [ -e "$agent_dir/settings.json" ] || [ -L "$agent_dir/settings.json" ]; then
+        return 0
+    fi
+    cp "$ENV_REPO_DIR/pi/settings.json" "$agent_dir/settings.json"
+    info "copied pi/settings.json to $agent_dir/settings.json"
+}
+
 configure_shell_startup() {
     local source_line rc_content profile_content bashrc_loaded
 
@@ -1172,6 +1185,7 @@ main() {
     configure_git
     configure_ssh
     configure_codex
+    configure_pi
     configure_shell_startup
     configure_macos
 

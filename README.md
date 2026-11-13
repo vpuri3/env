@@ -50,7 +50,10 @@ Bootstrap edits rc files, `~/.gitconfig` and `~/.ssh/config` only inside a
 `# >>> env ... >>>` block and leaves the rest alone. `vimrc`, `tmux.conf`,
 `emacs.conf`, `nvim/` and `bin/` are symlinked, as are `vscode_settings.json`
 and `vscode_keybindings.json` into Cursor and VS Code, for whichever has been
-opened on the machine. Anything it replaces is saved
+opened on the machine. For pi, `pi/keybindings.json` and `pi/extensions/` are
+symlinked into `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`), and
+`pi/settings.json` is copied there only if none exists, since pi writes to it.
+Anything it replaces is saved
 under `~/.env-backup/<timestamp>/`.
 
 This repo is public: machine-specific and work hosts go in `~/.ssh/config`
