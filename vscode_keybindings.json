@@ -117,6 +117,14 @@
         "command": "workbench.action.focusActiveEditorGroup",
         "when": "explorerViewletVisible"
     },
+    {
+        "key": "shift+enter",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+            "text": "\u001b\r"
+        },
+        "when": "terminalFocus"
+    },
     
     //===============//
     // right from editor

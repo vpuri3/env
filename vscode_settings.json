@@ -114,6 +114,7 @@
         "**/wandb",
         "**/cpkt*",
         "**/data",
-    ]
+    ],
+    "editor.largeFileOptimizations": false
 
 }
