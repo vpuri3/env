@@ -770,6 +770,18 @@ configure_codex() {
     info "copied codex/config.toml to ~/.codex/config.toml"
 }
 
+# Agent skills in skills/<name>/SKILL.md, linked one by one so skills from
+# other sources in ~/.agents/skills stay. pi and Codex read this directory.
+configure_skills() {
+    local dir
+    for dir in "$ENV_REPO_DIR"/skills/*/; do
+        dir="${dir%/}"
+        if [ -f "$dir/SKILL.md" ]; then
+            link_file "$dir" "$HOME/.agents/skills/$(basename "$dir")"
+        fi
+    done
+}
+
 # pi rewrites settings.json (changelog version, saved model), so it is copied
 # once; keybindings and extensions are never written by pi and are linked.
 configure_pi() {
@@ -1212,6 +1224,7 @@ main() {
     configure_ssh
     configure_codex
     configure_pi
+    configure_skills
     configure_shell_startup
     configure_macos
 

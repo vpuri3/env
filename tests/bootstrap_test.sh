@@ -129,6 +129,8 @@ check "Cursor keybindings linked into repo" [ "$(readlink "$cursor_user/keybindi
 check "pi keybindings linked into repo" [ "$(readlink "$home/.pi/agent/keybindings.json")" = "$home/env/pi/keybindings.json" ]
 check "pi extensions linked into repo" [ "$(readlink "$home/.pi/agent/extensions")" = "$home/env/pi/extensions" ]
 check "pi settings.json is a real file" is_real_file "$home/.pi/agent/settings.json"
+check "env-deploy skill linked into repo" [ "$(readlink "$home/.agents/skills/env-deploy")" = "$home/env/skills/env-deploy" ]
+check "env-add-cluster skill linked into repo" [ "$(readlink "$home/.agents/skills/env-add-cluster")" = "$home/env/skills/env-add-cluster" ]
 check "no VS Code settings created when VS Code is absent" is_absent "$(dirname "$(dirname "$cursor_user")")/Code"
 check "~/.gitconfig is a real file" is_real_file "$home/.gitconfig"
 check "~/.ssh/config is a real file" is_real_file "$home/.ssh/config"

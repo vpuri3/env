@@ -3,6 +3,17 @@
 Personal shell and editor configuration for macOS (bash or zsh) and Linux
 clusters (bash), with an idempotent bootstrap script.
 
+## Docs
+
+| Doc | Covers |
+| --- | --- |
+| [docs/bootstrap.md](docs/bootstrap.md) | what bootstrap does, options, re-running, testing |
+| [docs/tmux.md](docs/tmux.md) | tmux keys (prefix `Ctrl+s`), copy mode, ssh agent |
+| [docs/nvim.md](docs/nvim.md) | Neovim keys, plugins, LSP |
+| [docs/vscode.md](docs/vscode.md) | Cursor / VS Code with vscode-neovim |
+| [AGENTS.md](AGENTS.md) | rules for coding agents working in this repo (`CLAUDE.md` links to it) |
+| [skills/](skills/) | agent skills `env-deploy` and `env-add-cluster`, linked into `~/.agents/skills/` |
+
 ## Bootstrap
 
 ```bash
@@ -55,7 +66,8 @@ symlinked into `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`), and
 `pi/settings.json` is copied there only if none exists, since pi writes to it.
 If pi is installed, the pinned packages in `pi/packages.txt` that it does not
 list yet are installed with `pi install` (skipped with `--skip-installs`).
-Anything it replaces is saved
+Each `skills/<name>` is linked into `~/.agents/skills/`, where pi and
+Codex find it. Anything it replaces is saved
 under `~/.env-backup/<timestamp>/`.
 
 This repo is public: machine-specific and work hosts go in `~/.ssh/config`
