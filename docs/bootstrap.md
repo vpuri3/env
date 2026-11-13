@@ -18,6 +18,7 @@ bootstrap on the cluster with the cluster's values pre-filled (see
 | *(none)* | interactive: asks each question, with the current value as default |
 | `--defaults` | accept every default without asking; required when stdin is not a terminal |
 | `--skip-installs` | only shell startup, dotfiles, editors, git, ssh, agents; no tool installs, no Julia |
+| `--only STEP,...` | run just these steps (below); skips the questions and every other step |
 | `-h`, `--help` | usage |
 
 | Environment variable | Does |
@@ -90,11 +91,42 @@ bootstrap on the cluster with the cluster's values pre-filled (see
     | uv | yes | `~/.local/bin` |
     | Codex CLI | no | npm under `~/.local` (installs Node.js LTS there if npm is missing) |
     | Claude Code | no | official installer |
+    | pi | yes | official installer (`pi.dev/install.sh`), run without a terminal so it doesn't prompt: managed install in `~/.pi/agent`, launcher `~/.local/bin/pi`, upgrade with `pi update`. Installs Node.js LTS in `~/.local/node` first if node is missing or older than 22.19, so the installer never reaches for Homebrew or root |
     | Julia (juliaup, julia-vim, startup.jl) | if chosen in step 3 | `JULIA_DEPOT_PATH` |
-    | pi packages in `pi/packages.txt` | if pi is installed | `pi install` |
+    | pi packages in `pi/packages.txt` | when pi is installed | `pi install` |
 
     Existing tools are left alone. Neovim is replaced only after asking,
     when the user-local copy is a different version.
+
+## Running single steps (`--only`)
+
+`--only` runs the named steps and nothing else: no repo update, no machine
+questions, no `local.sh`. Steps run in bootstrap's own order, whatever order
+they are given in. The safety checks (shell, batch job, git and curl) still
+run. Add `--defaults` when there's no terminal, e.g. from an agent.
+
+```bash
+~/env/bootstrap.sh --only pi,skills              # relink pi config and agent skills
+~/env/bootstrap.sh --defaults --only install-pi  # install pi + pinned packages
+```
+
+| Step | Does |
+| --- | --- |
+| `dotfiles` | symlinks `~/bin`, `~/.vimrc`, `~/.tmux.conf`, `~/.emacs`, `~/.config/nvim` |
+| `editors` | links the VS Code / Cursor settings and keybindings |
+| `git` | `~/.gitconfig` include; asks for name/email |
+| `ssh` | `~/.ssh/config` managed blocks |
+| `codex` | copies `codex/config.toml` once |
+| `pi` | links pi keybindings and extensions; copies `settings.json` once |
+| `skills` | links `skills/*` into `~/.agents/skills/` |
+| `shell` | rc-file blocks that load `shellrc` |
+| `macos` | key repeat (macOS only) |
+| `install-nvim` | Neovim, plugins, treesitter parsers |
+| `install-uv`, `install-codex`, `install-claude` | those tools |
+| `install-pi` | pi (if missing) and the packages in `pi/packages.txt` |
+
+Steps that need the machine questions (`PY_WD`, `STORAGE_DIR`, Julia,
+moving editor servers) are not available alone; run the full bootstrap.
 
 ## Common tasks
 
@@ -105,6 +137,7 @@ bootstrap on the cluster with the cluster's values pre-filled (see
 | update Neovim plugins | `:PackerSync` (bootstrap never updates plugins) |
 | undo a change | copy the file back from `~/.env-backup/<timestamp>/` |
 | non-interactive run (CI, scripts) | `bootstrap.sh --defaults --skip-installs` |
+| apply one change, e.g. new pi extension or skill | `bootstrap.sh --only pi,skills` |
 
 ## Testing changes to bootstrap
 

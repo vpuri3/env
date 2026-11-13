@@ -36,6 +36,10 @@ docs and skills use placeholders (`mycluster`, `/project/me`).
 
 ## Rules for `bootstrap.sh`
 
+- **Run single steps with `--only`** instead of the whole script, e.g.
+  `~/env/bootstrap.sh --defaults --only pi,skills` after changing `pi/` or
+  `skills/`. `--help` lists the steps. A new step that needs no machine
+  questions belongs in `STEP_NAMES` and `run_step`.
 - **User-level only.** No `sudo`, no system package managers, no Homebrew
   installs; CI greps for these. Tools go under `~/.local`.
 - **Idempotent.** A second run must change nothing (the tests check this).

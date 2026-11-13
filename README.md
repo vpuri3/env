@@ -64,8 +64,10 @@ and `vscode_keybindings.json` into Cursor and VS Code, for whichever has been
 opened on the machine. For pi, `pi/keybindings.json` and `pi/extensions/` are
 symlinked into `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`), and
 `pi/settings.json` is copied there only if none exists, since pi writes to it.
-If pi is installed, the pinned packages in `pi/packages.txt` that it does not
-list yet are installed with `pi install` (skipped with `--skip-installs`).
+Bootstrap offers to install pi with its official installer (Node.js goes to
+`~/.local/node` first if needed), then installs the pinned packages in
+`pi/packages.txt` that pi does not list yet (both skipped with `--skip-installs`).
+To re-apply just this part: `~/env/bootstrap.sh --only pi,skills,install-pi`.
 Each `skills/<name>` is linked into `~/.agents/skills/`, where pi and
 Codex find it. Anything it replaces is saved
 under `~/.env-backup/<timestamp>/`.

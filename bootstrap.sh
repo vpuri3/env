@@ -27,14 +27,23 @@ ASSUME_DEFAULTS=0
 SKIP_INSTALLS=0
 BACKUP_DIR=""
 LEGACY_PY_WD=""
+ONLY_STEPS=""
+ONLY=0
+STEP_NAMES="dotfiles editors git ssh codex pi skills shell macos install-nvim install-uv install-codex install-claude install-pi"
 
 usage() {
     cat << 'EOF'
-Usage: ~/env/bootstrap.sh [--defaults] [--skip-installs]
+Usage: ~/env/bootstrap.sh [--defaults] [--skip-installs] [--only STEP,...]
 
   --defaults       Accept every default without prompting. Required when
                    stdin is not a terminal.
   --skip-installs  Configure shell startup, dotfiles, git and ssh only.
+  --only STEPS     Run just these comma-separated steps, e.g. --only pi,skills.
+                   Skips the machine questions and everything else.
+
+Steps for --only:
+  dotfiles editors git ssh codex pi skills shell macos
+  install-nvim install-uv install-codex install-claude install-pi
 EOF
 }
 
@@ -43,6 +52,13 @@ parse_args() {
         case "$1" in
             --defaults) ASSUME_DEFAULTS=1 ;;
             --skip-installs) SKIP_INSTALLS=1 ;;
+            --only)
+                if [ $# -lt 2 ]; then usage >&2; exit 2; fi
+                ONLY=1
+                ONLY_STEPS="$2"
+                shift
+                ;;
+            --only=*) ONLY=1; ONLY_STEPS="${1#--only=}" ;;
             -h|--help) usage; exit 0 ;;
             *) usage >&2; exit 2 ;;
         esac
@@ -1167,12 +1183,73 @@ install_julia() {
 
 # Installs the packages in pi/packages.txt that pi does not list yet. Needs pi
 # itself; package declarations land in pi's settings.json, which pi owns.
+find_pi() {
+    local managed="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/bin/pi"
+    if command -v pi 2>/dev/null; then
+        return 0
+    fi
+    if [ -x "$managed" ]; then
+        printf '%s\n' "$managed"
+    fi
+}
+
+# The installer's own minimum.
+node_supports_pi() {
+    command -v npm >/dev/null 2>&1 && command -v node >/dev/null 2>&1 \
+        && node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 19) ? 0 : 1)' >/dev/null 2>&1
+}
+
+# Runs a command without a controlling terminal, so installers that read
+# /dev/tty take their non-interactive defaults instead of asking.
+run_without_tty() {
+    if command -v setsid >/dev/null 2>&1; then
+        setsid "$@"
+    elif command -v perl >/dev/null 2>&1; then
+        perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' "$@"
+    else
+        "$@"
+    fi
+}
+
+# pi's official installer: a managed install under ~/.pi/agent, launched from
+# ~/.local/bin/pi and upgraded with `pi update`. Node.js comes first from
+# install_nodejs_user_local, because the installer would otherwise fetch it
+# with Homebrew or the system package manager as root.
+maybe_install_pi() {
+    local pi_bin script
+    pi_bin=$(find_pi)
+    if [ -n "$pi_bin" ]; then
+        info "pi found at $pi_bin; skipping"
+        return 0
+    fi
+    if ! ask_yes_no "Install the pi coding agent in ~/.pi/agent?" y; then
+        return 0
+    fi
+    if ! node_supports_pi; then
+        if ! ask_yes_no "pi needs Node.js 22.19+ and npm. Install Node.js LTS in ~/.local/node?" y; then
+            return 0
+        fi
+        if ! install_nodejs_user_local || ! node_supports_pi; then
+            warn "no usable Node.js; skipping pi"
+            return 0
+        fi
+    fi
+    script=$(mktemp)
+    # ~/.local/bin leads PATH (see main), so the installer links pi there and
+    # neither touches Homebrew's bin nor offers to edit shell rc files. Without
+    # a terminal it skips its menus and its "Start pi now?" prompt.
+    if download_to https://pi.dev/install.sh "$script" \
+        && run_without_tty sh "$script" </dev/null 2>&1 | sed 's/^/  /'; then
+        info "installed pi"
+    else
+        warn "pi install failed"
+    fi
+    rm -f "$script"
+}
+
 install_pi_packages() {
     local pi_bin installed spec
-    pi_bin=$(command -v pi 2>/dev/null || true)
-    if [ -z "$pi_bin" ] && [ -x "$HOME/.pi/agent/bin/pi" ]; then
-        pi_bin="$HOME/.pi/agent/bin/pi"
-    fi
+    pi_bin=$(find_pi)
     if [ -z "$pi_bin" ]; then
         return 0
     fi
@@ -1195,10 +1272,57 @@ install_tools() {
     maybe_install_uv
     maybe_install_codex
     maybe_install_claude
+    maybe_install_pi
     install_pi_packages
     if [ "$INSTALL_JULIA" = 1 ]; then
         install_julia
     fi
+}
+
+# Steps --only can run alone: none needs the answers to the machine
+# questions (PY_WD, STORAGE_DIR, Julia) or writes local.sh.
+run_step() {
+    case "$1" in
+        dotfiles) link_dotfiles ;;
+        editors) configure_editors ;;
+        git) configure_git ;;
+        ssh) configure_ssh ;;
+        codex) configure_codex ;;
+        pi) configure_pi ;;
+        skills) configure_skills ;;
+        shell) configure_shell_startup ;;
+        macos) configure_macos ;;
+        install-nvim) maybe_install_neovim ;;
+        install-uv) maybe_install_uv ;;
+        install-codex) maybe_install_codex ;;
+        install-claude) maybe_install_claude ;;
+        install-pi) maybe_install_pi; install_pi_packages ;;
+        *) die "unknown step '$1' (see --help)" ;;
+    esac
+}
+
+run_only_steps() {
+    local step steps
+    IFS=, read -r -a steps <<< "$ONLY_STEPS"
+    if [ "${#steps[@]}" -eq 0 ]; then
+        die "--only needs at least one step (see --help)"
+    fi
+    for step in "${steps[@]}"; do
+        case " $STEP_NAMES " in
+            *" $step "*) ;;
+            *) die "unknown step '$step' (see --help)" ;;
+        esac
+    done
+    if [ ! -d "$ENV_REPO_DIR" ]; then
+        die "$ENV_REPO_DIR is missing; run bootstrap.sh without --only first."
+    fi
+    # In bootstrap's own order, so pi's settings.json is in place before
+    # `pi install` would create a default one.
+    for step in $STEP_NAMES; do
+        case ",$ONLY_STEPS," in
+            *",$step,"*) run_step "$step" ;;
+        esac
+    done
 }
 
 main() {
@@ -1207,6 +1331,14 @@ main() {
     check_environment
     check_prerequisites
     PATH="$HOME/.local/bin:$PATH"
+
+    if [ "$ONLY" = 1 ]; then
+        run_only_steps
+        if [ -n "$BACKUP_DIR" ]; then
+            info "Replaced files were saved in $BACKUP_DIR"
+        fi
+        return 0
+    fi
 
     ensure_repo
     LEGACY_PY_WD=$(legacy_py_wd)

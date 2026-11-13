@@ -246,6 +246,21 @@ check "editor server contents kept" [ -f "$storage/.cursor-server/bin/server" ]
 check "empty home/ removed" is_absent "$storage/home"
 
 ###
+### --only: just the named steps
+###
+home=$(new_home only)
+check "--only pi,skills succeeds" bash -c "env -i HOME='$home' PATH='$base_path' SHELL='$SHELL' ENV_BOOTSTRAP_TEST=1 bash '$home/env/bootstrap.sh' --defaults --only pi,skills </dev/null >/dev/null"
+check "--only links pi keybindings" [ "$(readlink "$home/.pi/agent/keybindings.json")" = "$home/env/pi/keybindings.json" ]
+check "--only links skills" [ "$(readlink "$home/.agents/skills/env-deploy")" = "$home/env/skills/env-deploy" ]
+check "--only writes no local.sh" [ ! -e "$home/.config/env/local.sh" ]
+check "--only touches no rc files" no_rc_files "$home"
+check "--only touches no gitconfig" [ ! -e "$home/.gitconfig" ]
+home=$(new_home only-bad)
+check "--only rejects an unknown step" bash -c "! env -i HOME='$home' PATH='$base_path' SHELL='$SHELL' bash '$home/env/bootstrap.sh' --defaults --only pi,nope </dev/null >/dev/null 2>&1"
+check "--only rejects an empty list" bash -c "! env -i HOME='$home' PATH='$base_path' SHELL='$SHELL' bash '$home/env/bootstrap.sh' --defaults --only '' </dev/null >/dev/null 2>&1"
+check "--only with an unknown step runs nothing" is_absent "$home/.pi"
+
+###
 ### refusals: nothing may be written
 ###
 home=$(new_home tmp-py-wd)
