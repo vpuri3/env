@@ -53,6 +53,8 @@ and `vscode_keybindings.json` into Cursor and VS Code, for whichever has been
 opened on the machine. For pi, `pi/keybindings.json` and `pi/extensions/` are
 symlinked into `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`), and
 `pi/settings.json` is copied there only if none exists, since pi writes to it.
+If pi is installed, the pinned packages in `pi/packages.txt` that it does not
+list yet are installed with `pi install` (skipped with `--skip-installs`).
 Anything it replaces is saved
 under `~/.env-backup/<timestamp>/`.
 

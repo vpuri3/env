@@ -1153,11 +1153,37 @@ install_julia() {
     done
 }
 
+# Installs the packages in pi/packages.txt that pi does not list yet. Needs pi
+# itself; package declarations land in pi's settings.json, which pi owns.
+install_pi_packages() {
+    local pi_bin installed spec
+    pi_bin=$(command -v pi 2>/dev/null || true)
+    if [ -z "$pi_bin" ] && [ -x "$HOME/.pi/agent/bin/pi" ]; then
+        pi_bin="$HOME/.pi/agent/bin/pi"
+    fi
+    if [ -z "$pi_bin" ]; then
+        return 0
+    fi
+    installed=$("$pi_bin" list 2>/dev/null || true)
+    while IFS= read -r spec || [ -n "$spec" ]; do
+        case "$spec" in ''|'#'*) continue ;; esac
+        if printf '%s\n' "$installed" | grep -Fqx "  $spec"; then
+            continue
+        fi
+        if "$pi_bin" install "$spec" >/dev/null 2>&1; then
+            info "installed pi package $spec"
+        else
+            warn "could not install pi package $spec"
+        fi
+    done < "$ENV_REPO_DIR/pi/packages.txt"
+}
+
 install_tools() {
     maybe_install_neovim
     maybe_install_uv
     maybe_install_codex
     maybe_install_claude
+    install_pi_packages
     if [ "$INSTALL_JULIA" = 1 ]; then
         install_julia
     fi

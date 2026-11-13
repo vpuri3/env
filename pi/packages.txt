@@ -1,0 +1,4 @@
+# pi packages installed by bootstrap (pi install <spec>); keep versions pinned.
+# Reviewed before adding: no install scripts, no network calls, no eval.
+npm:pi-subagent-manager@1.7.1
+npm:@juicesharp/rpiv-ask-user-question@2.15.0
