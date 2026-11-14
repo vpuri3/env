@@ -71,7 +71,8 @@ bootstrap on the cluster with the cluster's values pre-filled (see
 8. **Agents:**
    - Codex: copies `codex/config.toml` once.
    - pi: links `keybindings.json` and `extensions/`, and copies `settings.json`
-     once (pi writes to it).
+     once (pi writes to it); on Linux adds `"theme": "dark"` if no theme is set
+     (old tmux there breaks pi's `system` theme).
    - Skills: links each `skills/<name>` into `~/.agents/skills/`.
 9. **Shell startup:**
    - zsh (macOS): a block in `~/.zshrc` sources `~/env/shellrc`.
@@ -122,7 +123,7 @@ run. Add `--defaults` when there's no terminal, e.g. from an agent.
 | `git` | `~/.gitconfig` include; asks for name/email |
 | `ssh` | `~/.ssh/config` managed blocks |
 | `codex` | copies `codex/config.toml` once |
-| `pi` | links pi keybindings and extensions; copies `settings.json` once |
+| `pi` | links pi keybindings and extensions; copies `settings.json` once; pins the dark theme on Linux |
 | `skills` | links `skills/*` into `~/.agents/skills/` |
 | `shell` | rc-file blocks that load `shellrc` |
 | `macos` | key repeat (macOS only) |

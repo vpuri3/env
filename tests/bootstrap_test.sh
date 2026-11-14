@@ -131,6 +131,11 @@ check "pi extensions linked into repo" [ "$(readlink "$home/.pi/agent/extensions
 check "slurm-operator agent is a real file" is_real_file "$home/.pi/agent/subagent-manager/agents/slurm-operator.md"
 check "slurm-operator agent matches repo" cmp -s "$home/env/pi/agents/slurm-operator.md" "$home/.pi/agent/subagent-manager/agents/slurm-operator.md"
 check "pi settings.json is a real file" is_real_file "$home/.pi/agent/settings.json"
+if [ "$(uname -s)" = Linux ]; then
+    check "pi theme pinned to dark on Linux" grep -Fq '"theme": "dark"' "$home/.pi/agent/settings.json"
+else
+    check "pi theme left alone off Linux" sh -c '! grep -Fq "\"theme\"" "$1"' _ "$home/.pi/agent/settings.json"
+fi
 check "env-deploy skill linked into repo" [ "$(readlink "$home/.agents/skills/env-deploy")" = "$home/env/skills/env-deploy" ]
 check "slurm-jobs skill linked into repo" [ "$(readlink "$home/.agents/skills/slurm-jobs")" = "$home/env/skills/slurm-jobs" ]
 check "env-add-cluster skill linked into repo" [ "$(readlink "$home/.agents/skills/env-add-cluster")" = "$home/env/skills/env-add-cluster" ]

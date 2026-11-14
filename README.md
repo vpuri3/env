@@ -66,6 +66,7 @@ and `vscode_keybindings.json` into Cursor and VS Code, for whichever has been
 opened on the machine. For pi, `pi/keybindings.json` and `pi/extensions/` are
 symlinked into `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`), and
 `pi/settings.json` is copied there only if none exists, since pi writes to it.
+On Linux, bootstrap also adds `"theme": "dark"` to it when no theme is set.
 Subagent types in `pi/agents/*.md` are copied (the subagent manager refuses
 symlinks) into `~/.pi/agent/subagent-manager/agents/`; a copy that differs from
 the repo is backed up and replaced. Run `/agents reload` in pi to pick them up.

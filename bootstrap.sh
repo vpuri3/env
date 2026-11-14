@@ -821,11 +821,51 @@ configure_pi() {
         cp "$agent_file" "$agent_target"
         info "copied $agent_target from pi/agents"
     done
-    if [ -e "$agent_dir/settings.json" ] || [ -L "$agent_dir/settings.json" ]; then
+    if [ ! -e "$agent_dir/settings.json" ] && [ ! -L "$agent_dir/settings.json" ]; then
+        cp "$ENV_REPO_DIR/pi/settings.json" "$agent_dir/settings.json"
+        info "copied pi/settings.json to $agent_dir/settings.json"
+    fi
+    # Linux clusters often run an old tmux (e.g. 3.2a) that does not answer pi's
+    # terminal-colour query, so the default "system" theme falls back to bare ANSI
+    # colours with no panel backgrounds. Pin the dark theme there unless a theme
+    # is already chosen. macOS keeps "system".
+    if [ "$(uname -s)" = Linux ]; then
+        pi_set_default_theme "$agent_dir/settings.json" dark
+    fi
+}
+
+# Add "theme": <name> to a pi settings.json that has no theme yet.
+pi_set_default_theme() {
+    local file="$1" theme="$2"
+    [ -f "$file" ] || return 0
+    if ! command -v python3 >/dev/null 2>&1; then
+        warn "python3 not found; set \"theme\": \"$theme\" in $file by hand"
         return 0
     fi
-    cp "$ENV_REPO_DIR/pi/settings.json" "$agent_dir/settings.json"
-    info "copied pi/settings.json to $agent_dir/settings.json"
+    local result
+    result=$(python3 - "$file" "$theme" <<'EOF'
+import json, sys
+path, theme = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        settings = json.load(f)
+except (OSError, ValueError):
+    print("unreadable")
+    sys.exit(0)
+if not isinstance(settings, dict) or "theme" in settings:
+    print("kept")
+    sys.exit(0)
+settings["theme"] = theme
+with open(path, "w") as f:
+    json.dump(settings, f, indent=2)
+    f.write("\n")
+print("set")
+EOF
+)
+    case "$result" in
+        set) info "set pi theme to $theme in $file" ;;
+        unreadable) warn "could not parse $file; pi theme left unchanged" ;;
+    esac
 }
 
 configure_shell_startup() {
