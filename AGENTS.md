@@ -15,6 +15,7 @@ in untracked files on each machine:
 | `~/.config/env/local.sh` | this machine: `MACHINE`, `PY_WD`, `STORAGE_DIR`, `CACHE_ROOT`, ... (written by bootstrap) |
 | `~/.config/env/clusters/<name>.sh` | per-cluster values read by `bin/env-deploy` (laptop only) |
 | `~/.ssh/config.local` | private ssh hosts, e.g. cluster login nodes |
+| `~/.config/env/slurm.sh` | optional `SJOB_*` defaults for `bin/sjob` (account, partitions); project repos may set these instead |
 
 Check `git diff --cached` for such strings before every commit. Examples in
 docs and skills use placeholders (`mycluster`, `/project/me`).
@@ -25,11 +26,11 @@ docs and skills use placeholders (`mycluster`, `/project/me`).
 | --- | --- |
 | `bootstrap.sh` | sets up a machine; re-runnable |
 | `shellrc`, `vars.sh`, `aliases.sh` | shell startup (bash + zsh); `aliases.sh` is interactive-only |
-| `bin/` | small scripts on `PATH`; `env-deploy` sets up clusters from the laptop |
+| `bin/` | small scripts on `PATH`; `env-deploy` sets up clusters from the laptop; `sjob` drives Slurm (site values only via `SJOB_*` env / `~/.config/env/slurm.sh`) |
 | `nvim/` | Neovim config; `nvconf` (terminal) vs `nvconf_vscode` (vscode-neovim) |
 | `vimrc`, `tmux.conf`, `emacs.conf` | symlinked dotfiles |
 | `vscode_settings.json`, `vscode_keybindings.json` | linked into Cursor and VS Code |
-| `pi/` | pi agent: extensions, keybindings, settings, pinned packages |
+| `pi/` | pi agent: extensions, keybindings, settings, pinned packages, subagent types (`pi/agents/`) |
 | `skills/` | agent skills, linked into `~/.agents/skills/` |
 | `docs/` | cheat sheets: `tmux.md`, `nvim.md`, `vscode.md` |
 | `tests/bootstrap_test.sh` | bootstraps throwaway homes and checks the result |

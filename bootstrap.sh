@@ -804,6 +804,23 @@ configure_pi() {
     local agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
     link_file "$ENV_REPO_DIR/pi/keybindings.json" "$agent_dir/keybindings.json"
     link_file "$ENV_REPO_DIR/pi/extensions" "$agent_dir/extensions"
+    # Subagent types for pi-subagent-manager. It refuses symlinked agent files,
+    # so copy them; a copy that differs from the repo is backed up and replaced.
+    # Agents from other sources (or made in /agents types) stay.
+    local agent_file agent_target
+    for agent_file in "$ENV_REPO_DIR"/pi/agents/*.md; do
+        [ -f "$agent_file" ] || continue
+        agent_target="$agent_dir/subagent-manager/agents/$(basename "$agent_file")"
+        if [ -f "$agent_target" ] && [ ! -L "$agent_target" ] && cmp -s "$agent_file" "$agent_target"; then
+            continue
+        fi
+        if [ -e "$agent_target" ] || [ -L "$agent_target" ]; then
+            backup_move "$agent_target"
+        fi
+        mkdir -p "$(dirname "$agent_target")"
+        cp "$agent_file" "$agent_target"
+        info "copied $agent_target from pi/agents"
+    done
     if [ -e "$agent_dir/settings.json" ] || [ -L "$agent_dir/settings.json" ]; then
         return 0
     fi

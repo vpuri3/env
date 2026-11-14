@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+# sjob: small, composable Slurm helpers for people and coding agents.
+#
+# Every subcommand is independent; `sjob help` lists them. Site values
+# (account, partitions, job-name prefix) are NOT hard-coded: they come from
+# SJOB_* variables, which a project or ~/.config/env/slurm.sh sets.
+set -euo pipefail
+
+# Machine-local defaults (untracked). Project wrappers may export SJOB_* first.
+SJOB_CONFIG="${SJOB_CONFIG:-$HOME/.config/env/slurm.sh}"
+if [ -f "$SJOB_CONFIG" ]; then
+    # shellcheck source=/dev/null
+    . "$SJOB_CONFIG"
+fi
+
+SJOB_ACCOUNT="${SJOB_ACCOUNT:-}"
+SJOB_PARTITION="${SJOB_PARTITION:-}"
+SJOB_BATCH_PARTITION="${SJOB_BATCH_PARTITION:-$SJOB_PARTITION}"
+SJOB_TIME="${SJOB_TIME:-01:00:00}"
+SJOB_NAME_PREFIX="${SJOB_NAME_PREFIX:-}"
+SJOB_ALLOC_ARGS="${SJOB_ALLOC_ARGS:-}"
+SJOB_STAGE_DIR="${SJOB_STAGE_DIR:-$HOME/.sjob}"
+
+usage() {
+    cat <<'EOF'
+Usage: sjob <command> [args]
+
+Allocate / submit
+  alloc [opts] [-- salloc-args]   hold an allocation (salloc --no-shell); prints JOBID=<id>
+  batch [opts] SCRIPT [args]      submit a staged copy of SCRIPT with sbatch; prints JOBID=<id>
+  batch [opts] --wrap 'CMD'       submit a one-line command
+  chain K [opts] SCRIPT [args]    submit K copies, each afterany the previous (restart chains)
+    opts: -p PART  -t TIME  -N NODES  -n NAME  -d DEPENDENCY  -o LOGFILE
+
+Use an allocation
+  run JOBID [--bg] [--log FILE] [-w NODE] -- CMD...   run CMD as an overlapping step (all CPUs/GPUs of one node)
+  shell JOBID [-w NODE]           interactive shell on the job's node (pty)
+  gpus JOBID                      nvidia-smi summary on each node of the job
+
+Inspect
+  q [USER]                        queue for USER (default: you)
+  info JOBID                      state, times, nodes, reason, stdout path
+  left JOBID                      time left (Slurm format)
+  wait JOBID [running|done] [--timeout SEC]   block until the job starts or ends
+  tail JOBID [N]                  last N lines of a batch job's stdout
+  hist [DAYS]                     your jobs from the last DAYS days (default 1)
+  limits                          partitions, QOS limits and your associations
+  config                          resolved SJOB_* settings
+
+Control
+  cancel JOBID [--force]          scancel; refuses the allocation you are running inside
+
+Config: SJOB_ACCOUNT SJOB_PARTITION SJOB_BATCH_PARTITION SJOB_TIME SJOB_NAME_PREFIX
+        SJOB_ALLOC_ARGS SJOB_STAGE_DIR, read from env or $SJOB_CONFIG (~/.config/env/slurm.sh).
+EOF
+}
+
+die() { echo "sjob: $*" >&2; exit 1; }
+need_jobid() { [[ "${1:-}" =~ ^[0-9]+(_[0-9]+)?$ ]] || die "expected a numeric JOBID, got '${1:-}'"; }
+
+job_field() {
+    # job_field JOBID Field -> value from `scontrol show job -o`
+    local desc
+    desc="$(scontrol show job -o "$1" 2>/dev/null)" || return 1
+    printf '%s\n' "$desc" | tr ' ' '\n' | sed -n "s/^$2=//p" | head -1
+}
+
+# Common submit options -> SUBMIT_ARGS array; leftover args in REST.
+parse_submit_opts() {
+    local default_part="$1"; shift
+    local part="$default_part" time="$SJOB_TIME" nodes=1 name="job" dep="" out=""
+    REST=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -p) part="$2"; shift 2 ;;
+            -t) time="$2"; shift 2 ;;
+            -N) nodes="$2"; shift 2 ;;
+            -n) name="$2"; shift 2 ;;
+            -d) dep="$2"; shift 2 ;;
+            -o) out="$2"; shift 2 ;;
+            --) shift; REST=("$@"); break ;;
+            *) REST=("$@"); break ;;
+        esac
+    done
+    SUBMIT_ARGS=(--job-name="${SJOB_NAME_PREFIX}${name}" --time="$time" --nodes="$nodes")
+    [ -n "$SJOB_ACCOUNT" ] && SUBMIT_ARGS+=(--account="$SJOB_ACCOUNT")
+    [ -n "$part" ] && SUBMIT_ARGS+=(--partition="$part")
+    [ -n "$dep" ] && SUBMIT_ARGS+=(--dependency="$dep")
+    [ -n "$out" ] && SUBMIT_ARGS+=(--output="$out")
+    if [ -n "$SJOB_ALLOC_ARGS" ]; then
+        local extra
+        read -r -a extra <<<"$SJOB_ALLOC_ARGS"
+        SUBMIT_ARGS+=("${extra[@]}")
+    fi
+    return 0
+}
+
+cmd_alloc() {
+    parse_submit_opts "$SJOB_PARTITION" "$@"
+    local log
+    log="$(mktemp)"
+    # Blocks until granted; the allocation then lives until its time limit or `sjob cancel`.
+    salloc --no-shell "${SUBMIT_ARGS[@]}" "${REST[@]}" 2>&1 | tee "$log" >&2
+    local id
+    id="$(sed -n 's/.*Granted job allocation \([0-9]*\).*/\1/p' "$log" | tail -1)"
+    rm -f "$log"
+    [ -n "$id" ] || die "allocation failed"
+    echo "JOBID=$id"
+}
+
+stage_script() {
+    local src="$1" dir
+    [ -f "$src" ] || die "no such script: $src"
+    mkdir -p "$SJOB_STAGE_DIR/staged"
+    dir="$(mktemp -d "$SJOB_STAGE_DIR/staged/$(date +%Y%m%d-%H%M%S).XXXX")"
+    cp -p "$src" "$dir/"
+    echo "$dir/$(basename "$src")"
+}
+
+cmd_batch() {
+    parse_submit_opts "$SJOB_BATCH_PARTITION" "$@"
+    set -- "${REST[@]}"
+    mkdir -p "$SJOB_STAGE_DIR/logs"
+    local have_out=0 a
+    for a in "${SUBMIT_ARGS[@]}"; do [[ "$a" == --output=* ]] && have_out=1; done
+    [ "$have_out" = 1 ] || SUBMIT_ARGS+=(--output="$SJOB_STAGE_DIR/logs/%x-%j.out")
+    local out
+    if [ "${1:-}" = "--wrap" ]; then
+        [ $# -ge 2 ] || die "--wrap needs a command"
+        out="$(sbatch --parsable "${SUBMIT_ARGS[@]}" --chdir="$PWD" --wrap="$2")"
+    else
+        [ $# -ge 1 ] || die "batch needs SCRIPT or --wrap CMD"
+        local staged
+        # Staged copy: later edits to SCRIPT do not change queued jobs.
+        staged="$(stage_script "$1")"; shift
+        out="$(sbatch --parsable "${SUBMIT_ARGS[@]}" --chdir="$PWD" "$staged" "$@")"
+        echo "staged: $staged" >&2
+    fi
+    echo "JOBID=${out%%;*}"
+}
+
+cmd_chain() {
+    local k="${1:-}"; shift || true
+    [[ "$k" =~ ^[0-9]+$ ]] && [ "$k" -ge 1 ] || die "chain needs a count K >= 1"
+    local prev="" i id
+    local args=("$@")
+    for ((i = 1; i <= k; i++)); do
+        if [ -n "$prev" ]; then
+            id="$(cmd_batch -d "afterany:$prev" "${args[@]}")"
+        else
+            id="$(cmd_batch "${args[@]}")"
+        fi
+        id="${id#JOBID=}"
+        echo "link $i/$k: JOBID=$id${prev:+ (afterany:$prev)}" >&2
+        prev="$id"
+    done
+    echo "JOBID=$prev"
+}
+
+# Step geometry for an overlapping step: all CPUs of one node, plus GPUs if the
+# job requested them through gres (whole-node clusters expose GPUs anyway).
+step_args() {
+    local id="$1" ncpu nnodes tres gpn
+    ncpu="$(job_field "$id" NumCPUs)"
+    nnodes="$(job_field "$id" NumNodes)"
+    STEP_ARGS=(--jobid="$id" --overlap --nodes=1 --ntasks=1 --cpu-bind=none --mem-bind=none)
+    if [[ "$ncpu" =~ ^[0-9]+$ ]] && [[ "$nnodes" =~ ^[0-9]+$ ]] && [ "$nnodes" -gt 0 ]; then
+        STEP_ARGS+=(--cpus-per-task="$((ncpu / nnodes))")
+    fi
+    tres="$(job_field "$id" TresPerNode || true)"
+    gpn="$(printf '%s' "$tres" | sed -n 's/.*gpu:\([0-9]*\).*/\1/p')"
+    [ -n "$gpn" ] && STEP_ARGS+=(--gres="gpu:$gpn")
+    return 0
+}
+
+cmd_run() {
+    local id="${1:-}"; shift || true
+    need_jobid "$id"
+    local bg=0 log="" node=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --bg) bg=1; shift ;;
+            --log) log="$2"; shift 2 ;;
+            -w) node="$2"; shift 2 ;;
+            --) shift; break ;;
+            *) break ;;
+        esac
+    done
+    [ $# -ge 1 ] || die "run needs a command after --"
+    unset SLURM_CPU_BIND SLURM_CPU_BIND_LIST SLURM_MEM_BIND
+    step_args "$id"
+    [ -n "$node" ] && STEP_ARGS+=(--nodelist="$node")
+    if [ "$bg" = 1 ]; then
+        log="${log:-$SJOB_STAGE_DIR/logs/run-$id-$(date +%Y%m%d-%H%M%S).log}"
+        mkdir -p "$(dirname "$log")"
+        nohup setsid srun "${STEP_ARGS[@]}" "$@" >"$log" 2>&1 </dev/null &
+        echo "PID=$! LOG=$log"
+    elif [ -n "$log" ]; then
+        mkdir -p "$(dirname "$log")"
+        srun "${STEP_ARGS[@]}" "$@" 2>&1 | tee "$log"
+    else
+        srun "${STEP_ARGS[@]}" "$@"
+    fi
+}
+
+cmd_shell() {
+    local id="${1:-}"; shift || true
+    need_jobid "$id"
+    unset SLURM_CPU_BIND SLURM_CPU_BIND_LIST SLURM_MEM_BIND
+    step_args "$id"
+    if [ "${1:-}" = "-w" ]; then STEP_ARGS+=(--nodelist="$2"); fi
+    exec srun --pty "${STEP_ARGS[@]}" bash -l
+}
+
+cmd_gpus() {
+    local id="${1:-}"
+    need_jobid "$id"
+    local n
+    n="$(job_field "$id" NumNodes)"
+    srun --jobid="$id" --overlap --nodes="$n" --ntasks-per-node=1 --cpu-bind=none \
+        bash -c 'echo "== $(hostname)"; nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total --format=csv,noheader'
+}
+
+cmd_q() {
+    squeue -u "${1:-$USER}" -o '%.10i %.12P %.40j %.2t %.10M %.10L %.5D %R'
+}
+
+cmd_info() {
+    local id="${1:-}"
+    need_jobid "$id"
+    if scontrol show job -o "$id" >/dev/null 2>&1; then
+        local f
+        for f in JobId JobName JobState Reason Partition RunTime TimeLimit StartTime NumNodes NodeList StdOut; do
+            printf '%-10s %s\n' "$f" "$(job_field "$id" "$f")"
+        done
+    else
+        sacct -j "$id" -X -P --format=JobID,JobName%40,State,Elapsed,Timelimit,Start,End,NodeList,ExitCode
+    fi
+}
+
+cmd_left() {
+    need_jobid "${1:-}"
+    squeue -h -j "$1" -o '%L'
+}
+
+cmd_wait() {
+    local id="${1:-}"; shift || true
+    need_jobid "$id"
+    local until="running" timeout=0 start state
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            running|done) until="$1"; shift ;;
+            --timeout) timeout="$2"; shift 2 ;;
+            *) die "wait: unknown arg $1" ;;
+        esac
+    done
+    start="$(date +%s)"
+    while true; do
+        state="$(squeue -h -j "$id" -o '%T' 2>/dev/null || true)"
+        if [ -z "$state" ]; then
+            state="$(sacct -j "$id" -X -n -P --format=State 2>/dev/null | head -1)"
+            echo "STATE=${state:-UNKNOWN}"
+            return 0
+        fi
+        if [ "$until" = running ] && [ "$state" = RUNNING ]; then
+            echo "STATE=RUNNING NODES=$(squeue -h -j "$id" -o '%N')"
+            return 0
+        fi
+        if [ "$timeout" -gt 0 ] && [ $(( $(date +%s) - start )) -ge "$timeout" ]; then
+            echo "STATE=$state (timeout)"
+            return 2
+        fi
+        sleep 15
+    done
+}
+
+cmd_tail() {
+    local id="${1:-}" n="${2:-50}" out
+    need_jobid "$id"
+    out="$(job_field "$id" StdOut || true)"
+    [ -n "$out" ] || out="$(sacct -j "$id" -X -n -P --format=StdOut 2>/dev/null | head -1)"
+    [ -f "$out" ] || die "stdout not found for $id (${out:-unknown})"
+    tail -n "$n" "$out"
+}
+
+cmd_hist() {
+    sacct -u "$USER" -X -S "now-${1:-1}days" \
+        --format=JobID,JobName%40,Partition,State,Elapsed,Timelimit,Start,NodeList
+}
+
+cmd_limits() {
+    echo "== partitions"
+    sinfo -s
+    echo "== your associations"
+    sacctmgr -nP show assoc user="$USER" format=account,partition,qos
+    echo "== QOS limits (name|maxwall|maxtres/user|maxjobs/user|maxsubmit/user)"
+    sacctmgr -nP show qos format=name,maxwall,maxtrespu,maxjobspu,maxsubmitpu | awk -F'|' '$2$3$4!=""'
+}
+
+cmd_config() {
+    local v
+    for v in SJOB_CONFIG SJOB_ACCOUNT SJOB_PARTITION SJOB_BATCH_PARTITION SJOB_TIME \
+        SJOB_NAME_PREFIX SJOB_ALLOC_ARGS SJOB_STAGE_DIR; do
+        printf '%-22s %s\n' "$v" "${!v}"
+    done
+}
+
+cmd_cancel() {
+    local id="${1:-}"
+    need_jobid "$id"
+    if [ "$id" = "${SLURM_JOB_ID:-}" ] && [ "${2:-}" != "--force" ]; then
+        die "refusing to cancel $id: it is the allocation this shell runs in (use --force)"
+    fi
+    scancel "$id"
+    echo "cancelled $id"
+}
+
+main() {
+    local cmd="${1:-help}"
+    shift || true
+    case "$cmd" in
+        alloc) cmd_alloc "$@" ;;
+        batch) cmd_batch "$@" ;;
+        chain) cmd_chain "$@" ;;
+        run) cmd_run "$@" ;;
+        shell) cmd_shell "$@" ;;
+        gpus) cmd_gpus "$@" ;;
+        q|queue) cmd_q "$@" ;;
+        info) cmd_info "$@" ;;
+        left) cmd_left "$@" ;;
+        wait) cmd_wait "$@" ;;
+        tail) cmd_tail "$@" ;;
+        hist) cmd_hist "$@" ;;
+        limits) cmd_limits ;;
+        config) cmd_config ;;
+        cancel) cmd_cancel "$@" ;;
+        help|-h|--help) usage ;;
+        *) usage >&2; exit 2 ;;
+    esac
+}
+
+main "$@"

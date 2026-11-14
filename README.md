@@ -12,7 +12,9 @@ clusters (bash), with an idempotent bootstrap script.
 | [docs/nvim.md](docs/nvim.md) | Neovim keys, plugins, LSP |
 | [docs/vscode.md](docs/vscode.md) | Cursor / VS Code with vscode-neovim |
 | [AGENTS.md](AGENTS.md) | rules for coding agents working in this repo (`CLAUDE.md` links to it) |
-| [skills/](skills/) | agent skills `env-deploy` and `env-add-cluster`, linked into `~/.agents/skills/` |
+| [skills/](skills/) | agent skills (`env-deploy`, `env-add-cluster`, `slurm-jobs`, `cluster-login`, `cluster-python-env`, `dataset-download`), linked into `~/.agents/skills/` |
+| [bin/sjob](bin/sjob) | Slurm helper: `sjob alloc/run/shell/batch/chain/q/info/wait/cancel`; site values from `SJOB_*` vars |
+| [pi/agents/](pi/agents/) | pi subagent types (e.g. `slurm-operator`), copied into `~/.pi/agent/subagent-manager/agents/` |
 
 ## Bootstrap
 
@@ -64,6 +66,9 @@ and `vscode_keybindings.json` into Cursor and VS Code, for whichever has been
 opened on the machine. For pi, `pi/keybindings.json` and `pi/extensions/` are
 symlinked into `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`), and
 `pi/settings.json` is copied there only if none exists, since pi writes to it.
+Subagent types in `pi/agents/*.md` are copied (the subagent manager refuses
+symlinks) into `~/.pi/agent/subagent-manager/agents/`; a copy that differs from
+the repo is backed up and replaced. Run `/agents reload` in pi to pick them up.
 Bootstrap offers to install pi with its official installer (Node.js goes to
 `~/.local/node` first if needed), then installs the pinned packages in
 `pi/packages.txt` that pi does not list yet (both skipped with `--skip-installs`).
