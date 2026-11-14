@@ -89,11 +89,16 @@ bootstrap on the cluster with the cluster's values pre-filled (see
     | Neovim (pinned `NVIM_VERSION`) | yes | `~/.local/neovim` |
     | Neovim plugins and treesitter parsers | yes | built headless; downloads the pinned tree-sitter CLI (`TREE_SITTER_VERSION`) to `~/.local/bin` if needed, and needs a C compiler; log in `~/.local/share/nvim/env-bootstrap.log` |
     | uv | yes | `~/.local/bin` |
-    | Codex CLI | no | npm under `~/.local` (installs Node.js LTS there if npm is missing) |
+    | Codex CLI | no | npm under `~/.local` |
     | Claude Code | no | official installer |
-    | pi | yes | official installer (`pi.dev/install.sh`), run without a terminal so it doesn't prompt: managed install in `~/.pi/agent`, launcher `~/.local/bin/pi`, upgrade with `pi update`. Installs Node.js LTS in `~/.local/node` first if node is missing or older than 22.19, so the installer never reaches for Homebrew or root |
+    | pi | yes | official installer (`pi.dev/install.sh`), run without a terminal so it doesn't prompt: managed install in `~/.pi/agent`, launcher `~/.local/bin/pi`, upgrade with `pi update`. Uses the shared Node.js (below), so the installer never reaches for Homebrew or root |
     | Julia (juliaup, julia-vim, startup.jl) | if chosen in step 3 | `JULIA_DEPOT_PATH` |
     | pi packages in `pi/packages.txt` | when pi is installed | `pi install` |
+
+    Codex CLI, pi and pi's packages share one Node.js: any node 22.19+ with
+    npm already on `PATH`, otherwise Node.js LTS in `~/.local/node`. Bootstrap
+    asks about that at most once per run, and pi's installer never fetches its
+    own copy.
 
     Existing tools are left alone. Neovim is replaced only after asking,
     when the user-local copy is a different version.

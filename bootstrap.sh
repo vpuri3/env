@@ -1075,8 +1075,45 @@ maybe_install_uv() {
     fi
 }
 
+# Node.js 22.19+ (pi's minimum) is the one requirement for every npm-based
+# tool here (Codex CLI, pi, pi packages). This is the only place bootstrap
+# installs it, in ~/.local/node, and it asks at most once per run, so the tools
+# share one install. Any node + npm already on PATH that is new enough is used.
+NODE_MIN_MAJOR=22
+NODE_MIN_MINOR=19
+NODE_STATE=""  # "", ok or unavailable
+
+node_is_supported() {
+    command -v npm >/dev/null 2>&1 && command -v node >/dev/null 2>&1 \
+        && node -e "const [a, b] = process.versions.node.split('.').map(Number); process.exit(a > $NODE_MIN_MAJOR || (a === $NODE_MIN_MAJOR && b >= $NODE_MIN_MINOR) ? 0 : 1)" >/dev/null 2>&1
+}
+
+# ensure_node <what needs it>: succeeds when a supported node + npm is on PATH.
+ensure_node() {
+    if [ "$NODE_STATE" = ok ] || node_is_supported; then
+        NODE_STATE=ok
+        return 0
+    fi
+    if [ "$NODE_STATE" = unavailable ]; then
+        return 1
+    fi
+    NODE_STATE=unavailable
+    if ! ask_yes_no "$1 needs Node.js $NODE_MIN_MAJOR.$NODE_MIN_MINOR+ and npm. Install Node.js LTS in ~/.local/node?" y; then
+        return 1
+    fi
+    if ! install_nodejs_user_local; then
+        return 1
+    fi
+    hash -r
+    if ! node_is_supported; then
+        warn "Node.js in ~/.local/node is not usable"
+        return 1
+    fi
+    NODE_STATE=ok
+}
+
 install_nodejs_user_local() {
-    local os arch node_arch version archive_name install_root bin_dir tmp_dir extracted_dir
+    local os arch node_arch index version archive_name install_root bin_dir tmp_dir extracted_dir
 
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
     arch=$(uname -m)
@@ -1090,8 +1127,8 @@ install_nodejs_user_local() {
     esac
 
     # LTS releases carry a codename string; non-LTS entries have "lts":false.
-    version=$(curl -fsSL https://nodejs.org/dist/index.json \
-        | tr '{' '\n' | grep -m1 '"lts":"' | sed -E 's/.*"version":"([^"]+)".*/\1/')
+    index=$(curl -fsSL https://nodejs.org/dist/index.json || true)
+    version=$(printf '%s\n' "$index" | tr '{' '\n' | grep -m1 '"lts":"' | sed -E 's/.*"version":"([^"]+)".*/\1/' || true)
     if [ -z "$version" ]; then
         warn "could not determine the latest Node.js LTS version"
         return 1
@@ -1132,14 +1169,9 @@ maybe_install_codex() {
     if ! ask_yes_no "Install OpenAI Codex CLI in ~/.local?" n; then
         return 0
     fi
-    if ! command -v npm >/dev/null 2>&1; then
-        if ! ask_yes_no "npm is missing. Install Node.js LTS in ~/.local/node?" y; then
-            return 0
-        fi
-        if ! install_nodejs_user_local; then
-            warn "skipping Codex CLI"
-            return 0
-        fi
+    if ! ensure_node "Codex CLI"; then
+        warn "skipping Codex CLI"
+        return 0
     fi
     # --prefix keeps the install out of whatever prefix owns node (Homebrew, IT).
     if ! npm install -g --prefix "$HOME/.local" @openai/codex; then
@@ -1193,12 +1225,6 @@ find_pi() {
     fi
 }
 
-# The installer's own minimum.
-node_supports_pi() {
-    command -v npm >/dev/null 2>&1 && command -v node >/dev/null 2>&1 \
-        && node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 19) ? 0 : 1)' >/dev/null 2>&1
-}
-
 # Runs a command without a controlling terminal, so installers that read
 # /dev/tty take their non-interactive defaults instead of asking.
 run_without_tty() {
@@ -1213,8 +1239,8 @@ run_without_tty() {
 
 # pi's official installer: a managed install under ~/.pi/agent, launched from
 # ~/.local/bin/pi and upgraded with `pi update`. Node.js comes first from
-# install_nodejs_user_local, because the installer would otherwise fetch it
-# with Homebrew or the system package manager as root.
+# ensure_node, because the installer would otherwise fetch its own copy, with
+# Homebrew, the system package manager as root, or into ~/.local/share/pi-node.
 maybe_install_pi() {
     local pi_bin script
     pi_bin=$(find_pi)
@@ -1225,14 +1251,9 @@ maybe_install_pi() {
     if ! ask_yes_no "Install the pi coding agent in ~/.pi/agent?" y; then
         return 0
     fi
-    if ! node_supports_pi; then
-        if ! ask_yes_no "pi needs Node.js 22.19+ and npm. Install Node.js LTS in ~/.local/node?" y; then
-            return 0
-        fi
-        if ! install_nodejs_user_local || ! node_supports_pi; then
-            warn "no usable Node.js; skipping pi"
-            return 0
-        fi
+    if ! ensure_node pi; then
+        warn "skipping pi"
+        return 0
     fi
     script=$(mktemp)
     # ~/.local/bin leads PATH (see main), so the installer links pi there and
