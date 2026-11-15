@@ -23,10 +23,17 @@
  *   q                leave NORMAL mode and jump to the bottom
  *   p                paste the last copy into the prompt (INSERT mode)
  *   i a I A          enter INSERT mode
- *   Enter (no selection), ctrl+c and other ctrl/alt keys pass through to pi as usual
+ *   Enter (no selection) and other ctrl/alt/arrow keys pass through to pi as usual
  *
  * INSERT mode: everything goes to the prompt. Esc -> NORMAL.
- *   ctrl+p / ctrl+n move through the autocomplete menu while it is open.
+ *   ctrl+p / ctrl+n act as up / down (previous/next line, history, autocomplete menu).
+ *
+ * Both modes: ctrl+c interrupts the agent while it is working (pi's default only clears
+ * the prompt); when idle it clears the prompt / exits on a double press as usual.
+ *
+ * Pi has a single custom-editor slot. Instead of taking it over, this extension wraps
+ * whatever editor another extension installs there (pi-subagent-manager's Left/Right
+ * agent navigation) and adds the vim layer on top of it. See hookEditorSlot().
  *
  * Also recolors transcript search matches (see SEARCH_MATCH / SEARCH_CURRENT).
  *
@@ -66,7 +73,9 @@ const FAKE_CURSOR_END = "\x1b_pi:/fc\x07";
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 // Shared across editor instances so search-confirm and the render hook can find it.
-let currentEditor: VimModeEditor | undefined;
+let currentEditor: any;
+// True while the agent is working (set from the extension context in session_start).
+let agentBusy: () => boolean = () => false;
 
 function findBox(box: any, scrollView: any): any {
 	if (!box) return undefined;
@@ -106,24 +115,40 @@ function isImageLine(line: string): boolean {
 	return line.includes("\x1b_G") || line.includes("\x1b]1337;File");
 }
 
-class VimModeEditor extends CustomEditor {
-	mode: Mode = "insert";
-	searchDir: 1 | -1 = 1;
-	cursor: Pt | undefined;
-	anchor: Pt | undefined; // selection start; undefined = no selection
-	lineSelect = false;
-	block = false;
-	pendingSearchJump = false;
-	private pendingG = false;
-	private count = "";
-	private wantCol = 0;
-	private lastCopy = "";
-	private screen: any;
-	private cellCache = new Map<number, Cell[]>();
+// The vim layer as a mixin over any CustomEditor subclass. Instances are created by the
+// base class's own factory and then re-prototyped (see vimify), so the constructor never
+// runs: all state is set up in initVim() and fields are `declare`d only.
+// biome-ignore lint: mixin
+function withVim(Base: any) {
+	return class VimModeEditor extends Base {
+	declare mode: Mode;
+	declare searchDir: 1 | -1;
+	declare cursor: Pt | undefined;
+	declare anchor: Pt | undefined; // selection start; undefined = no selection
+	declare lineSelect: boolean;
+	declare block: boolean;
+	declare pendingSearchJump: boolean;
+	declare pendingG: boolean;
+	declare count: string;
+	declare wantCol: number;
+	declare lastCopy: string;
+	declare screen: any;
+	declare cellCache: Map<number, Cell[]>;
 
-	constructor(tui: any, theme: any, keybindings: any) {
-		super(tui, theme, keybindings);
+	initVim(tui: any): void {
+		this.mode = "insert";
+		this.searchDir = 1;
+		this.cursor = undefined;
+		this.anchor = undefined;
+		this.lineSelect = false;
+		this.block = false;
+		this.pendingSearchJump = false;
+		this.pendingG = false;
+		this.count = "";
+		this.wantCol = 0;
+		this.lastCopy = currentEditor?.lastCopy ?? "";
 		this.screen = tui;
+		this.cellCache = new Map();
 		currentEditor = this;
 	}
 
@@ -350,16 +375,21 @@ class VimModeEditor extends CustomEditor {
 	// ---- input ----
 
 	handleInput(data: string): void {
+		// ctrl+c while the agent works: interrupt, same handler as Esc (pi's onEscape).
+		if (matchesKey(data, "ctrl+c") && agentBusy() && this.onEscape) {
+			this.onEscape();
+			return;
+		}
 		if (this.mode === "insert") {
 			if (matchesKey(data, "escape")) {
 				this.setMode("normal");
 				return;
 			}
-			// ctrl+p/n move the autocomplete menu (otherwise app.model.cycle* would see ctrl+p first).
-			if (this.isShowingAutocomplete()) {
-				if (matchesKey(data, "ctrl+p")) return super.handleInput("\x1b[A");
-				if (matchesKey(data, "ctrl+n")) return super.handleInput("\x1b[B");
-			}
+			// ctrl+p/n act as up/down: previous/next line (or history at the top/bottom),
+			// or move the autocomplete menu when open. Intercepted here so app.model.cycle*
+			// never sees ctrl+p.
+			if (matchesKey(data, "ctrl+p")) return super.handleInput("\x1b[A");
+			if (matchesKey(data, "ctrl+n")) return super.handleInput("\x1b[B");
 			super.handleInput(data);
 			return;
 		}
@@ -572,6 +602,48 @@ class VimModeEditor extends CustomEditor {
 		}
 		return lines;
 	}
+	};
+}
+
+// ---- composing with other editors ----
+
+const vimClasses = new WeakMap<object, any>();
+
+// Turn an editor built by someone else's factory into a vim editor of the same class.
+function vimify(editor: any, tui: any): any {
+	if (!editor || !("actionHandlers" in editor) || typeof editor.initVim === "function") return editor;
+	const Base = Object.getPrototypeOf(editor).constructor;
+	let Cls = vimClasses.get(Base);
+	if (!Cls) {
+		Cls = withVim(Base);
+		vimClasses.set(Base, Cls);
+	}
+	Object.setPrototypeOf(editor, Cls.prototype);
+	editor.initVim(tui);
+	return editor;
+}
+
+type Factory = (tui: any, theme: any, keybindings: any) => any;
+
+// Own pi's single editor slot while letting other extensions "install" theirs: their
+// factory becomes the base we wrap, and getEditorComponent() reports it back to them so
+// ownership checks (e.g. pi-subagent-manager's) still pass. Works in either load order.
+function hookEditorSlot(ui: any, makeVim: (base: Factory | undefined) => Factory): void {
+	const orig = (ui.__vimOrig ??= { set: ui.setEditorComponent, get: ui.getEditorComponent });
+	const current = orig.get.call(ui);
+	let base: Factory | undefined = current && !current.__vim ? current : ui.__vimBase;
+	const install = () => {
+		const factory: any = makeVim(base);
+		factory.__vim = true;
+		orig.set.call(ui, factory);
+	};
+	ui.setEditorComponent = (factory: Factory | undefined) => {
+		base = factory;
+		ui.__vimBase = factory;
+		install();
+	};
+	ui.getEditorComponent = () => base;
+	install();
 }
 
 // ---- drawing the cursor and selection on the transcript ----
@@ -651,8 +723,10 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
 		if (!ctx.hasUI) return;
 
-		ctx.ui.setEditorComponent((tui: any, theme, keybindings) => {
-			const editor = new VimModeEditor(tui, theme, keybindings);
+		agentBusy = () => !ctx.isIdle();
+
+		hookEditorSlot(ctx.ui, (base) => (tui: any, theme: any, keybindings: any) => {
+			const editor = vimify(base ? base(tui, theme, keybindings) : new CustomEditor(tui, theme, keybindings), tui);
 			setSearchHighlight(tui);
 			installCopyLayer(tui);
 

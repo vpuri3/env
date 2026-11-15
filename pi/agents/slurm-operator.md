@@ -60,3 +60,10 @@ End with:
 - **Jobs:** id, partition, node, state (still running? time left?).
 - **Artifacts:** paths (env, data dirs, checkpoints, logs, status files).
 - **Problems / follow-ups:** at most a few bullets, with the log line that matters.
+
+## Walltime is never a reason not to launch
+
+Never skip, delay or ask permission for a launch because the job might not finish within the
+remaining allocation time. Launch on free GPUs immediately; if the allocation ends, resume from
+the latest checkpoint in a new Slurm job (project restart tooling, e.g. `RESTART=true EXP_NAME=...`
+or `--run.restart true`).
