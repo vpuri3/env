@@ -5,6 +5,7 @@
   "followUpMode": "one-at-a-time",
   "httpIdleTimeoutMs": 0,
   "hideThinkingBlock": true,
+  "hideToolOutput": true,
   "doubleEscapeAction": "fork",
   "terminal": {
     "showTerminalProgress": true

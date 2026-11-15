@@ -15,9 +15,13 @@
  *   name, so nvim picks the filetype), bash -> command + complete output (the untruncated log
  *   when pi spilled it to disk), others -> arguments + output.
  *   Inside tmux it opens in a new tmux window; otherwise pi suspends until you quit nvim.
+ *
+ * Setting "hideToolOutput" (settings.json, global or project): the ctrl+o state pi starts in.
+ *   true (pi's default) = collapsed, false = expanded.
+ * /hide-tool-output [on|off]   toggle ctrl+o now (or set it) and save the choice as the setting.
  */
 
-import type { ExtensionAPI, ToolRenderers } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, getAgentDir, type ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -338,7 +342,46 @@ async function openInNvim(file: string, title: string, ctx: any): Promise<void> 
 	});
 }
 
+const HIDE_KEY = "hideToolOutput";
+
+/** Write one key into the global settings.json, keeping everything else. */
+function saveGlobalSetting(key: string, value: unknown): void {
+	const file = path.join(getAgentDir(), "settings.json");
+	let settings: Record<string, unknown> = {};
+	if (fs.existsSync(file)) settings = JSON.parse(fs.readFileSync(file, "utf8"));
+	settings[key] = value;
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+}
+
 export default function (pi: ExtensionAPI) {
+	// Start in the ctrl+o state from settings; later /new, /resume, /reload keep the current state.
+	pi.on("session_start", (event, ctx) => {
+		if (event.reason !== "startup" || !ctx.hasUI) return;
+		const hide = (pi.getSettings() as Record<string, unknown>)[HIDE_KEY];
+		if (typeof hide === "boolean") ctx.ui.setToolsExpanded(!hide);
+	});
+
+	pi.registerCommand("hide-tool-output", {
+		description: "Collapse/expand tool output like ctrl+o and save it as the default (/hide-tool-output on|off)",
+		handler: async (args: string, ctx: any) => {
+			if (!ctx.hasUI) return;
+			const arg = String(args ?? "").trim().toLowerCase();
+			let hide: boolean;
+			if (arg === "") hide = ctx.ui.getToolsExpanded();
+			else if (["on", "true", "yes", "1"].includes(arg)) hide = true;
+			else if (["off", "false", "no", "0"].includes(arg)) hide = false;
+			else return ctx.ui.notify("/hide-tool-output: use on, off, or no argument to toggle", "error");
+			ctx.ui.setToolsExpanded(!hide);
+			try {
+				saveGlobalSetting(HIDE_KEY, hide);
+			} catch (e) {
+				return ctx.ui.notify(`Could not save ${HIDE_KEY}: ${(e as Error).message}`, "error");
+			}
+			ctx.ui.notify(`Tool output ${hide ? "hidden" : "shown"} (saved "${HIDE_KEY}": ${hide})`, "info");
+		},
+	});
+
 	pi.registerCommand("view", {
 		description: "Open a tool call's full output in nvim (/view N: Nth most recent)",
 		handler: async (args: string, ctx: any) => {
