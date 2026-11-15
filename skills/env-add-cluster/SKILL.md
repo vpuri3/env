@@ -52,6 +52,7 @@ MACHINE=myc
 PY_WD=/project/me/python          # persistent project space; `cdp` goes here
 STORAGE_DIR=/project/me           # personal storage; caches -> $STORAGE_DIR/cache
 # CACHE_ROOT=/scratch/me/cache    # optional override, e.g. scratch
+# GIT_NAME="..." GIT_EMAIL=...     # optional; e.g. a work email on a work cluster
 # MACHINE_NAMES="host1=myc1 ..."  # optional; normally read from config.local
 ```
 

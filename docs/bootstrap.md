@@ -24,6 +24,7 @@ bootstrap on the cluster with the cluster's values pre-filled (see
 | Environment variable | Does |
 | --- | --- |
 | `ENV_PY_WD`, `ENV_STORAGE_DIR`, `ENV_MACHINE`, `ENV_MACHINE_NAMES` | defaults for the matching questions (set by `env-deploy`) |
+| `ENV_GIT_NAME`, `ENV_GIT_EMAIL` | git identity used when the machine has none (set by `env-deploy`; an existing `user.name` / `user.email` is kept) |
 | `ENV_CACHE_ROOT=/path` | put caches here instead of `$STORAGE_DIR/cache` (e.g. scratch); remembered in `local.sh` |
 | `PI_CODING_AGENT_DIR` | where pi's config lives (default `~/.pi/agent`) |
 

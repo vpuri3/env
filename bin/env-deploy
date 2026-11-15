@@ -17,6 +17,9 @@
 #   PY_WD=/lustre/...      project directory; `cdp` goes here
 #   STORAGE_DIR=/lustre/...  personal storage; caches go to $STORAGE_DIR/cache
 #   CACHE_ROOT=            optional override for the cache directory
+#   GIT_NAME=, GIT_EMAIL=  optional git identity defaults (default: Vedant Puri,
+#                          vedantpuri@gmail.com); a cluster that already has
+#                          user.name / user.email keeps them
 #
 # --probe checks PY_WD and STORAGE_DIR: if one doesn't exist yet it shows the
 # deepest parent that does, with its contents, to help pick the right path.
@@ -40,8 +43,11 @@ esac
 config="$HOME/.config/env/clusters/$cluster.sh"
 [ -f "$config" ] || die "no $config"
 SSH_HOST="" MACHINE="" MACHINE_NAMES="" PY_WD="" STORAGE_DIR="" CACHE_ROOT=""
+GIT_NAME="" GIT_EMAIL=""
 # shellcheck disable=SC1090
 . "$config"
+GIT_NAME="${GIT_NAME:-Vedant Puri}"
+GIT_EMAIL="${GIT_EMAIL:-vedantpuri@gmail.com}"
 [ -n "$SSH_HOST" ] || die "SSH_HOST is not set in $config"
 
 key="${ENV_DEPLOY_KEY:-$HOME/.ssh/id_ed25519.pub}"
@@ -189,6 +195,7 @@ exec bash "$HOME/env/bootstrap.sh"'
 remote_env="ENV_BRANCH=$(q "$branch") ENV_MACHINE=$(q "$MACHINE") ENV_MACHINE_NAMES=$(q "$MACHINE_NAMES")"
 remote_env="$remote_env ENV_PY_WD=$(q "$PY_WD")"
 remote_env="$remote_env ENV_STORAGE_DIR=$(q "$STORAGE_DIR") ENV_CACHE_ROOT=$(q "$CACHE_ROOT")"
+remote_env="$remote_env ENV_GIT_NAME=$(q "$GIT_NAME") ENV_GIT_EMAIL=$(q "$GIT_EMAIL")"
 
 printf '== bootstrapping ~/env (branch %s) on %s\n' "$branch" "$SSH_HOST"
 # shellcheck disable=SC2029

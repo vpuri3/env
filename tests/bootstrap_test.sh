@@ -253,6 +253,16 @@ check "editor server moved to the top of STORAGE_DIR" [ "$(readlink "$home/.curs
 check "editor server contents kept" [ -f "$storage/.cursor-server/bin/server" ]
 check "empty home/ removed" is_absent "$storage/home"
 
+# env-deploy's identity defaults fill in an unset identity, never replace one.
+gid_home=$(new_home git-identity)
+bootstrap "$gid_home" ENV_GIT_NAME="Test Name" ENV_GIT_EMAIL=test@example.com
+check "ENV_GIT_NAME fills an unset user.name" [ "$(run_in_home "$gid_home" -- git config --global --get user.name)" = "Test Name" ]
+check "ENV_GIT_EMAIL fills an unset user.email" [ "$(run_in_home "$gid_home" -- git config --global --get user.email)" = test@example.com ]
+run_in_home "$gid_home" -- git config --global user.email mine@example.com
+bootstrap "$gid_home" ENV_GIT_NAME="Other" ENV_GIT_EMAIL=other@example.com
+check "existing user.email is kept" [ "$(run_in_home "$gid_home" -- git config --global --get user.email)" = mine@example.com ]
+check "existing user.name is kept" [ "$(run_in_home "$gid_home" -- git config --global --get user.name)" = "Test Name" ]
+
 ###
 ### --only: just the named steps
 ###

@@ -731,18 +731,28 @@ configure_git() {
     # At the top, so this machine's own settings below it take precedence.
     write_managed_block "$file" top "$(printf '[include]\n\tpath = %s' "$ENV_REPO_DIR/gitconfig")"
 
+    # The machine's own identity wins; ENV_GIT_NAME / ENV_GIT_EMAIL (from
+    # env-deploy) only fill in what is not set yet.
     name=$(git config --file "$file" --get user.name || true)
     email=$(git config --file "$file" --get user.email || true)
     if [ "$ASSUME_DEFAULTS" = 1 ]; then
+        if [ -z "$name" ] && [ -n "${ENV_GIT_NAME:-}" ]; then
+            name="$ENV_GIT_NAME"
+            git config --file "$file" user.name "$name"
+        fi
+        if [ -z "$email" ] && [ -n "${ENV_GIT_EMAIL:-}" ]; then
+            email="$ENV_GIT_EMAIL"
+            git config --file "$file" user.email "$email"
+        fi
         if [ -z "$name" ] || [ -z "$email" ]; then
             info "git identity not set; run: git config --file ~/.gitconfig user.name \"<name>\""
             info "                           git config --file ~/.gitconfig user.email <email>"
         fi
         return 0
     fi
-    ask_required "git user.name on this machine?" "$name"
+    ask_required "git user.name on this machine?" "${name:-${ENV_GIT_NAME:-}}"
     git config --file "$file" user.name "$ANSWER"
-    ask_required "git user.email on this machine (work email on company machines)?" "$email"
+    ask_required "git user.email on this machine (work email on company machines)?" "${email:-${ENV_GIT_EMAIL:-}}"
     git config --file "$file" user.email "$ANSWER"
 }
 
