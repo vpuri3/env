@@ -67,3 +67,18 @@ Never skip, delay or ask permission for a launch because the job might not finis
 remaining allocation time. Launch on free GPUs immediately; if the allocation ends, resume from
 the latest checkpoint in a new Slurm job (project restart tooling, e.g. `RESTART=true EXP_NAME=...`
 or `--run.restart true`).
+
+## Never block on the queue
+
+Never wait inside one tool call for an allocation (a blocking `salloc` / `sjob alloc`, or long
+`sleep` loops). While a call blocks, steering messages from the parent can't reach you. Submit
+without blocking (`sbatch`, or `salloc --no-shell ... &` with output to a file), then poll
+`squeue -u $USER` every 30–60 s with short calls, and use `squeue --start` to report estimated starts.
+
+## Project preferences come first
+
+If the project has a job-preferences file or a preflight skill (e.g. physicsnemo-runner:
+`../physicsnemo-runner.cluster.md` + `skills/slurm-preflight`), follow it. That covers partitions,
+walltime tiers, node/GPU limits, racing pending requests and the failure policy. Use the job shape
+the parent passes you, and report back instead of asking the user directly when a job needs
+something outside it.

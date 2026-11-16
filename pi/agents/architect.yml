@@ -1,0 +1,2 @@
+# User decision 2026-11-16: Opus agents default to medium thinking. Do not change model/thinking without asking the user.
+thinkingLevel: medium
