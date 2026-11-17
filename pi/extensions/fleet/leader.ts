@@ -5,14 +5,18 @@
  * module sets `handled = true` synchronously when it takes the action (vim-mode shows
  * "pi-fleet not loaded" otherwise) and runs it with the UI context saved at session_start.
  *
- *   sessions        Space e     the dashboard window, like /sessions and prefix g
- *   sessions-popup  Space E     the dashboard popup, like prefix G (sessions-view.ts openDashboard)
+ *   sessions        Space e     the deck (pi-deck-design.md §7, deck-client.ts openDeck): in a deck
+ *   sessions-popup  Space E     pi back to the list, elsewhere the deck popup; both keys, /sessions
+ *                               and prefix g/G are one entry story
+ *   nvim            Space v     this session's nvim (created on first use): in the deck the slot
+ *                               toggles pi → nvim (`prefix e`/`:PiFocus` go back), elsewhere its
+ *                               pane is focused
  *   files           Space f f   file picker: session files, then the repo
  *   git-files       Space f g   repo (git) files only
  *   session-files   Space f b   files touched in this session only
  *   grep            Space f s   `Grep >` input, then rg hits
  *   commands        Space f h   select a slash command; it goes into the prompt
- *   git-status      Space g s   :Git (fugitive) in the paired nvim, then focus it
+ *   git-status      Space g s   :Git (fugitive) in the paired nvim, then focus it (deck: show it)
  *   tool-output     Space t     tool output picker
  *
  * Main sessions only (fleetOf(pi).main). No module-level mutable state: the context lives in
@@ -20,10 +24,10 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { focusPane, inTmux } from "./cli.ts";
+import { inTmux } from "./cli.ts";
+import { focusNvim, openDeck } from "./deck-client.ts";
 import { NvimUnreachable, nvimRequest, resolveNvim, type NvimPeer } from "./nvim.ts";
 import { fleetOf, ownPrompt } from "./shared.ts";
-import { openDashboard } from "./sessions-view.ts";
 import { openFilePicker, openGrepPicker, openToolPicker, pairNew } from "./view.ts";
 
 export const ACTION_EVENT = "pi-fleet:action";
@@ -123,7 +127,18 @@ export async function gitStatus(pi: ExtensionAPI, ctx: ExtensionContext): Promis
 			return ctx.ui.notify(`pi-fleet: :Git failed: ${message}`, "error");
 		}
 	}
-	if (peer.pane && inTmux()) await focusPane(peer.pane).catch(() => {});
+	if (peer.pane && inTmux()) await focusNvim(process.env.TMUX_PANE, peer.pane).catch(() => {});
+}
+
+/**
+ * `Space v`: show this session's nvim, creating it on first use. In the deck it replaces the pi in
+ * the slot (`prefix e`, `:PiFocus` or `C-h` leave it); elsewhere its pane (split beside the pi) is
+ * focused.
+ */
+export async function showNvimPane(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	const found = await pairedNvim(pi, ctx);
+	if (!found?.peer.pane) return ctx.ui.notify("pi-fleet: no nvim for this session (needs a TUI pi in tmux)", "warning");
+	await focusNvim(process.env.TMUX_PANE, found.peer.pane);
 }
 
 // ---------------------------------------------------------------- actions
@@ -139,10 +154,11 @@ export async function pickCommand(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 export type Action = (pi: ExtensionAPI, ctx: ExtensionContext) => unknown;
 
 export const ACTIONS: Readonly<Record<string, Action>> = {
-	// Space e / Space E: the dashboard window / popup, opened directly (even while the agent
-	// works; never a prompt).
-	sessions: (pi, ctx) => openDashboard(pi, ctx, "window"),
-	"sessions-popup": (pi, ctx) => openDashboard(pi, ctx, "popup"),
+	// Space e / Space E: the deck (list in the deck, popup elsewhere), opened directly (even
+	// while the agent works; never a prompt).
+	sessions: (_pi, ctx) => openDeck(ctx),
+	"sessions-popup": (_pi, ctx) => openDeck(ctx),
+	nvim: showNvimPane,
 	files: (pi, ctx) => openFilePicker(pi, ctx, { scope: "all" }),
 	"git-files": (pi, ctx) => openFilePicker(pi, ctx, { scope: "git" }),
 	"session-files": (pi, ctx) => openFilePicker(pi, ctx, { scope: "session" }),

@@ -24,6 +24,7 @@ process.env.PI_CODING_AGENT_SESSION_DIR = join(root, "sessions");
 after(() => rmSync(root, { recursive: true, force: true }));
 
 const packages = piPackages();
+const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
 const skip = packages ? false : "pi's packages not found (pi not on PATH)";
 let leader: typeof import("../../pi/extensions/fleet/leader.ts");
 let vim: typeof import("../../pi/extensions/vim-mode.ts");
@@ -178,52 +179,50 @@ test("files / git-files list their scope (non-TUI select path of the picker)", {
 	assert.deepEqual(f.calls, ["select:Open repo file", "select:Open file (session, then repo)"]);
 });
 
-test("Space e / Space E open the dashboard window / popup directly (never a prompt); /sessions is Space e", { skip }, async () => {
+test("Space e / Space E / /sessions open the deck directly (never a prompt): its list in a deck pi, a notice outside tmux", { skip: skip || (!hasTmux && "tmux not found") }, async () => {
 	// Outside tmux: say so.
 	const out = fakePi();
 	leader.registerLeader(out.pi);
 	await out.start();
 	assert.equal(out.emit("sessions"), true);
 	for (let i = 0; i < 100 && !out.notes.length; i++) await sleep(10);
-	assert.deepEqual(out.notes, [["pi-fleet: the dashboard needs tmux (try `pi-fleet ls`)", "warning"]]);
+	assert.deepEqual(out.notes, [["pi-fleet: deck: the deck needs tmux here (outside tmux run `pf`)", "error"]]);
 	assert.deepEqual(out.sent, []);
 
-	// In tmux: the window (= `pi-fleet dashboard --window --pane $TMUX_PANE`) or the popup, for this pane.
-	const f = fakePi();
-	const calls: string[] = [];
-	const run = {
-		window: async (pane: string | undefined) => void calls.push(`window ${pane}`),
-		popup: async (pane: string) => void calls.push(`popup ${pane}`),
-	};
-	process.env.TMUX = "/tmp/fleettest-none,1,0";
-	process.env.TMUX_PANE = "%7";
+	// In a deck pi (PI_FLEET_DECK=1): back to the list (pane 0 of the deck window), for each entry.
+	const label = `decktest-${process.pid}-leader`;
+	const t = (...args: string[]) => spawnSync("tmux", ["-L", label, ...args], { encoding: "utf8" }).stdout.trim();
+	const saved = { ...process.env };
 	try {
-		leader.registerLeader(f.pi, {
-			sessions: (pi, ctx) => sv.openDashboard(pi, ctx, "window", run),
-			"sessions-popup": (pi, ctx) => sv.openDashboard(pi, ctx, "popup", run),
-		});
+		t("-f", "/dev/null", "new-session", "-d", "-s", "deck", "-n", "deck", "-x", "100", "-y", "30", "sleep 600");
+		t("split-window", "-h", "-t", "=deck:=deck", "sleep 600");
+		const active = () => t("display-message", "-p", "-t", "=deck:=deck", "#{pane_index}");
+		Object.assign(process.env, { PI_FLEET_DECK: "1", PI_FLEET_DECK_SOCKET: label, PI_FLEET_TMUX_GUARD: "1", TMUX_PANE: "%1" });
+		const f = fakePi();
+		leader.registerLeader(f.pi);
 		await f.start();
-		assert.equal(f.emit("sessions"), true);
-		assert.equal(f.emit("sessions-popup"), true);
-		for (let i = 0; i < 100 && calls.length < 2; i++) await sleep(10);
-		assert.deepEqual(calls, ["window %7", "popup %7"]);
+		const commands: Record<string, { description: string; handler: (args: string, ctx: unknown) => Promise<void> }> = {};
+		const svPi = { registerCommand: (name: string, c: any) => (commands[name] = c) } as any;
+		fleetOf(svPi).main = true;
+		sv.register(svPi);
+		assert.match(commands.sessions!.description, /pi deck/);
+		for (const enter of [() => f.emit("sessions"), () => f.emit("sessions-popup"), () => commands.sessions!.handler("", f.ctx)]) {
+			t("select-pane", "-t", "=deck:=deck.1");
+			assert.equal(active(), "1");
+			await enter();
+			for (let i = 0; i < 100 && active() !== "0"; i++) await sleep(20);
+			assert.equal(active(), "0");
+		}
 		assert.deepEqual(f.notes, []);
 		assert.deepEqual(f.sent, []);
-		// A failing tmux call is reported, not thrown.
-		await sv.openDashboard(f.pi, f.ctx, "popup", { popup: async () => Promise.reject(new Error("no client")) });
-		assert.deepEqual(f.notes.at(-1), ["pi-fleet: dashboard: no client", "error"]);
 	} finally {
-		delete process.env.TMUX;
-		delete process.env.TMUX_PANE;
+		for (const k of ["PI_FLEET_DECK", "PI_FLEET_DECK_SOCKET", "PI_FLEET_TMUX_GUARD", "TMUX_PANE"]) {
+			if (saved[k] === undefined) delete process.env[k];
+			else process.env[k] = saved[k];
+		}
+		t("kill-server");
+		rmSync(join(`${process.env.TMUX_TMPDIR || "/tmp"}/tmux-${process.getuid?.() ?? 0}`, label), { force: true });
 	}
-	// /sessions is a command now (no view of its own).
-	const commands: Record<string, { description: string }> = {};
-	sv.register({ registerCommand: (name: string, c: { description: string }) => (commands[name] = c) } as never);
-	assert.match(commands.sessions!.description, /dashboard window/);
-	// Space E is prefix G: display-popup -E -w 95% -h 90% pi-fleet dashboard, with the fleet env.
-	const args = cli.dashboardPopupArgs("%7", { PI_FLEET_BIN: "/x/pi-fleet", PI_FLEET_STATE_DIR: "/s it's" });
-	assert.deepEqual(args.slice(0, -1), ["display-popup", "-E", "-w", "95%", "-h", "90%", "-t", "%7"]);
-	assert.equal(args.at(-1), `env 'PI_FLEET_BIN=/x/pi-fleet' 'PI_FLEET_STATE_DIR=/s it'\\''s' '/x/pi-fleet' dashboard`);
 });
 
 test("Space f h: commands then built-ins; the choice goes into the prompt", { skip }, async () => {

@@ -1,7 +1,8 @@
 // /view in the TUI (design §11, phase 6): a real interactive pi (fleet extension + faux provider)
 // in a throwaway tmux server (`tmux -L pfv-…`, never the default socket; the fleet runs with
-// PI_FLEET_TMUX_GUARD=1), driven by send-keys/capture-pane. Checks: tiered completion in the
-// editor, `/view FILE:LINE` opens in the paired nvim and focuses its pane, a killed nvim is
+// PI_FLEET_TMUX_GUARD=1), driven by send-keys/capture-pane. Checks: no nvim at session start,
+// tiered completion in the editor, `/view FILE:LINE` pairs an nvim (lazily) and opens the file
+// there and focuses its pane, a killed nvim is
 // re-paired by `/view tool:N`, and the bare /view fuzzy picker filters and opens.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -97,12 +98,10 @@ test("tui pi in tmux: completion, /view FILE:LINE focuses nvim, re-pair, bare pi
 		const sock = join(run, `${SID}.nvim.sock`);
 		const current = () => nvimRequest(sock, "nvim_exec_lua", ["return { vim.api.nvim_buf_get_name(0), vim.api.nvim_win_get_cursor(0)[1] }", []], 3000) as Promise<any>;
 
-		// nvim.ts pairs at session start (TUI in tmux).
-		await waitFor("paired nvim pane", () => panes().length === 2);
+		// No nvim at session start: it starts on first use (pi-deck-design.md decision 1).
 		await waitFor("pi prompt", () => capture().includes("faux"));
-		const nvimPane = panes().find((p) => p[0] !== piPane)![0];
-		await waitFor("nvim socket", () => current().then(() => true));
-		tmux("select-pane", "-t", piPane);
+		await sleep(1000);
+		assert.equal(panes().length, 1, "no nvim before /view");
 
 		// Completion: the touched file comes first, labelled "session".
 		type("/view x.p");
@@ -113,10 +112,12 @@ test("tui pi in tmux: completion, /view FILE:LINE focuses nvim, re-pair, bare pi
 		assert.match(shown, /src\/x\.py\s+session/);
 		await keys("Escape", "C-u");
 
-		// /view FILE:LINE → nvim shows it at the line, and the nvim pane is focused.
+		// /view FILE:LINE → an nvim is split beside pi, shows the file at the line, and is focused.
 		type("/view src/x.py:10");
 		await sleep(400);
 		await keys("Escape", "Enter");
+		await waitFor("nvim pane from /view", () => panes().length === 2);
+		const nvimPane = panes().find((p) => p[0] !== piPane)![0];
 		await waitFor("x.py at line 10", async () => {
 			const c = await current();
 			return c[0] === join(work, "src/x.py") && c[1] === 10;

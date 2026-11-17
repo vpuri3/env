@@ -24,7 +24,8 @@
  *   i a I A          enter INSERT mode
  *   Enter (no selection) and other ctrl/alt/arrow keys pass through to pi as usual
  * Leader (Space, NORMAL mode only), run by the pi-fleet extension (docs/pi-fleet-design.md §12):
- *   Space e / E      the pi-fleet dashboard window (like prefix g) / popup (like prefix G)
+ *   Space e / E      the pi deck: back to its list in a deck pi, else the deck popup (prefix g)
+ *   Space v          this session's nvim (created on first use; in the deck it takes the pi's slot)
  *   Space f f/g/b    file picker: all / git files / files touched in this session
  *   Space f s        grep;  Space f h  slash commands (inserted into the prompt)
  *   Space g s        :Git (fugitive) in the paired nvim;  Space t  tool output picker
@@ -91,6 +92,7 @@ let leaderAction: (name: string) => void = () => {};
 export const LEADER_MAPS: Readonly<Record<string, string>> = {
 	e: "sessions",
 	E: "sessions-popup",
+	v: "nvim",
 	ff: "files",
 	fg: "git-files",
 	fb: "session-files",

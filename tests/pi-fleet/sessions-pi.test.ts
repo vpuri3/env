@@ -1,8 +1,8 @@
-// `/sessions` in a real pi TUI (design §9): pi runs in a throwaway tmux server (`tmux -L
+// The dashboard beside a real pi TUI (design §9): pi runs in a throwaway tmux server (`tmux -L
 // fleettest-…`, the harness refuses the default socket, PI_FLEET_TMUX_GUARD=1) with only the
 // fleet extension and a faux provider, a temp agent dir, no session file of its own, and the
-// fixture sessions/status dirs. `/sessions` opens the dashboard window (no view inside pi); the
-// test then drives the dashboard there. Keys go in with send-keys; the screen is capture-pane.
+// fixture sessions/status dirs. `pi-fleet dashboard --window` (prefix g; `/sessions` opens the
+// pi deck since pi-deck-design.md phase 3) opens the dashboard window; the test drives it there. Keys go in with send-keys; the screen is capture-pane.
 // Enter on a session that is not running opens it in a new window (the stub pi of the CLI tests).
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
@@ -37,7 +37,7 @@ async function waitFor<T>(what: string, probe: () => T | undefined | false | Pro
 	}
 }
 
-test("/sessions in pi opens the dashboard window: the list, Space shows subagents, Enter opens a session", { skip, timeout: 240_000 }, async () => {
+test("the dashboard window beside a real pi: the list, Space shows subagents, Enter opens a session", { skip, timeout: 240_000 }, async () => {
 	const label = `fleettest-sessions-${process.pid}`;
 	const env: NodeJS.ProcessEnv = {
 		...fx.env,
@@ -120,25 +120,10 @@ test("/sessions in pi opens the dashboard window: the list, Space shows subagent
 			const d = dashPane();
 			return !!d && /▾ gamma \(2\)/.test(capture(d));
 		};
-		// Type /sessions and Enter; the first Enter may only accept the autocomplete suggestion,
-		// so Enter again only while the editor still holds /sessions. Garbled text is retyped.
-		await waitFor("the dashboard window", async () => {
-			if (listShown()) return true;
-			const e = editor();
-			if (e && /^\/sessions\s*$/.test(e.text) && !e.more) {
-				keys("Enter");
-			} else if (e) {
-				await clearEditor();
-				keys("-l", "/sessions");
-				await sleep(300);
-				return false;
-			}
-			for (let i = 0; i < 20; i++) {
-				if (listShown()) return true;
-				await sleep(100);
-			}
-			return false;
-		}, 60_000, show);
+		// /sessions opens the pi deck since pi-deck-design.md phase 3 (deck-integration.test.ts); the
+		// dashboard window is what `prefix g` (`pi-fleet dashboard --window`) still opens until phase 4.
+		execFileSync(join(repo, "bin/pi-fleet"), ["dashboard", "--window", "--pane", pane], { env: { ...env, PI_FLEET_TMUX_SOCKET: socket } });
+		await waitFor("the dashboard window", () => listShown(), 60_000, show);
 		const dash = dashPane()!;
 		assert.equal(tmux(["display-message", "-p", "#{pane_id}"]), dash, "the dashboard window is selected");
 		const screen = capture(dash);

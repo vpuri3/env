@@ -82,6 +82,7 @@ test("each leader map emits its pi-fleet:action from NORMAL mode", { skip }, () 
 	const expected: [string[], string][] = [
 		[["e"], "sessions"],
 		[["E"], "sessions-popup"],
+		[["v"], "nvim"],
 		[["f", "f"], "files"],
 		[["f", "g"], "git-files"],
 		[["f", "b"], "session-files"],

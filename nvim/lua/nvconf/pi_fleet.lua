@@ -15,7 +15,7 @@
 --     (pi/extensions/fleet/nvim.ts, msgpack-RPC nvim_exec_lua; paths travel as data).
 --     Unmodified buffers reload silently; modified ones are left alone and marked as a
 --     conflict (:PiDiff, :e!). No W12 prompt ever blocks (FileChangedShell).
---   * :PiHelp, :PiDiff, :PiFocus (jump to the pi pane), :PiWriteSteer.
+--   * :PiHelp, :PiDiff, :PiFocus (back to the pi; in the deck a swap), :PiWriteSteer.
 
 local M = {}
 
@@ -474,7 +474,7 @@ When pi edits a file that is open here:
       :w!       keep yours (pi is told what you changed relative to its version)
 
 Other commands:
-  :PiFocus        jump to the pi pane
+  :PiFocus        back to the pi (in the deck: swap it back into this slot)
   :PiWriteSteer   what :w!! runs (accepts a file name)
   :PiHelp         this help
 
@@ -542,6 +542,9 @@ function M.diff()
     notify("left: pi's version on disk · right: your buffer · q closes · :e! takes pi's · :w! keeps yours")
 end
 
+--- :PiFocus — back to the pi. In the pi deck ($PI_FLEET_DECK=1) this nvim and its pi share the
+--- right slot, so the pi is swapped back into this pane's place (`prefix e` does the same);
+--- elsewhere the pi's pane is selected.
 function M.focus()
     local pane = env("PI_FLEET_PI_PANE")
     if not pane or not pane:match("^%%%d+$") then
@@ -552,7 +555,12 @@ function M.focus()
         notify("not inside tmux", vim.log.levels.WARN)
         return false
     end
-    vim.system({ "tmux", "select-window", "-t", pane, ";", "select-pane", "-t", pane }, { text = true },
+    local cmd = { "tmux", "select-window", "-t", pane, ";", "select-pane", "-t", pane }
+    local me = env("TMUX_PANE")
+    if env("PI_FLEET_DECK") == "1" and me and me:match("^%%%d+$") then
+        cmd = { "tmux", "swap-pane", "-d", "-s", pane, "-t", me, ";", "select-pane", "-t", pane }
+    end
+    vim.system(cmd, { text = true },
         function(res)
             if res.code ~= 0 then
                 vim.schedule(function()

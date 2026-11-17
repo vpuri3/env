@@ -613,58 +613,33 @@ test("rpc pi: /fork in a paired pane re-keys the pane options and the nvim's ses
 
 // ---------------------------------------------------------------- TUI pi in a tmux pane
 
-test("tui pi started by hand in tmux: glyph-named window, nvim peer; /new, /resume open windows; /kill ends it", { skip: skipTui, timeout: 90_000 }, async () => {
+test("tui pi started by hand in tmux: pane marked, no nvim at start, glyph-named window; /kill ends it", { skip: skipTui, timeout: 90_000 }, async () => {
+	// /new and /resume of a hand-started pi open in the pi deck: deck-integration.test.ts.
 	const rig = new Rig();
 	try {
 		const pane = rig.tuiPi();
-		const peer = await waitFor("nvim peer", () => rig.tryTmux(["display-message", "-p", "-t", pane, "#{@pi_fleet_peer}"]) || undefined, 30_000);
-		assert.match(peer, /^%\d+$/);
-		await waitFor("nvim role", () => rig.tmux(["display-message", "-p", "-t", peer, "#{@pi_fleet_role}"]) === "nvim");
-		const id = rig.tmux(["display-message", "-p", "-t", pane, "#{@pi_fleet_session}"]);
-		const st = await waitFor("status nvimPane", () => rig.status(id)?.tmux?.nvimPane === peer && rig.status(id)).catch((e) => { throw new Error(e.message + rig.screen(pane)); });
-		assert.ok(st.nvimSock);
+		const id = await waitFor("@pi_fleet_session", () => rig.tryTmux(["display-message", "-p", "-t", pane, "#{@pi_fleet_session}"]) || undefined, 30_000);
+		assert.equal(rig.tmux(["display-message", "-p", "-t", pane, "#{@pi_fleet_role}"]), "pi");
+		await waitFor("status", () => rig.status(id));
 		// The window gets glyph names from `pi-fleet bar`...
 		await waitFor("@pi_fleet_named", () => rig.tmux(["display-message", "-p", "-t", pane, "#{@pi_fleet_named}"]) === "1");
 		// ...unless the user named it (automatic-rename off).
 		const mine = rig.tuiPi([], { name: "mine", detached: true });
-		await waitFor("second nvim peer", () => rig.tryTmux(["display-message", "-p", "-t", mine, "#{@pi_fleet_peer}"]) || undefined, 30_000);
-		await sleep(500);
+		await waitFor("second pane marked", () => rig.tryTmux(["display-message", "-p", "-t", mine, "#{@pi_fleet_session}"]) || undefined, 30_000);
+		await sleep(1000);
 		assert.equal(rig.tmux(["display-message", "-p", "-t", mine, "#{@pi_fleet_named}"]), "");
 		assert.equal(rig.tmux(["display-message", "-p", "-t", mine, "#{window_name}"]), "mine");
-
-		// /new: cancelled in place, a new window with a fresh session id in the same cwd.
-		const before = rig.windows().length;
-		await rig.type(pane, "/new");
-		await waitFor("window from /new", () => rig.windows().length === before + 1);
-		const run = await waitFor("stub pi", () => rig.runsAll()[0]);
-		assert.match(run, /--session-id [0-9a-f-]{36}$/);
-		assert.ok(rig.status(id), "the original pi still runs");
-		assert.equal(rig.tryTmux(["display-message", "-p", "-t", pane, "#{pane_dead}"]), "0");
-
-		// /resume of a stored session (switchSession, as from the picker): a window running `--session <file>`.
-		rig.tmux(["select-window", "-t", pane]);
-		const otherFile = rig.sessionFile("11111111-2222-7333-8444-555555555555");
-		await rig.type(pane, `/switch-to ${otherFile}`);
-		await waitFor("resume window", () => rig.windows().length === before + 2);
-		await waitFor("stub pi resumed", () => rig.runsAll().some((l) => l.endsWith(`--session ${otherFile}`)));
-		assert.equal(rig.tmux(["display-message", "-p", "-t", pane, "#{@pi_fleet_session}"]), id);
-
-		// /resume of a live session: jump to its window, no new one.
-		rig.tmux(["select-window", "-t", pane]);
-		const liveId = "99999999-2222-7333-8444-555555555555";
-		const liveFile = rig.sessionFile(liveId);
-		const livePane = rig.tmux(["new-window", "-d", "-P", "-F", "#{pane_id}", "sh"]);
-		const now = new Date().toISOString();
-		writeFileSync(join(rig.statusDir, `${liveId}.json`), JSON.stringify({
-			v: 1, sessionId: liveId, sessionFile: liveFile, cwd: rig.work, host: hostname(), pid: process.pid, state: "idle", acked: true,
-			since: now, heartbeat: now, subagents: { working: 0, waiting: 0, done: 0, error: 0 }, tmux: { socket: rig.socket, piPane: livePane },
-		}));
-		const windows = rig.windows().length;
-		await rig.type(pane, `/switch-to ${liveFile}`);
-		await waitFor("jump to the live pane", () => rig.activePane() === livePane);
-		assert.equal(rig.windows().length, windows);
-		assert.equal(rig.runsAll().filter((l) => l.includes(liveId)).length, 0);
-		assert.equal(rig.tmux(["display-message", "-p", "-t", pane, "#{@pi_fleet_session}"]), id);
+		// nvim starts on first use only (pi-deck-design.md decision 1).
+		for (const p of [pane, mine]) {
+			assert.equal(rig.tmux(["display-message", "-p", "-t", p, "#{@pi_fleet_peer}"]), "", p);
+			assert.equal(rig.tmux(["display-message", "-p", "-t", p, "#{window_panes}"]), "1", p);
+		}
+		assert.equal(rig.status(id).nvimSock, undefined);
+		// `pi-fleet pair` (prefix e) finds the session on the marked pane.
+		const paired = spawnSync(join(repo, "bin/pi-fleet"), ["pair", pane], { env: rig.tmuxEnv(pane), encoding: "utf8" });
+		assert.equal(paired.status, 0, paired.stderr);
+		const peer = rig.tmux(["display-message", "-p", "-t", pane, "#{@pi_fleet_peer}"]);
+		assert.equal(rig.tmux(["display-message", "-p", "-t", peer, "#{@pi_fleet_session}"]), id);
 
 		// Empty session: /kill quits without a dialog; the pane (no run-pi here) closes.
 		rig.tmux(["select-window", "-t", pane]);

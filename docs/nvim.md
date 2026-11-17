@@ -116,7 +116,7 @@ normally. In a paired nvim:
 | `:w!!` | save + **interrupt**: pi gets the diff now (steer). It lands after the running tool call and never aborts a running command |
 | `:PiHelp` | explains the writes, reloads and conflicts (`q` closes) |
 | `:PiDiff` | compare your buffer with the version on disk (`q` closes) |
-| `:PiFocus` | jump to the pi pane (same as tmux `prefix e`) |
+| `:PiFocus` | back to the pi (same as tmux `prefix e`; in the pi deck the pi is swapped back into the slot) |
 
 **When pi edits a file that is open here:**
 

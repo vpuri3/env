@@ -9,7 +9,10 @@
  *   /view              one picker: touched files, then the last 10 tool calls.
  *
  * The paired nvim is found with nvim.ts's resolveNvim; if there is none (or its socket is dead)
- * and this is a TUI pi in tmux, `pairPane` (cli.ts) splits a new one first. Calls go through
+ * and this is a TUI pi in tmux, one is made now (nvim starts on first use): in the pi deck a pool
+ * pane (deck.ts deckPair), shown in the right slot in place of the pi once the file is open
+ * (deck-client.ts focusNvim); elsewhere `pairPane` (cli.ts) splits one beside the pi, which is
+ * then focused. Calls go through
  * `nvim_exec_lua` with fixed Lua; paths, lines and buffer text travel only as arguments.
  * Without a paired nvim (outside tmux, RPC without a socket, pairing failed) it falls back to
  * compact-tools' old behaviour, with a one-line notice: `nvim -R` in a new tmux window, else in
@@ -28,7 +31,9 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Input, truncateToWidth, type Component, type Focusable, type TUI } from "@earendil-works/pi-tui";
 import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import { fmtLiteral, inTmux, focusPane, pairPane } from "./cli.ts";
+import { fmtLiteral, inTmux, pairPane } from "./cli.ts";
+import { focusNvim, inDeck } from "./deck-client.ts";
+import { deckPair } from "./deck.ts";
 import {
 	absPath,
 	displayPath,
@@ -151,14 +156,15 @@ function isTui(ctx: ExtensionContext): boolean {
 }
 
 /**
- * Pair a new nvim beside this pi (TUI in tmux only), wait up to 5 s for its socket and record
- * it in the status file; undefined when that is not possible. Also used by leader.ts (`Space g s`).
+ * Pair a new nvim with this pi (TUI in tmux only): in the deck a hidden pool pane, else a split
+ * beside the pi. Waits up to 5 s for its socket and records it in the status file; undefined
+ * when that is not possible. Also used by leader.ts (`Space v`, `Space g s`).
  */
 export async function pairNew(pi: ExtensionAPI, ctx: ExtensionContext): Promise<NvimPeer | undefined> {
 	const pane = process.env.TMUX_PANE;
 	const sessionId = ctx.sessionManager.getSessionId();
 	if (!pane || !inTmux() || !isTui(ctx) || !sessionId) return undefined;
-	const r = await pairPane(pane, { session: sessionId, cwd: ctx.cwd }).catch(() => undefined);
+	const r = await (inDeck() ? deckPair(pane, { show: false }) : pairPane(pane, { session: sessionId, cwd: ctx.cwd })).catch(() => undefined);
 	if (!r) return undefined;
 	const end = Date.now() + PAIR_WAIT_MS;
 	while (!isSocket(r.nvimSock) && Date.now() < end) await sleep(50);
@@ -174,7 +180,8 @@ export async function pairNew(pi: ExtensionAPI, ctx: ExtensionContext): Promise<
 }
 
 /**
- * Run `op` in the paired nvim, pairing (or re-pairing a dead one) when allowed, then focus it.
+ * Run `op` in the paired nvim, pairing (or re-pairing a dead one) when allowed, then focus it
+ * (in the deck: show it in the slot).
  * Returns false when there is no paired nvim to use (the caller falls back). nvim's own
  * errors are thrown.
  */
@@ -205,7 +212,7 @@ export async function openInPaired(pi: ExtensionAPI, ctx: ExtensionContext, op: 
 			if (!peer) return false;
 		}
 	}
-	if (peer.pane && inTmux()) await focusPane(peer.pane).catch(() => {});
+	if (peer.pane && inTmux()) await focusNvim(process.env.TMUX_PANE, peer.pane).catch(() => {});
 	return true;
 }
 

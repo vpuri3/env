@@ -57,6 +57,7 @@ import { decodeKittyPrintable, isKeyRelease, matchesKey, truncateToWidth, visibl
 import type { Component } from "@earendil-works/pi-tui";
 import { ctlSockPath, dashboardPopup, dashboardWindow, inTmux, isDefaultSocket, openSession, readStatuses, tmuxBaseArgs } from "./cli.ts";
 import { queuedJobs, type SlurmJob } from "./lifecycle.ts";
+import { openDeck } from "./deck-client.ts";
 import { SessionIndex, TranscriptTails, countSubagents, type FoldedThread, type IndexEntry, type SubagentCounts, type TranscriptItem } from "./registry.ts";
 import { fleetOf } from "./shared.ts";
 import { GLYPHS, STALE_MS, type FleetState, type Liveness, type StatusFile } from "./status.ts";
@@ -1448,8 +1449,11 @@ export async function openDashboard(
 }
 
 export function register(pi: ExtensionAPI): void {
+	// One entry story (pi-deck-design.md §7): the deck popup, or the deck's list in a deck pi.
 	pi.registerCommand("sessions", {
-		description: "pi-fleet: open the sessions dashboard window (like prefix g / Space e)",
-		handler: (_args, ctx) => openDashboard(pi, ctx, "window"),
+		description: "pi-fleet: open the pi deck (its list in a deck pi; like prefix g / Space e)",
+		handler: async (_args, ctx) => {
+			if (fleetOf(pi).main) await openDeck(ctx);
+		},
 	});
 }

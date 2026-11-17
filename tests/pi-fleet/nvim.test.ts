@@ -23,6 +23,7 @@ import {
 	USER_EDIT_EVENT,
 } from "../../pi/extensions/fleet/nvim.ts";
 import { parseUserEdit, USER_EDIT } from "../../pi/extensions/fleet/protocol.ts";
+import { pairPane } from "../../pi/extensions/fleet/cli.ts";
 import { fleetOf } from "../../pi/extensions/fleet/shared.ts";
 
 delete process.env.TMUX;
@@ -612,7 +613,7 @@ test("nvim.ts: a duplicate pi (live prior claim) neither pairs nor patches statu
 const haveTmux = spawnSync("tmux", ["-V"], { stdio: "ignore", timeout: 5000 }).status === 0;
 const tmuxTest = haveNvim && haveTmux ? test : test.skip;
 
-tmuxTest("nvim.ts in tmux: TUI pairs at session start (once, never in RPC), an edit re-pairs after nvim dies, status patched", async () => {
+tmuxTest("nvim.ts in tmux: never pairs (start, edits); an nvim made on first use is reloaded and recorded; a dead one is not re-paired", async () => {
 	const root = mkdtempSync(join(tmpdir(), "pft5-"));
 	const sock = join(root, "tmux.sock"); // throwaway server; never the default socket
 	const runtime = join(root, "run");
@@ -662,41 +663,46 @@ tmuxTest("nvim.ts in tmux: TUI pairs at session start (once, never in RPC), an e
 			current: () => file,
 		};
 		register(pi);
-		// RPC mode never pairs, not at session start and not on an edit
+		const panesOf = () => tmuxSync("list-panes", "-t", piPane, "-F", "#{pane_id}").split("\n");
+		// No mode pairs: nvim starts on first use (view.ts, leader.ts, the deck), never at session
+		// start and never for an agent edit.
 		const rpc = fakePi();
 		fleetOf(rpc.pi).main = true;
 		register(rpc.pi);
 		const rpcCtx = { cwd: root, mode: "rpc", sessionManager: { getSessionId: () => session } };
 		await rpc.fire("session_start", { reason: "startup" }, rpcCtx);
 		await rpc.fire("tool_result", { toolName: "edit", input: { path: join(root, "x.txt") }, isError: false }, rpcCtx);
-		await sleep(500);
-		assert.equal(tmuxSync("list-panes", "-t", piPane, "-F", "#{pane_id}").split("\n").length, 1, "rpc: no nvim pane");
 		await rpc.fire("session_shutdown", {}, rpcCtx);
-
 		const ctx = { cwd: root, mode: "tui", sessionManager: { getSessionId: () => session } };
 		await fire("session_start", { reason: "startup" }, ctx);
-		const first = await waitFor("paired at session start", () => file.tmux?.nvimPane);
-		// idempotent: a second session_start (e.g. /reload) finds the live peer, no new split
-		await fire("session_start", { reason: "reload" }, ctx);
-		await sleep(300);
-		assert.equal(tmuxSync("list-panes", "-t", piPane, "-F", "#{pane_id}").split("\n").length, 2, "one nvim pane");
-		assert.equal(file.tmux.nvimPane, first);
-		assert.equal(tmuxSync("show", "-pv", "-t", piPane, "@pi_fleet_peer"), first);
-		assert.equal(file.nvimSock, join(runtime, `${session}.nvim.sock`));
-		await waitFor("nvim socket", () => existsSync(file.nvimSock));
-		await waitFor("nvim answers", () => true);
-		const env1 = await nvimRequest(file.nvimSock, "nvim_exec_lua", ["return { vim.env.PI_FLEET_SESSION, package.loaded['nvconf.pi_fleet'] ~= nil }", []]);
+		await fire("tool_result", { toolName: "write", input: { path: join(root, "x.txt") }, isError: false }, ctx);
+		await sleep(500);
+		assert.deepEqual(panesOf(), [piPane], "no nvim pane");
+		assert.deepEqual(patches, []);
+
+		// An nvim made on first use (pi-fleet pair) is found by the next agent edit: reloaded and recorded.
+		const r = await pairPane(piPane, { session, cwd: root });
+		await waitFor("nvim socket", () => existsSync(r.nvimSock));
+		const txt = join(root, "x.txt");
+		writeFileSync(txt, "one\n");
+		await nvimRequest(r.nvimSock, "nvim_exec_lua", ["vim.cmd.edit(...)", [txt]]);
+		writeFileSync(txt, "two\n");
+		await fire("tool_result", { toolName: "write", input: { path: txt }, isError: false }, ctx);
+		await waitFor("status patched", () => file.tmux?.nvimPane === r.nvimPane && file.nvimSock === r.nvimSock);
+		assert.equal(file.tmux.piPane, piPane, "status tmux fields are merged, not replaced");
+		const reloaded = async () => ((await nvimRequest(r.nvimSock, "nvim_exec_lua", ["return vim.api.nvim_buf_get_lines(0, 0, -1, false)[1]", []])) as string) === "two";
+		for (let i = 0; i < 100 && !(await reloaded()); i++) await sleep(50);
+		assert.equal(await reloaded(), true, "agent_changed reloaded the buffer");
+		const env1 = await nvimRequest(r.nvimSock, "nvim_exec_lua", ["return { vim.env.PI_FLEET_SESSION, package.loaded['nvconf.pi_fleet'] ~= nil }", []]);
 		assert.deepEqual(env1, [session, true]);
 
-		// the nvim dies; the next agent edit re-pairs
-		tmuxSync("kill-pane", "-t", first);
-		await waitFor("nvim pane gone", () => !tmuxSync("list-panes", "-a", "-F", "#{pane_id}").split("\n").includes(first));
-		await fire("tool_result", { toolName: "write", input: { path: join(root, "x.txt") }, isError: false }, ctx);
-		const second = await waitFor("re-paired", () => (file.tmux?.nvimPane !== first ? file.tmux?.nvimPane : undefined));
-		assert.notEqual(second, first);
-		assert.equal(tmuxSync("show", "-pv", "-t", piPane, "@pi_fleet_peer"), second);
-		assert.equal(file.tmux.piPane, piPane, "status tmux fields are merged, not replaced");
-		assert.equal(tmuxSync("list-panes", "-t", piPane, "-F", "#{pane_id}").split("\n").length, 2, "exactly one nvim pane");
+		// The nvim dies (:q): the next agent edit does not bring it back.
+		tmuxSync("kill-pane", "-t", r.nvimPane);
+		await waitFor("nvim pane gone", () => panesOf().length === 1);
+		await fire("tool_result", { toolName: "write", input: { path: txt }, isError: false }, ctx);
+		await fire("agent_settled", {}, ctx);
+		await sleep(500);
+		assert.deepEqual(panesOf(), [piPane], "not re-paired");
 	} finally {
 		spawnSync("tmux", ["-S", sock, "kill-server"], { stdio: "ignore", timeout: 5000 });
 		for (const k of keys) {

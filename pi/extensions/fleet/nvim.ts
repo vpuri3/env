@@ -6,10 +6,11 @@
  *   every agent_settled checktime_all() (edits made through bash or by subagents). Calls go over the nvim's
  *   --listen socket as msgpack-RPC `nvim_exec_lua` requests; the function name and paths
  *   travel as RPC arguments (data), never spliced into code or a shell string.
- *   If the nvim is gone (no socket / refused) and this is a TUI pi in tmux, the next agent edit
- *   re-pairs (`pairPane`, as `pi-fleet pair` does; §13) and the status file gets the new
- *   nvimPane/nvimSock. This module is also the only one that pairs at session start (§7):
- *   TUI mode only (never RPC/print/json), and only when no live peer exists.
+ *   This module never creates an nvim: it starts lazily on first use (pi-deck-design.md
+ *   decision 1: `prefix e`, `Space v`, `/view`, `Space f …`, `Space g s`; view.ts, leader.ts,
+ *   the deck). Agent edits reload the nvim wherever it is, also a hidden one in the deck's
+ *   pool; with no nvim (never opened, or quit) they do nothing, and the next use makes one.
+ *   A peer found at session start or on a call is recorded (status nvimPane/nvimSock).
  *
  * nvim → pi: the lua side sends `user_edit` lines (protocol.ts) to the control socket owned
  *   by control.ts (phase 3). This module registers the handler on control's registry
@@ -25,7 +26,7 @@ import { lstatSync } from "node:fs";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
-import { inTmux, livePeer, nvimSockPath, pairPane } from "./cli.ts";
+import { inTmux, livePeer, nvimSockPath } from "./cli.ts";
 import { duplicateOf } from "./control.ts";
 import { parseUserEdit, USER_EDIT, type NvimCall, type UserEditMessage } from "./protocol.ts";
 import { fleetOf } from "./shared.ts";
@@ -410,10 +411,7 @@ interface ControlRegistry {
 export function register(pi: ExtensionAPI): void {
 	const shared = fleetOf(pi);
 	let sessionId = "";
-	let cwd = process.cwd();
-	let tui = false;
 	let peer: NvimPeer | undefined;
-	let pairing: Promise<NvimPeer | undefined> | undefined;
 	let generation = 0;
 	let registeredWith: unknown;
 
@@ -440,68 +438,45 @@ export function register(pi: ExtensionAPI): void {
 		if (Object.keys(fields).length) status.patch(fields);
 	};
 
-	/** The peer, re-resolved; with `repair`, pair a new nvim when in tmux and none is alive. */
-	const findPeer = async (repair: boolean): Promise<NvimPeer | undefined> => {
+	/** The peer, re-resolved (never created here: nvim starts on first use). */
+	const findPeer = async (): Promise<NvimPeer | undefined> => {
 		const gen = generation;
 		const found = await resolveNvim(sessionId);
 		if (gen !== generation) return undefined;
-		if (found) {
-			peer = found;
-			patchStatus(found);
-			return found;
-		}
-		peer = undefined;
-		const pane = process.env.TMUX_PANE;
-		if (!repair || !tui || !pane || !inTmux() || !sessionId) return undefined;
-		pairing ??= pairPane(pane, { session: sessionId, cwd })
-			.then((r) => {
-				if (gen !== generation) return undefined;
-				peer = { pane: r.nvimPane, sock: r.nvimSock };
-				patchStatus(peer);
-				return peer;
-			})
-			.catch(() => undefined)
-			.finally(() => {
-				pairing = undefined;
-			});
-		return pairing;
+		peer = found;
+		if (found) patchStatus(found);
+		return found;
 	};
 
-	/** Call into the nvim; on an unreachable socket re-resolve once, re-pairing if `repair`. */
-	const call = async (c: NvimCall, repair: boolean): Promise<void> => {
+	/** Call into the nvim, if there is one; on an unreachable socket re-resolve once. */
+	const call = async (c: NvimCall): Promise<void> => {
 		if (!shared.main) return;
 		const gen = generation;
-		const target = peer ?? (await findPeer(repair));
+		const target = peer ?? (await findPeer());
 		if (!target || gen !== generation) return;
 		try {
 			await nvimCall(target.sock, c);
 		} catch (error) {
 			if (!(error instanceof NvimUnreachable) || gen !== generation) return;
 			if (error.code === "ETIMEDOUT") return; // busy nvim: keep it, skip this reload
-			const again = await findPeer(repair);
-			// A freshly paired nvim reads files from disk anyway; only retry an existing one.
-			if (again && again.sock !== target.sock && !pairing) await nvimCall(again.sock, c).catch(() => {});
+			const again = await findPeer();
+			// A new nvim (made since) reads files from disk anyway; retry only another socket.
+			if (again && again.sock !== target.sock) await nvimCall(again.sock, c).catch(() => {});
 		}
 	};
 
 	registerControl();
 
-	// `pairing` is deliberately not cleared on session_start/session_shutdown: an in-flight
-	// pairPane must keep deduping (its result is discarded by the generation check).
 	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
 		generation++;
 		peer = undefined;
 		registerControl();
 		// A duplicate pi (another live pi owns this session; lifecycle.ts makes it quit) must
-		// not pair or patch the status file.
+		// not patch the status file.
 		if (!shared.main || duplicateOf(shared)) return;
 		sessionId = ctx.sessionManager.getSessionId();
-		cwd = ctx.cwd;
-		tui = (ctx as { mode?: string }).mode === "tui";
-		// §7: a TUI pi in tmux without a live nvim peer gets one now (this module is the only
-		// one that pairs at session start). Never in RPC/print/json mode. Idempotent:
-		// pairPane returns the live peer instead of splitting again, and `pairing` dedupes.
-		void findPeer(tui).catch(() => {});
+		// An nvim that is already there (a /reload, a pi restarted in its pane) is recorded; none is made.
+		void findPeer().catch(() => {});
 	});
 
 	pi.on("session_shutdown", async () => {
@@ -515,13 +490,12 @@ export function register(pi: ExtensionAPI): void {
 		const path = toolPath((event.input as { path?: unknown } | undefined)?.path, ctx.cwd);
 		if (!path) return;
 		// Never delay the tool result: fire and forget.
-		void call({ fn: "agent_changed", arg: [path] }, true).catch(() => {});
+		void call({ fn: "agent_changed", arg: [path] }).catch(() => {});
 	});
 
 	// Edits made through bash (or by subagents) show up when the run settles.
 	pi.on("agent_settled", async () => {
 		if (!shared.main) return;
-		// Never pairs: only an agent edit brings a dead nvim back (§13).
-		void call({ fn: "checktime_all", arg: null }, false).catch(() => {});
+		void call({ fn: "checktime_all", arg: null }).catch(() => {});
 	});
 }

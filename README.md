@@ -116,12 +116,12 @@ need you by window number.
 
 | In pi | Does |
 | --- | --- |
-| `/new` | a new session in a new window (the current one keeps running) |
-| `/resume` | pi's picker; the chosen session opens in a new window, or is jumped to if live |
+| `/new` | a new session in the pi deck, shown and focused (the current one keeps running); from a pi started by hand, the deck pops up |
+| `/resume` | pi's picker; the chosen session opens in the pi deck (selected if already there), or is jumped to if it runs in your tmux |
 | `/kill` | end this session: a dialog lists the subagents it stops and its Slurm jobs (left running by default) |
-| `/sessions` | the dashboard window (same as `prefix g` and `Space e`) |
+| `/sessions` | the pi deck popup; in a deck pi, back to its list (same as `Space e`) |
 | `/autonomous [off]` | is this session autonomous (set by `/run-autonomously`)? `off` ends it |
-| `/view FILE[:LINE]` | open a file in the paired nvim at LINE, then focus it; completes files this session touched first, then the repo |
+| `/view FILE[:LINE]` | open a file in the session's nvim (started on first use) at LINE, then focus it (in the deck: shown in place of pi); completes files this session touched first, then the repo |
 | `/view tool:N` | the Nth most recent tool call's full output, read-only in nvim (`tool:` completes) |
 | `/view` | picker: touched files, then the last 10 tool calls |
 | `/btw QUESTION` | a side conversation (pi-btw) that runs even while the agent works |
@@ -159,7 +159,8 @@ cancels it.
 
 | NORMAL mode | Does |
 | --- | --- |
-| `Space e` / `Space E` | the dashboard window (like `prefix g`) / popup (like `prefix G`) |
+| `Space e` / `Space E` | the pi deck popup; in a deck pi, back to its list |
+| `Space v` | this session's nvim (started on first use); in the deck it replaces pi in the slot (`:PiFocus` or deck `prefix e` swap back) |
 | `Space f f` | file picker (session files, then the repo), opening in the paired nvim |
 | `Space f g` | git files only |
 | `Space f b` | files touched in this session |

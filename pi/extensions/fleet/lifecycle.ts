@@ -1,10 +1,15 @@
 /**
  * fleet/lifecycle: session commands of a main pi in tmux (design §7, §8, §16).
  *
- *   /new, /resume  `session_before_switch` → `{cancel:true}` and `pi-fleet open` (cli.ts
- *                  openSession, in-process): /new opens a new focused window in this cwd;
- *                  /resume opens the target in a new window, or jumps to its window if it is
- *                  live, or says where it runs. The current session is never torn down.
+ *   /new, /resume  `session_before_switch` → `{cancel:true}` and an `open` in the pi deck
+ *                  (docs/pi-deck-design.md §8, deck-client.ts openInDeck): /new opens a new
+ *                  session in this cwd, /resume the target (selected if it is in the deck
+ *                  already), as a pool pane that the deck shows and focuses. In a deck pi that
+ *                  is all; in a pi started by hand in the user's tmux the deck is started if
+ *                  needed and popped up over this client. A target running in the user's tmux
+ *                  is jumped to (same server) or named. If the deck cannot be reached, a hand-
+ *                  started pi falls back to cli.ts openSession (a new window), with a notice.
+ *                  The current session (and its subagents) is never torn down.
  *                  Outside tmux pi's own behaviour stays, with a one-line notice. /import (a
  *                  "resume" whose target file does not exist yet) imports in place, with a notice.
  *                  Anything else that switches sessions through pi in a TUI pi
@@ -35,9 +40,10 @@
  *                  interactive TUI pi (ctx.mode "tui"). RPC/print/json pis keep pi's own behaviour
  *                  even with $TMUX set: programs never open windows in the user's tmux, and a
  *                  dialog nobody answers cannot hold a pi. /kill and the control socket stay.
- *   Window names   A pi started by hand in tmux (TUI) marks its window @pi_fleet_named=1, so
- *                  `pi-fleet bar` gives it glyph names, unless the user renamed the window
- *                  (automatic-rename off). Its nvim pane comes from nvim.ts (§7 pairing).
+ *   Window names   A pi started by hand in tmux (TUI, not in the deck) marks its window
+ *                  @pi_fleet_named=1, so `pi-fleet bar` gives it glyph names, unless the user
+ *                  renamed the window (automatic-rename off). Its nvim is created on first use
+ *                  (view.ts, leader.ts), never at session start.
  *
  * No module-level state: in-process subagents load this extension too; everything checks
  * fleetOf(pi).main.
@@ -51,6 +57,7 @@ import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ctlSockPath, focusPane, inTmux, livePeer, openSession, paneInfo, tmux } from "./cli.ts";
 import { duplicateOf } from "./control.ts";
+import { inDeck, openInDeck, outsideNotice } from "./deck-client.ts";
 import { nvimRequest } from "./nvim.ts";
 import { RegistryFold } from "./registry.ts";
 import { fleetOf, ownPrompt } from "./shared.ts";
@@ -309,14 +316,21 @@ export function register(pi: ExtensionAPI): void {
 	};
 
 	/**
-	 * The pane is paired for another session id (after /fork or /clone, which replace the session
-	 * in place, or a pi run again by hand in a paired pane): re-key the pane options and the paired
-	 * nvim's $PI_FLEET_SESSION / $PI_FLEET_CTL_SOCK, so its saves reach this session's socket.
+	 * A TUI pi's pane is marked @pi_fleet_role=pi / @pi_fleet_session (its nvim comes later, on
+	 * first use, and `prefix e` / `pi-fleet pair` find the session there). A pane paired for
+	 * another session id (after /fork or /clone, which replace the session in place, or a pi run
+	 * again by hand in a paired pane) is re-keyed: the pane options and the paired nvim's
+	 * $PI_FLEET_SESSION / $PI_FLEET_CTL_SOCK, so its saves reach this session's socket.
 	 */
-	const rekeyPair = async (pane: string, sessionId: string) => {
+	const rekeyPair = async (pane: string, sessionId: string, tui: boolean) => {
 		try {
 			const me = await paneInfo(pane);
-			if (!me || me.role !== "pi" || me.fleetSession === sessionId) return;
+			if (!me) return;
+			if (!me.role && tui) {
+				await tmux(["set-option", "-p", "-t", pane, "@pi_fleet_role", "pi", ";", "set-option", "-p", "-t", pane, "@pi_fleet_session", sessionId]);
+				return;
+			}
+			if (me.role !== "pi" || me.fleetSession === sessionId) return;
 			const peer = await livePeer(pane);
 			const args = ["set-option", "-p", "-t", pane, "@pi_fleet_session", sessionId];
 			if (peer) args.push(";", "set-option", "-p", "-t", peer.pane, "@pi_fleet_session", sessionId);
@@ -379,8 +393,8 @@ export function register(pi: ExtensionAPI): void {
 		}
 		const pane = process.env.TMUX_PANE;
 		if (process.env.TMUX && pane) {
-			void rekeyPair(pane, sm.getSessionId());
-			if (c.mode === "tui") void markWindow(pane);
+			void rekeyPair(pane, sm.getSessionId(), c.mode === "tui");
+			if (c.mode === "tui" && !inDeck()) void markWindow(pane);
 		}
 	});
 
@@ -407,17 +421,30 @@ export function register(pi: ExtensionAPI): void {
 			(globalThis as Record<symbol, unknown>)[IMPORTING] = target;
 			return;
 		}
+		const req = action === "open-new" ? { cwd: c.cwd } : { session: target! };
 		try {
-			if (action === "open-new") {
-				await openSession({ cwd: c.cwd, target: process.env.TMUX_PANE });
+			const r = await openInDeck(req);
+			if (r.ok) {
+				if (r.popupError) notify(c, `pi-fleet: opened in the deck, but no popup here (${r.popupError}); \`pf\` attaches it`, "warning");
 			} else {
-				const result = await openSession({ session: target!, target: process.env.TMUX_PANE });
-				if (result.action === "refused") notify(c, `pi-fleet: that session is ${result.reason}`, "warning");
+				const notice = await outsideNotice(r.outside, r.error);
+				if (notice) notify(c, notice, "warning");
 			}
 		} catch (error) {
-			notify(c, `pi-fleet: could not open a window: ${(error as Error).message}`, "error");
+			const why = (error as Error).message;
+			if (inDeck()) {
+				notify(c, `pi-fleet: deck: ${why}`, "error");
+			} else {
+				// The deck is unreachable: the window of old (pi-fleet-design.md §8).
+				try {
+					const result = await openSession({ ...req, target: process.env.TMUX_PANE });
+					notify(c, `pi-fleet: the deck is unavailable (${why}); ${result.action === "refused" ? `that session is ${result.reason}` : "opened a window instead"}`, "warning");
+				} catch (error2) {
+					notify(c, `pi-fleet: could not open the session: ${why}; ${(error2 as Error).message}`, "error");
+				}
+			}
 		}
-		// Never tear this session down: the other one lives in its own window.
+		// Never tear this session down: the other one lives in its own pane.
 		return { cancel: true };
 	});
 
