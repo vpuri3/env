@@ -16,7 +16,7 @@ trap 'rm -rf "$work"' EXIT
 
 # Belt and braces: anything that forgets its own override lands in $work.
 export PI_FLEET_STATE_DIR="$work/state"
-unset TMUX TMUX_PANE PI_FLEET_SESSION
+unset TMUX TMUX_PANE PI_FLEET_SESSION PI_FLEET_TMUX_SOCKET PI_FLEET_CTL_SOCK PI_FLEET_PI_PANE PI_FLEET_DECK PI_FLEET_RUNTIME_DIR
 
 files=()
 if [ "$#" -eq 0 ]; then
