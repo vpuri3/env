@@ -5,7 +5,7 @@
  *   Tool calls start collapsed to one line each ("compact"); thinking blocks start shown in
  *   full. The package ties both to one Ctrl+O level, so this splits them:
  *   Ctrl+O                    cycles tool detail  compact -> preview -> full -> compact
- *   app.thinking.toggle       shows / hides thinking blocks (ctrl+t or ctrl+shift+o here)
+ *   app.thinking.toggle       shows / hides thinking blocks (ctrl+t or alt+o here)
  * Both choices are kept per agent while pi runs, like the package's own scroll position.
  *
  * Works by adjusting the package's LiveAgentView instance when the tree mounts it, so it
