@@ -7,6 +7,7 @@
   "app.message.followUp": "ctrl+q",
   "app.message.dequeue": "shift+up",
   "app.thinking.toggle": "ctrl+t",
+  "app.model.select": [],
   "app.session.togglePath": "ctrl+o",
   "app.session.toggleNamedFilter": "ctrl+x",
   "app.models.toggleProvider": "ctrl+o",
