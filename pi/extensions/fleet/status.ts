@@ -39,7 +39,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { mkdirSync, chmodSync, unlinkSync } from "node:fs";
+import { mkdirSync, chmodSync, readFileSync, unlinkSync } from "node:fs";
 import { readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
@@ -471,6 +471,7 @@ export function register(pi: ExtensionAPI): void {
 		ctx = c;
 		shared.main = false;
 		shared.status = undefined;
+		shared.prior = undefined;
 		file = undefined;
 		const sm = c.sessionManager;
 		if (c.mode !== "tui" && c.mode !== "rpc") return;
@@ -487,6 +488,13 @@ export function register(pi: ExtensionAPI): void {
 		const sessionId = sm.getSessionId();
 		path = join(dir, `${sessionId}.json`);
 		seenFile = join(dir, `${sessionId}.seen`);
+		// Another process's claim on this id, read before ours replaces it (lifecycle.ts duplicate guard).
+		try {
+			const prior = JSON.parse(readFileSync(path, "utf8")) as StatusFile;
+			if (prior?.sessionId === sessionId && (prior.pid !== process.pid || prior.host !== hostname())) shared.prior = prior;
+		} catch {
+			// none or unreadable
+		}
 		try {
 			unlinkSync(seenFile);
 		} catch {

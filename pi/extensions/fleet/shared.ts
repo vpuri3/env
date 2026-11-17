@@ -22,12 +22,45 @@ export interface StatusHandle {
 	current(): StatusFile | undefined;
 }
 
+/**
+ * A handler for one message `type` on the control socket <id>.pi.sock (control.ts, §10).
+ * Its return value (an object) is merged into the `{"ok":true}` reply; a throw replies
+ * `{"ok":false,"error"}`. Messages are parsed JSON objects; validate them (protocol.ts).
+ */
+export type ControlHandler = (message: Record<string, unknown>) => unknown;
+
+export interface ControlRegistry {
+	/** Register the handler for `type` (replacing any earlier one); returns an unregister function. */
+	on(type: string, handler: ControlHandler): () => void;
+	get(type: string): ControlHandler | undefined;
+}
+
 export interface FleetShared {
 	/** True for a main session in TUI or RPC mode; set by status.ts on session_start. */
 	main: boolean;
 	status: StatusHandle | undefined;
 	/** >0 while a fleet picker/dialog is open: its ui_prompt_start does not mean "question". */
 	ownPrompts: number;
+	/** Control-socket handlers; usable from register(), the socket itself is control.ts's. */
+	control: ControlRegistry;
+	/**
+	 * The status file another process (other pid or host) had for this session id when
+	 * status.ts started writing ours (session_start); lifecycle.ts's duplicate guard reads it.
+	 */
+	prior: StatusFile | undefined;
+}
+
+function controlRegistry(): ControlRegistry {
+	const handlers = new Map<string, ControlHandler>();
+	return {
+		on(type, handler) {
+			handlers.set(type, handler);
+			return () => {
+				if (handlers.get(type) === handler) handlers.delete(type);
+			};
+		},
+		get: (type) => handlers.get(type),
+	};
 }
 
 const instances = new WeakMap<object, FleetShared>();
@@ -35,7 +68,7 @@ const instances = new WeakMap<object, FleetShared>();
 export function fleetOf(pi: ExtensionAPI): FleetShared {
 	let shared = instances.get(pi);
 	if (!shared) {
-		shared = { main: false, status: undefined, ownPrompts: 0 };
+		shared = { main: false, status: undefined, ownPrompts: 0, control: controlRegistry(), prior: undefined };
 		instances.set(pi, shared);
 	}
 	return shared;
