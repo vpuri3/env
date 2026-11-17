@@ -45,6 +45,9 @@
  *   attach       ensure the deck; in a pane of your tmux: the popup (bin/pi-deck-attach) over that
  *                client; otherwise pi-deck-attach in this terminal.
  *   kill-deck [--yes]  ask once, `kill` every deck pi over its control socket (≤ 10 s), kill-server.
+ *   deck-reload [--debounce MS]  pick up repo changes in the running deck: re-source deck.tmux.conf, restart
+ *                the list (respawn its pane if it runs an older LIST_LOOP); pool panes and the slot stay. No
+ *                deck: a message, exit 0. --debounce: skip if a reload ran within MS (pi's /reload uses it).
  *   pair --deck PANE [--show] [--json]  the deck pi's nvim (a pool pane, created on first use);
  *                --show swaps the other half of the pair into PANE's place (prefix e).
  *   deck         the deck's list process: the list TUI (deck-view.ts); deck.ts runDeckStub without pi-tui.
@@ -1221,6 +1224,7 @@ const HELP = `usage: pi-fleet <command>
   open --deck [--session FILE|ID] [--cwd DIR] [--no-focus] [--json] [-- PI_ARGS]
   attach                             the deck: popup in tmux, else attach this terminal
   kill-deck [--yes]                  kill every deck pi (after asking), then the deck server
+  deck-reload [--debounce MS]        re-read deck.tmux.conf and restart the deck's list (new code)
   pair --deck PANE [--show] [--json] the deck pi's nvim (created on first use); --show swaps it in
   deck                               the deck's list process (run by the deck server)
   title-backfill [--limit N] [--dry-run] [--model PROVIDER/ID]
@@ -1373,6 +1377,28 @@ async function killDeckCmd(yes: boolean, env: NodeJS.ProcessEnv): Promise<number
 	return r.killedServer ? 0 : 1;
 }
 
+/** `deck-reload [--debounce MS]`: deck.ts deckReload, with a one-line report. */
+async function deckReloadCmd(debounceMs: number | undefined, env: NodeJS.ProcessEnv): Promise<number> {
+	const deck = await import("./deck.ts");
+	const r = await deck.deckReload({ debounceMs, waitMs: 5000 }, env);
+	if (!r.running) {
+		process.stdout.write("pi-fleet: no deck running\n");
+		return 0;
+	}
+	if (r.skipped) {
+		process.stdout.write("pi-fleet: the deck was just reloaded\n");
+		return 0;
+	}
+	if (r.sourceError) process.stderr.write(`pi-fleet: ${deck.deckConfPath(env)}: ${r.sourceError}\n`);
+	const pids = r.newPid ? ` (pid ${r.oldPid ? `${r.oldPid} → ` : ""}${r.newPid})` : " (the new list is not up yet)";
+	const list =
+		r.list === "none"
+			? "no list process right now (its loop starts the current code)"
+			: `list ${r.list === "respawned" ? "pane respawned with the current loop" : "restarted"}${pids}`;
+	process.stdout.write(`deck reloaded: ${r.sourceError ? "config NOT re-read" : "config re-read"}, ${list}\n`);
+	return r.sourceError ? 1 : 0;
+}
+
 /** `pair --deck PANE [--show] [--json]`; with --show (prefix e) errors go to the deck's message line. */
 async function deckPairCmd(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
 	const { values, positionals } = parseArgs({ args, options: { show: { type: "boolean" }, json: { type: "boolean" } }, allowPositionals: true, strict: true });
@@ -1472,6 +1498,12 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
 		case "kill-deck": {
 			const { values } = parse({ yes: { type: "boolean" } });
 			return killDeckCmd(!!values.yes, env);
+		}
+		case "deck-reload": {
+			const { values } = parse({ debounce: { type: "string" } });
+			const debounceMs = values.debounce === undefined ? undefined : Number(values.debounce);
+			if (debounceMs !== undefined && !(Number.isFinite(debounceMs) && debounceMs >= 0)) throw new Error("deck-reload: --debounce must be a number of ms");
+			return deckReloadCmd(debounceMs, env);
 		}
 		case "deck": {
 			// The list owns stdin, signals and sockets: leave once it is done.

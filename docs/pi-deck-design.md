@@ -283,6 +283,7 @@ for the toggle: pi uses it (line end, vim-mode scroll) and so does nvim (scroll,
 | `/sessions` | outside: the popup; in the deck: focus the list |
 | pi crash | `run-pi` keeps the pane: `pi exited (N). r restart · q close` — visible in the slot, `C-l` then `r` |
 | list TUI crash | `pane-died` hook: `if -F '#{==:#{@pi_fleet_role},list}' respawn-pane`; the new TUI rebuilds everything from tmux + status files |
+| `/reload` in any fleet pi (deck or outside); `pi-fleet deck-reload` | pick up repo changes: `source-file` deck.tmux.conf, then SIGTERM `@deck_tui_pid` (the list loop starts the current code; the new list rebuilds from tmux and keeps the slot), or `respawn-pane -k` the list pane (same id) with the current `LIST_LOOP` if its start command differs; pool panes untouched; no deck → no-op. The hook (`fleet/reload.ts`, `session_start` with `reason: "reload"`) runs `deck-reload --debounce 5000` detached: `@deck_reload` (`<ms>:<token>`) makes several pis reloading at once restart the list once |
 | `pf --kill-deck` | lists live deck sessions, asks once, sends `kill {confirmed, scancel:false}` to each control socket, waits ≤ 10 s, then `kill-server` |
 | deck lifetime | runs until `--kill-deck` or node reboot; detaching never stops it |
 | several clients | one shared deck; the deck socket is node-local (`/tmp/tmux-$UID/pifleet`), so one deck per login node (login-node pinning as before; other hosts' rows dimmed) |

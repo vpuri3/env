@@ -120,6 +120,7 @@ need you by window number.
 | `/resume` | pi's picker; the chosen session opens in the pi deck (selected if already there), or is jumped to if it runs in your tmux |
 | `/kill` | end this session: a dialog lists the subagents it stops and its Slurm jobs (left running by default) |
 | `/sessions` | the pi deck popup; in a deck pi, back to its list (same as `Space e`) |
+| `/reload` | pi's reload; also refreshes a running pi deck: re-reads `pi/deck.tmux.conf` and restarts the deck's list with the current code (pool sessions and the slot stay). By hand: `pi-fleet deck-reload` |
 | `/autonomous [off]` | is this session autonomous (set by `/run-autonomously`)? `off` ends it |
 | `/view FILE[:LINE]` | open a file in the session's nvim (started on first use) at LINE, then focus it (in the deck: shown in place of pi); completes files this session touched first, then the repo |
 | `/view tool:N` | the Nth most recent tool call's full output, read-only in nvim (`tool:` completes) |

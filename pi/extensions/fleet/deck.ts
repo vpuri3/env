@@ -14,7 +14,8 @@
  *     (pi <-> nvim), @pi_fleet_nvim_sock, @pi_fleet_shown=nvim (on a pi whose nvim was in the slot
  *     when the slot moved on). Global options: @deck_tui_pid, @deck_bin, @deck_list_pct,
  *     @deck_outer (`socket|client` of the last popup, bin/pi-deck-attach), @deck_jump, @deck_sock (the
- *     list's deck.sock path; clients look it up there, deckSockLookup).
+ *     list's deck.sock path; clients look it up there, deckSockLookup), @deck_reload (`<ms>:<token>` of the
+ *     last deckReload, its debounce).
  *
  * deck.sock (<runtime dir>/deck.sock; deck-<name>.sock for a non-default deck socket): NDJSON, one
  * reply line per request, private bind + rename, 64 KB line cap, 2 s idle.
@@ -32,7 +33,7 @@
 
 import { execFile } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, renameSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, realpathSync, renameSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -1144,6 +1145,130 @@ export async function startDeck(
 	}
 	if (!(await waitDeckSock(env, opts.timeoutMs ?? 3000))) throw new Error(`deck: the list did not answer on ${await deckSockLookup(env)}`);
 	return { started };
+}
+
+// ---------------------------------------------------------------- reload (pi's /reload, `deck-reload`)
+
+/** Reloads within this many ms of the last one are skipped by `deck-reload --debounce` (several pis reloading at once). */
+export const RELOAD_DEBOUNCE_MS = 5000;
+/** How long a debounced reload waits before checking that its claim on @deck_reload survived a concurrent one. */
+const RELOAD_CLAIM_SETTLE_MS = 250;
+
+/** The loop in a pane start command (as tmux prints it: quoted, `$` sometimes escaped) is LIST_LOOP. */
+export function isCurrentListLoop(startCommand: string): boolean {
+	const norm = (s: string) => s.replace(/[\\"']/g, "").replace(/\s+/g, " ").trim();
+	return norm(startCommand).includes(norm(LIST_LOOP));
+}
+
+export interface DeckReloadResult {
+	/** The deck server runs (else nothing was done). */
+	running: boolean;
+	/** Another reload ran within the debounce window (or won a concurrent claim): nothing was done. */
+	skipped?: boolean;
+	/** `source-file` of the deck config failed with this message (the list is restarted anyway). */
+	sourceError?: string;
+	/**
+	 * signalled: SIGTERM to the list (its loop restarts it with the current code); respawned: the list pane
+	 * ran an older loop (or was dead) and runs LIST_LOOP now; none: no list process right now (its loop starts one).
+	 */
+	list: "signalled" | "respawned" | "none";
+	oldPid?: number;
+	/** The new list's pid (with waitMs, once it published @deck_tui_pid). */
+	newPid?: number;
+}
+
+/** The pi-fleet the list loop runs: @deck_bin (the running list's), $PI_FLEET_BIN, this repo's bin/pi-fleet, else PATH. */
+function listBin(deckBin: string, env: NodeJS.ProcessEnv): string {
+	if (deckBin.startsWith("/") && existsSync(deckBin)) return deckBin;
+	if (env.PI_FLEET_BIN) return env.PI_FLEET_BIN;
+	try {
+		const repoBin = join(dirname(realpathSync(fileURLToPath(import.meta.url))), "../../../bin/pi-fleet");
+		if (existsSync(repoBin)) return resolve(repoBin);
+	} catch {
+		// not found
+	}
+	return deckBin || "pi-fleet";
+}
+
+/** The parent pid of `pid` (ps), or undefined. */
+function parentPid(pid: number): Promise<number | undefined> {
+	return new Promise((res) => {
+		execFile("ps", ["-o", "ppid=", "-p", String(pid)], { timeout: 2000 }, (error, stdout) => {
+			const n = Number(String(stdout).trim());
+			res(!error && Number.isInteger(n) && n > 0 ? n : undefined);
+		});
+	});
+}
+
+/**
+ * Make the running deck pick up changes in the repo (pi's /reload runs `deck-reload --debounce`): re-source
+ * the deck config, then restart the list: SIGTERM to @deck_tui_pid (its loop starts the current code; the
+ * new list rebuilds from tmux and keeps the slot), or, if the list pane's loop is not the current LIST_LOOP
+ * (or the pane is dead), `respawn-pane -k` it with LIST_LOOP (same pane id; respawning is no pane death, so
+ * the pane-died hook stays out). Pool panes and the slot are never touched. No-op if the deck is not running.
+ * `debounceMs`: skip if another reload claimed @deck_reload within that window (and settle concurrent claims).
+ * `waitMs`: wait that long for the new list to publish its pid.
+ */
+export async function deckReload(
+	opts: { debounceMs?: number; waitMs?: number } = {},
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<DeckReloadResult> {
+	if (!(await deckRunning(env))) return { running: false, list: "none" };
+	const claim = `${Date.now()}:${token()}`;
+	if (opts.debounceMs) {
+		const last = Number((await deckTmux(["show-options", "-gqv", "@deck_reload"], env).catch(() => "")).split(":")[0]);
+		if (last && Date.now() - last >= 0 && Date.now() - last < opts.debounceMs) return { running: true, skipped: true, list: "none" };
+		await deckTmux(["set-option", "-g", "@deck_reload", claim], env);
+		await new Promise((r) => setTimeout(r, RELOAD_CLAIM_SETTLE_MS));
+		if ((await deckTmux(["show-options", "-gqv", "@deck_reload"], env).catch(() => "")) !== claim) return { running: true, skipped: true, list: "none" };
+	} else {
+		await deckTmux(["set-option", "-g", "@deck_reload", claim], env);
+	}
+	const result: DeckReloadResult = { running: true, list: "none" };
+	try {
+		await deckTmux(["source-file", deckConfPath(env)], env);
+	} catch (error) {
+		result.sourceError = (error as Error).message;
+	}
+	const info = await deckTmux(
+		[
+			"display-message", "-p", "-t", LIST_TARGET, "#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{@deck_tui_pid}\t#{@deck_bin}\t#{pane_start_command}",
+		],
+		env,
+	).catch(() => "");
+	const [pane, panePidS, dead, pidS, deckBin, ...start] = info.split("\t");
+	if (!pane) return result;
+	const pid = Number(pidS) > 1 ? Number(pidS) : undefined;
+	result.oldPid = pid;
+	let respawn = dead === "1" || !isCurrentListLoop(start.join("\t"));
+	if (!respawn && pid) {
+		// Only the list's own process (a child of the loop): a stale @deck_tui_pid may name some other process now.
+		const ppid = await parentPid(pid);
+		if (ppid === Number(panePidS)) {
+			try {
+				process.kill(pid, "SIGTERM");
+				result.list = "signalled";
+			} catch {
+				// gone already: its loop starts the next one
+			}
+		} else if (ppid !== undefined) respawn = true;
+	}
+	if (respawn) {
+		await deckTmux(["respawn-pane", "-k", "-t", pane, "sh", "-c", LIST_LOOP, listBin(deckBin, env)], env);
+		result.list = "respawned";
+	}
+	if (opts.waitMs && result.list !== "none") {
+		const end = Date.now() + opts.waitMs;
+		while (Date.now() < end) {
+			const now = Number(await deckTmux(["show-options", "-gqv", "@deck_tui_pid"], env).catch(() => ""));
+			if (now > 1 && now !== pid) {
+				result.newPid = now;
+				break;
+			}
+			await new Promise((r) => setTimeout(r, 100));
+		}
+	}
+	return result;
 }
 
 /** bin/pi-deck-attach next to $PI_FLEET_BIN, else on PATH. */

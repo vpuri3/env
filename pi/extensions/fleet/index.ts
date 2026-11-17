@@ -15,6 +15,7 @@ import { register as leader } from "./leader.ts";
 import { register as lifecycle } from "./lifecycle.ts";
 import { register as nvim } from "./nvim.ts";
 import { register as registry } from "./registry.ts";
+import { register as reload } from "./reload.ts";
 import { register as sessionsView } from "./sessions-view.ts";
 import { register as status } from "./status.ts";
 import { register as title } from "./title.ts";
@@ -34,4 +35,5 @@ export default function piFleet(pi: ExtensionAPI): void {
 	edits(pi);
 	leader(pi);
 	title(pi);
+	reload(pi);
 }
