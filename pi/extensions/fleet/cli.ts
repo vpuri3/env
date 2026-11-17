@@ -17,8 +17,8 @@
  *        pane whose nvim is gone it re-pairs first.
  *   bar [--pane PANE]
  *        tmux status-left: `π [3]? flare [5]◐ ckpt ` (waiting/question/error/crashed fleet
- *        sessions, newest first, real window indices; glyphs colored with #[fg=…]: waiting
- *        yellow, question magenta bold, error/crashed red). Also keeps the names of windows opened
+ *        sessions, newest first, real window indices; glyphs in the session palette (BAR_STYLES):
+ *        waiting green, question orange bold, error/crashed red). Also keeps the names of windows opened
  *        by `open` as `<glyph> <name>`.
  *   seen [--window W | --pane P | ID...]
  *        Acknowledge waiting/question sessions (writes <id>.seen with the runId). The tmux
@@ -609,8 +609,18 @@ export async function openSession(
 // ---------------------------------------------------------------- bar and seen
 
 const BAR_STATES = new Set(["waiting", "question", "error"]);
-/** Glyph colors in the bar, as in the dashboard: needs you yellow, question magenta, error red. */
-const BAR_STYLES: Record<string, string> = { waiting: "#[fg=yellow]", question: "#[fg=magenta,bold]", error: "#[fg=red]", crashed: "#[fg=red]" };
+/**
+ * Glyph colors in the bar: the session palette (sessions-view.ts ANSI_FG/TONE_COLOR, deck-view.ts's
+ * outer bar) as tmux colours: done (waiting, unseen) green 78, needs input (question) orange 208 bold,
+ * error/crashed red 196. Not imported from sessions-view.ts: that loads pi-tui, and the status bar runs
+ * `bar` every few seconds. tests/pi-fleet/cli.test.ts checks they agree.
+ */
+export const BAR_STYLES: Record<string, string> = {
+	waiting: "#[fg=colour78]",
+	question: "#[fg=colour208,bold]",
+	error: "#[fg=colour196]",
+	crashed: "#[fg=colour196]",
+};
 const barEscape = (text: string) => text.replace(/#/g, "##");
 const BAR_MAX = 5;
 const BAR_LABEL = 12;

@@ -109,8 +109,9 @@ attaches to it.
 
 Status glyphs: ● running · ? question · ◐ waiting (unseen) · ○ idle · ✕ error or
 crashed · ⟳ starting. Colors, the same in the dashboard and the tmux status
-bar: working blue, working autonomously (after `/run-autonomously`)
-green "auto", needs you yellow, question magenta, error red, idle dim. A
+bar: active (idle) blue, working purple (`»` when autonomous, after
+`/run-autonomously`), done (unseen) green, question orange, error red,
+closed grey. A
 stopped pi rings the bell, and the tmux status bar lists the sessions that
 need you by window number.
 

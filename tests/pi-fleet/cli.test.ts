@@ -10,7 +10,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ctlSockPath, nvimSockPath, runtimeDir } from "../../pi/extensions/fleet/cli.ts";
+import { BAR_STYLES, ctlSockPath, locatePiPackages, nvimSockPath, runtimeDir, usePiPackages } from "../../pi/extensions/fleet/cli.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = join(here, "../..");
@@ -148,6 +148,17 @@ class Fleet {
 
 const skipTmux = !haveTmux && "tmux not installed";
 const skipNvim = (!haveTmux || !haveNvim) && "tmux or nvim not installed";
+
+test("bar colors are the session palette (sessions-view.ts ANSI_FG by tone)", { skip: !locatePiPackages() && "pi's pi-tui not found" }, async () => {
+	await usePiPackages(locatePiPackages()!);
+	const sv = await import("../../pi/extensions/fleet/sessions-view.ts");
+	const tmuxColour = (tone: import("../../pi/extensions/fleet/sessions-view.ts").Tone) => `colour${sv.ANSI_FG[sv.TONE_COLOR[tone]].replace(/^38;5;/, "")}`;
+	const row = (state: string) => ({ state }) as any;
+	for (const state of ["waiting", "question", "error", "crashed"]) {
+		const tone = sv.rowTone(row(state));
+		assert.equal(BAR_STYLES[state], `#[fg=${tmuxColour(tone)}${tone === "input" ? ",bold" : ""}]`, state);
+	}
+});
 
 test("harness and CLI refuse the default tmux socket", { skip: skipTmux }, () => {
 	assert.throws(() => guardTmuxArgs(["list-sessions"]));
@@ -396,8 +407,8 @@ test("bar lists waiting sessions by real window index, renames fleet windows; se
 		const ib = f.opt(b.pi, "window_index");
 		const r = f.cli(["bar", "--pane", a.pi]);
 		assert.equal(r.code, 0, r.err);
-		// Glyphs colored as in the dashboard: question magenta bold, waiting yellow.
-		assert.equal(r.out, `π [${ib}]#[fg=magenta,bold]?#[default] a very long… [${ia}]#[fg=yellow]◐#[default] flare##1 `);
+		// Glyphs in the session palette: question orange 208 bold, waiting (done) green 78.
+		assert.equal(r.out, `π [${ib}]#[fg=colour208,bold]?#[default] a very long… [${ia}]#[fg=colour78]◐#[default] flare##1 `);
 		assert.equal(f.opt(a.pi, "window_name"), "◐ flare#1");
 		assert.equal(f.opt(c.pi, "window_name"), "● busy");
 		assert.equal(f.opt(c.pi, "window_index"), "7");
@@ -417,7 +428,7 @@ test("bar lists waiting sessions by real window index, renames fleet windows; se
 
 		// crashed (pid dead) with its pane present: ✕ in the bar
 		f.writeStatus({ sessionId: c.id, name: "busy", state: "running", pid: 999_999_999, tmux: { socket: sock, piPane: c.pi } });
-		assert.match(f.cli(["bar"]).out, /\[7\]#\[fg=red\]✕#\[default\] busy/);
+		assert.match(f.cli(["bar"]).out, /\[7\]#\[fg=colour196\]✕#\[default\] busy/);
 		assert.equal(f.opt(c.pi, "window_name"), "✕ busy");
 
 		const ls = JSON.parse(f.cli(["ls", "--json"]).out);
@@ -449,7 +460,7 @@ test("# in cwd, names and session names is literal, not a tmux format", { skip: 
 
 		f.writeStatus({ sessionId: id, name: "n#{session_name}#H", state: "waiting", acked: false, runId: "r1", tmux: { socket: f.socket, piPane: pi } });
 		const bar = f.cli(["bar", "--pane", f.active()]);
-		assert.equal(bar.out, `π [s##1:${f.opt(pi, "window_index")}]#[fg=yellow]◐#[default] n##{session_… `);
+		assert.equal(bar.out, `π [s##1:${f.opt(pi, "window_index")}]#[fg=colour78]◐#[default] n##{session_… `);
 		assert.equal(f.opt(pi, "window_name"), "◐ n#{session_name}#H");
 		// the next tick sees the literal name and does not rename again
 		f.tmux(["set-hook", "-g", "window-renamed", "set -g @pft_renamed 1"]);

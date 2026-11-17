@@ -203,7 +203,7 @@ The dashboard shows the list with a preview pane on the right (decided; below th
 ## 10. Notifications and control socket
 
 - **Bell**: `\a` written to pi's stdout on waiting/question/error. `tmux.conf`: `monitor-bell on`, `bell-action other`, `visual-bell off`.
-- **Notification bar**: `status-left` gets `#(pi-fleet bar)` with `status-interval 5`. Output looks like `π [3]? flare [5]◐ ckpt`, glyphs colored as in the dashboard (`#[fg=magenta,bold]`, `#[fg=yellow]`, `#[fg=red]`). The numbers are real window indices, so the existing `prefix 3` jumps there.
+- **Notification bar**: `status-left` gets `#(pi-fleet bar)` with `status-interval 5`. Output looks like `π [3]? flare [5]◐ ckpt`, glyphs colored as in the dashboard (`#[fg=colour208,bold]`, `#[fg=colour78]`, `#[fg=colour196]`). The numbers are real window indices, so the existing `prefix 3` jumps there.
 - **Window glyphs** as in §7. OSC 7501/777 passthrough is not used.
 - **Control socket** `<id>.pi.sock` (0600 in the 0700 dir) dispatches each NDJSON line on its `type` (`cmd` is accepted as an alias) to the registered handlers: `ping`, `kill` (with `"confirmed":true` no dialog; `"scancel":true` also cancels its Slurm jobs) and `user_edit`; anything else gets `{"ok":false,"error":"unknown type …"}` (64 KB cap, 2 s idle drop, private bind + rename).
 

@@ -56,7 +56,7 @@ on the right (see the README's pi-fleet section). These keys run
   tmux flags that window in the window list unless it is the current one
   (`monitor-bell on`, `bell-action other`, `visual-bell off`).
 - **Status bar.** `status-left` lists sessions that need you, newest first,
-  e.g. `π [3]? flare [5]◐ ckpt` (? magenta, ◐ yellow, ✕ red). It refreshes
+  e.g. `π [3]? flare [5]◐ ckpt` (? orange, ◐ green, ✕ red). It refreshes
   every 5 s. Window names are
   `<glyph> <session name>`.
 - **Hooks.** Switching to a window or session (`session-window-changed`,
