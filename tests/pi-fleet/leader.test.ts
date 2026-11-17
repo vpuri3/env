@@ -17,6 +17,10 @@ delete process.env.TMUX;
 delete process.env.TMUX_PANE;
 const root = realpathSync(mkdtempSync(join(tmpdir(), "pfl-")));
 process.env.PI_FLEET_RUNTIME_DIR = join(root, "run");
+// The /sessions view (Space e) scans these: never the real ones.
+process.env.PI_FLEET_STATE_DIR = join(root, "state");
+process.env.PI_FLEET_CACHE_DIR = join(root, "cache");
+process.env.PI_CODING_AGENT_SESSION_DIR = join(root, "sessions");
 after(() => rmSync(root, { recursive: true, force: true }));
 
 const packages = piPackages();
@@ -170,21 +174,34 @@ test("files / git-files list their scope (non-TUI select path of the picker)", {
 	assert.deepEqual(f.calls, ["select:Open repo file", "select:Open file (session, then repo)"]);
 });
 
-test("Space e runs /sessions as an extension command, never as a prompt", { skip }, async () => {
-	const without = fakePi();
-	leader.registerLeader(without.pi);
-	await without.start();
-	without.emit("sessions");
+test("Space e opens the /sessions view directly, never as a prompt", { skip }, async () => {
+	const rpc = fakePi();
+	rpc.ctx.mode = "rpc";
+	leader.registerLeader(rpc.pi);
+	await rpc.start();
+	assert.equal(rpc.emit("sessions"), true);
 	await sleep(10);
-	assert.deepEqual(without.sent, []);
-	assert.deepEqual(without.notes, [["pi-fleet: /sessions is not available", "warning"]]);
+	assert.deepEqual(rpc.sent, []);
+	assert.deepEqual(rpc.notes, [["/sessions needs the interactive TUI (try `pi-fleet ls`)", "warning"]]);
 
-	const f = fakePi({ commands: [{ name: "sessions", source: "extension" }] });
+	const f = fakePi();
+	f.ctx.mode = "tui";
+	let view: any;
+	f.ctx.ui.custom = async (factory: any) => {
+		f.calls.push("custom");
+		let result: unknown;
+		view = factory({ terminal: { rows: 40 }, requestRender: () => {} }, { fg: (_c: string, t: string) => t, bold: (t: string) => t }, {}, (r: unknown) => (result = r));
+		view.dispose();
+		return result;
+	};
 	leader.registerLeader(f.pi);
 	await f.start();
-	f.emit("sessions");
-	await sleep(10);
-	assert.deepEqual(f.sent, [{ text: "/sessions", options: { expandPromptTemplates: true } }]);
+	assert.equal(f.emit("sessions"), true);
+	for (let i = 0; i < 100 && !f.calls.length; i++) await sleep(10);
+	assert.deepEqual(f.calls, ["custom"]);
+	assert.equal(view?.constructor?.name, "SessionsView");
+	assert.deepEqual(f.sent, []);
+	assert.deepEqual(f.notes, []);
 });
 
 test("Space f h: commands then built-ins; the choice goes into the prompt", { skip }, async () => {
@@ -206,6 +223,9 @@ test("Space f h: commands then built-ins; the choice goes into the prompt", { sk
 	assert.equal(leader.withCommand("view", "src/x.py"), "/view src/x.py");
 	assert.equal(leader.withCommand("view", "/vi"), "/view ");
 	assert.equal(leader.withCommand("view", "/resume abc"), "/view abc");
+	// A draft that starts with an absolute path is text, not a command.
+	assert.equal(leader.withCommand("view", "/tmp/build.log shows a crash"), "/view /tmp/build.log shows a crash");
+	assert.equal(leader.withCommand("view", "/"), "/view ");
 
 	const f = fakePi({ commands: [{ name: "view", description: "Open a file", source: "extension" }] });
 	f.ctx.ui.choose = (options: string[]) => options.find((o) => o.startsWith("/view "));

@@ -150,8 +150,11 @@ function isTui(ctx: ExtensionContext): boolean {
 	return (ctx as { mode?: string }).mode === "tui";
 }
 
-/** Pair a new nvim beside this pi (TUI in tmux only); undefined when that is not possible. */
-async function pairNew(pi: ExtensionAPI, ctx: ExtensionContext): Promise<NvimPeer | undefined> {
+/**
+ * Pair a new nvim beside this pi (TUI in tmux only), wait up to 5 s for its socket and record
+ * it in the status file; undefined when that is not possible. Also used by leader.ts (`Space g s`).
+ */
+export async function pairNew(pi: ExtensionAPI, ctx: ExtensionContext): Promise<NvimPeer | undefined> {
 	const pane = process.env.TMUX_PANE;
 	const sessionId = ctx.sessionManager.getSessionId();
 	if (!pane || !inTmux() || !isTui(ctx) || !sessionId) return undefined;
@@ -507,7 +510,7 @@ export async function openFilePicker(
 }
 
 function toolItems(calls: ToolCall[], cwd: string, limit: number): PickItem[] {
-	return calls.slice(0, limit).map((c, i) => ({ value: `tool:${i + 1}`, label: callLabel(c, i + 1, cwd) }));
+	return calls.slice(0, limit).map((c, i) => ({ value: `tool:${i + 1}`, label: displayText(callLabel(c, i + 1, cwd)) }));
 }
 
 /** Tool output picker for `Space t`: every call on the branch, newest first. */
@@ -572,7 +575,7 @@ export async function viewCompletions(
 		if (!ctx) return null;
 		const calls = callsOf(ctx).slice(0, COMPLETION_TOOL_CALLS);
 		const rest = prefix.slice(5).trim();
-		const item = (i: number) => ({ value: `tool:${i + 1}`, label: `tool:${i + 1}`, description: callSummary(calls[i], cwd, 50) });
+		const item = (i: number) => ({ value: `tool:${i + 1}`, label: `tool:${i + 1}`, description: displayText(callSummary(calls[i], cwd, 50)) });
 		let items: PickItem[];
 		if (/^\d+$/.test(rest)) {
 			// Filter by number first; only the survivors get summarised.

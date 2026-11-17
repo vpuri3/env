@@ -435,6 +435,10 @@ test("view completions: tool: offers only the 200 most recent calls; numbers fil
 	const ctx = fakeCtx("/w", many);
 	assert.deepEqual((await view.viewCompletions(pi, ctx, "tool:25"))?.map((t) => t.value), ["tool:25"]);
 	assert.equal(await view.viewCompletions(pi, ctx, "tool:250"), null);
+	// Tool labels are TUI text: control characters from the call never reach the terminal.
+	const esc = fakeCtx("/w", [call("e1", "bash", { command: "printf '\x1b[2J\rgone'" }), result("e1")]);
+	const [escItem] = (await view.viewCompletions(pi, esc, "tool:")) ?? [];
+	assert.ok(escItem && !/[\x00-\x1f\x7f-\x9f]/.test(escItem.description!), JSON.stringify(escItem));
 	const ones = await view.viewCompletions(pi, ctx, "tool:1");
 	assert.deepEqual(ones?.slice(0, 3).map((t) => t.value), ["tool:1", "tool:10", "tool:11"]);
 	assert.equal(ones?.length, 20);

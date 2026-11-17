@@ -5,7 +5,7 @@
  * module sets `handled = true` synchronously when it takes the action (vim-mode shows
  * "pi-fleet not loaded" otherwise) and runs it with the UI context saved at session_start.
  *
- *   sessions        Space e     /sessions (dispatched as the extension command)
+ *   sessions        Space e     /sessions (sessions-view.ts openSessions)
  *   files           Space f f   file picker: session files, then the repo
  *   git-files       Space f g   repo (git) files only
  *   session-files   Space f b   files touched in this session only
@@ -19,10 +19,11 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { focusPane, inTmux, pairPane } from "./cli.ts";
+import { focusPane, inTmux } from "./cli.ts";
 import { NvimUnreachable, nvimRequest, resolveNvim, type NvimPeer } from "./nvim.ts";
 import { fleetOf, ownPrompt } from "./shared.ts";
-import { openFilePicker, openGrepPicker, openToolPicker } from "./view.ts";
+import { openSessions } from "./sessions-view.ts";
+import { openFilePicker, openGrepPicker, openToolPicker, pairNew } from "./view.ts";
 
 export const ACTION_EVENT = "pi-fleet:action";
 
@@ -78,7 +79,8 @@ export function commandChoices(commands: ReadonlyArray<{ name: string; descripti
 
 /** The prompt after choosing `/name`: a typed `/command` is replaced, other draft text becomes its arguments. */
 export function withCommand(name: string, draft: string): string {
-	const rest = draft.startsWith("/") ? draft.replace(/^\/\S*\s*/, "") : draft;
+	// Only a leading `/word` without another slash is a command; `/tmp/x.log ...` is draft text.
+	const rest = /^\/[^\s/]*(\s|$)/.test(draft) ? draft.replace(/^\/\S*\s*/, "") : draft;
 	return `/${name} ${rest.trimStart()}`;
 }
 
@@ -90,19 +92,17 @@ const PAIR_WAIT_MS = 5_000;
 // An unknown command: nvim_cmd says "Command not found: Git", Ex says "E492".
 const NO_COMMAND = /Command not found|E492/;
 
-async function pairedNvim(ctx: ExtensionContext): Promise<{ peer: NvimPeer; fresh: boolean } | undefined> {
-	const sessionId = ctx.sessionManager.getSessionId();
-	const peer = await resolveNvim(sessionId).catch(() => undefined);
-	if (peer) return { peer, fresh: false };
-	const pane = process.env.TMUX_PANE;
-	if (!pane || !inTmux() || !sessionId) return undefined;
-	const r = await pairPane(pane, { session: sessionId, cwd: ctx.cwd }).catch(() => undefined);
-	return r ? { peer: { pane: r.nvimPane, sock: r.nvimSock }, fresh: true } : undefined;
+async function pairedNvim(pi: ExtensionAPI, ctx: ExtensionContext): Promise<{ peer: NvimPeer; fresh: boolean } | undefined> {
+	// Never call nvim without a socket; only a freshly paired nvim is waited for (gitStatus).
+	const peer = await resolveNvim(ctx.sessionManager.getSessionId()).catch(() => undefined);
+	if (peer?.sock) return { peer, fresh: false };
+	const fresh = await pairNew(pi, ctx);
+	return fresh?.sock ? { peer: fresh, fresh: true } : undefined;
 }
 
 /** `:Git` (fugitive) in the paired nvim (pairing one if needed), then focus its pane. */
-export async function gitStatus(_pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-	const found = await pairedNvim(ctx);
+export async function gitStatus(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	const found = await pairedNvim(pi, ctx);
 	if (!found) return ctx.ui.notify("pi-fleet: no paired nvim (needs tmux)", "warning");
 	const { peer, fresh } = found;
 	// A just-split nvim may still be starting (no socket yet, or plugins not loaded).
@@ -135,18 +135,10 @@ export async function pickCommand(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 	if (choice) ctx.ui.setEditorText(withCommand(choice.name, ctx.ui.getEditorText()));
 }
 
-/** `Space e`: run /sessions as the extension command (immediately, even while the agent works). */
-export function openSessions(pi: ExtensionAPI, ctx: ExtensionContext): void {
-	// Never send "/sessions" as a prompt to the model when the command is missing.
-	if (!pi.getCommands().some((c) => c.name === "sessions" && c.source === "extension")) {
-		return ctx.ui.notify("pi-fleet: /sessions is not available", "warning");
-	}
-	pi.sendUserMessage("/sessions", { expandPromptTemplates: true });
-}
-
 export type Action = (pi: ExtensionAPI, ctx: ExtensionContext) => unknown;
 
 export const ACTIONS: Readonly<Record<string, Action>> = {
+	// Space e: the /sessions view, opened directly (even while the agent works; never a prompt).
 	sessions: openSessions,
 	files: (pi, ctx) => openFilePicker(pi, ctx, { scope: "all" }),
 	"git-files": (pi, ctx) => openFilePicker(pi, ctx, { scope: "git" }),

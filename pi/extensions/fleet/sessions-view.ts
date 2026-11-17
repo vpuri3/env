@@ -38,7 +38,7 @@ import { execFile } from "node:child_process";
 import { createConnection } from "node:net";
 import { homedir, hostname } from "node:os";
 import { basename } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { decodeKittyPrintable, isKeyRelease, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { ctlSockPath, focusPane, inTmux, isDefaultSocket, openSession, paneInfo, readStatuses, tmuxBaseArgs } from "./cli.ts";
@@ -1075,35 +1075,41 @@ export async function runAction(
 
 // ---------------------------------------------------------------- /sessions
 
+/**
+ * `/sessions`: the list through ctx.ui.custom, then jump to or open the chosen session.
+ * Also run directly by leader.ts for `Space e` (never as a prompt to the model).
+ */
+export async function openSessions(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	if (!fleetOf(pi).main) return;
+	if (ctx.mode !== "tui") {
+		ctx.ui.notify("/sessions needs the interactive TUI (try `pi-fleet ls`)", "warning");
+		return;
+	}
+	const currentId = ctx.sessionManager.getSessionId();
+	const action = await ownPrompt(pi, () =>
+		ctx.ui.custom<SessionsAction | undefined>((tui, theme, _keybindings, done) => {
+			const view: SessionsView = new SessionsView({
+				source: fleetSource(process.env),
+				style: { fg: (color, text) => theme.fg(color, text), bold: (text) => theme.bold(text) },
+				mode: "list",
+				height: () => Math.max(8, Math.floor(tui.terminal.rows * 0.7)),
+				onAction: (a) => {
+					view.dispose();
+					done(a);
+				},
+				requestRender: () => tui.requestRender(),
+				currentId,
+			});
+			view.start();
+			return view;
+		}),
+	);
+	if (action) await runAction(action, (message, level) => ctx.ui.notify(message, level), { currentId });
+}
+
 export function register(pi: ExtensionAPI): void {
 	pi.registerCommand("sessions", {
 		description: "pi-fleet: sessions on this node (Enter jumps or opens, Space shows subagents)",
-		handler: async (_args, ctx) => {
-			if (!fleetOf(pi).main) return;
-			if (ctx.mode !== "tui") {
-				ctx.ui.notify("/sessions needs the interactive TUI (try `pi-fleet ls`)", "warning");
-				return;
-			}
-			const currentId = ctx.sessionManager.getSessionId();
-			const action = await ownPrompt(pi, () =>
-				ctx.ui.custom<SessionsAction | undefined>((tui, theme, _keybindings, done) => {
-					const view: SessionsView = new SessionsView({
-						source: fleetSource(process.env),
-						style: { fg: (color, text) => theme.fg(color, text), bold: (text) => theme.bold(text) },
-						mode: "list",
-						height: () => Math.max(8, Math.floor(tui.terminal.rows * 0.7)),
-						onAction: (a) => {
-							view.dispose();
-							done(a);
-						},
-						requestRender: () => tui.requestRender(),
-						currentId,
-					});
-					view.start();
-					return view;
-				}),
-			);
-			if (action) await runAction(action, (message, level) => ctx.ui.notify(message, level), { currentId });
-		},
+		handler: (_args, ctx) => openSessions(pi, ctx),
 	});
 }
