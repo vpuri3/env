@@ -520,9 +520,17 @@ export async function initDeck(listPane: string, env: NodeJS.ProcessEnv = proces
  * on, the slot's session remembers whether its nvim was shown (@pi_fleet_shown on the pi pane).
  */
 export async function showPane(pane: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
-	const panes = await deckPanes(env);
+	const args = showPaneArgs(await deckPanes(env), pane);
+	if (args) await deckTmux(args, env);
+}
+
+/**
+ * The one tmux call showPane makes for `panes` as just read (the list reads them once per
+ * highlight): the @pi_fleet_shown bookkeeping and the swap. Undefined if `pane` is in the slot.
+ */
+export function showPaneArgs(panes: DeckPane[], pane: string): string[] | undefined {
 	const slot = panes.find((p) => p.inSlot);
-	if (slot?.pane === pane) return;
+	if (slot?.pane === pane) return undefined;
 	const args: string[] = [];
 	if (slot?.role === "nvim") {
 		const pi = livePeerIn(panes, slot);
@@ -531,7 +539,7 @@ export async function showPane(pane: string, env: NodeJS.ProcessEnv = process.en
 		args.push("set-option", "-pu", "-t", slot.pane, "@pi_fleet_shown", ";");
 	}
 	args.push("swap-pane", "-d", "-s", pane, "-t", SLOT_TARGET);
-	await deckTmux(args, env);
+	return args;
 }
 
 /** Show a deck session in the slot: its nvim if that was shown last, else its pi. Returns the shown pane. */
