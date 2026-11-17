@@ -27,6 +27,8 @@
  *
  * INSERT mode: everything goes to the prompt. Esc -> NORMAL.
  *   ctrl+p / ctrl+n act as up / down (previous/next line, history, autocomplete menu).
+ *   Tab while the agent works queues the prompt as a follow-up (idle: autocomplete as usual).
+ *   Up (or ctrl+p) on the first line with messages queued restores them into the prompt.
  *
  * Both modes: ctrl+c interrupts the agent while it is working (pi's default only clears
  * the prompt); when idle it clears the prompt / exits on a double press as usual.
@@ -76,6 +78,7 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 let currentEditor: any;
 // True while the agent is working (set from the extension context in session_start).
 let agentBusy: () => boolean = () => false;
+let hasQueued: () => boolean = () => false;
 
 function findBox(box: any, scrollView: any): any {
 	if (!box) return undefined;
@@ -388,8 +391,16 @@ function withVim(Base: any) {
 			// ctrl+p/n act as up/down: previous/next line (or history at the top/bottom),
 			// or move the autocomplete menu when open. Intercepted here so app.model.cycle*
 			// never sees ctrl+p.
-			if (matchesKey(data, "ctrl+p")) return super.handleInput("\x1b[A");
-			if (matchesKey(data, "ctrl+n")) return super.handleInput("\x1b[B");
+			if (matchesKey(data, "ctrl+p")) data = "\x1b[A";
+			else if (matchesKey(data, "ctrl+n")) return super.handleInput("\x1b[B");
+			// Tab queues the prompt as a follow-up while the agent works (otherwise: autocomplete as usual).
+			if (matchesKey(data, "tab") && agentBusy() && !this.isShowingAutocomplete() && this.getText().trim()) {
+				return this.actionHandlers?.get("app.message.followUp")?.();
+			}
+			// Up on the first line pulls queued messages back into the editor (otherwise: line up / history).
+			if (matchesKey(data, "up") && hasQueued() && !this.isShowingAutocomplete() && this.getCursor().line === 0) {
+				return this.actionHandlers?.get("app.message.dequeue")?.();
+			}
 			super.handleInput(data);
 			return;
 		}
@@ -724,6 +735,7 @@ export default function (pi: ExtensionAPI) {
 		if (!ctx.hasUI) return;
 
 		agentBusy = () => !ctx.isIdle();
+		hasQueued = () => ctx.hasPendingMessages();
 
 		hookEditorSlot(ctx.ui, (base) => (tui: any, theme: any, keybindings: any) => {
 			const editor = vimify(base ? base(tui, theme, keybindings) : new CustomEditor(tui, theme, keybindings), tui);
