@@ -6,7 +6,7 @@
   "tui.select.down": ["down", "ctrl+n"],
   "app.message.followUp": ["alt+enter", "ctrl+q"],
   "app.message.dequeue": ["alt+up", "shift+up"],
-  "app.thinking.toggle": ["ctrl+t", "ctrl+shift+o"],
+  "app.thinking.toggle": ["ctrl+t", "alt+o"],
   "app.session.togglePath": "alt+p",
   "app.session.toggleNamedFilter": "alt+n",
   "app.models.toggleProvider": "alt+p"
