@@ -47,7 +47,7 @@
  *   kill-deck [--yes]  ask once, `kill` every deck pi over its control socket (≤ 10 s), kill-server.
  *   pair --deck PANE [--show] [--json]  the deck pi's nvim (a pool pane, created on first use);
  *                --show swaps the other half of the pair into PANE's place (prefix e).
- *   deck         the deck's list process (phase 1: deck.ts runDeckStub; phase 2: the list TUI).
+ *   deck         the deck's list process: the list TUI (deck-view.ts); deck.ts runDeckStub without pi-tui.
  *
  * Pairing is by pane id, stored in pane options (they move with the pane on swap/move):
  *   pi pane:   @pi_fleet_role=pi   @pi_fleet_session=ID @pi_fleet_peer=%nvim
@@ -1459,8 +1459,19 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
 			return killDeckCmd(!!values.yes, env);
 		}
 		case "deck": {
-			const deck = await import("./deck.ts");
 			// The list owns stdin, signals and sockets: leave once it is done.
+			const packages = locatePiPackages(env);
+			if (packages) {
+				let view: typeof import("./deck-view.ts") | undefined;
+				try {
+					await usePiPackages(packages);
+					view = await import("./deck-view.ts");
+				} catch (error) {
+					process.stderr.write(`pi-fleet: pi-tui unusable (${String((error as Error)?.message ?? error).split("\n")[0]}); plain list\n`);
+				}
+				if (view) process.exit(await view.runDeckView(env));
+			} else process.stderr.write("pi-fleet: pi's pi-tui not found (set PI_FLEET_PI_PACKAGES); plain list\n");
+			const deck = await import("./deck.ts");
 			process.exit(await deck.runDeckStub(env));
 		}
 		case undefined:

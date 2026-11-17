@@ -236,9 +236,9 @@ export function duration(ms: number): string {
 }
 
 export type StatusFilter = "running" | "waiting" | "idle" | "error";
-const STATUS_FILTER_KEYS: Record<string, StatusFilter> = { "!": "running", "@": "waiting", "#": "idle", "&": "error" };
+export const STATUS_FILTER_KEYS: Record<string, StatusFilter> = { "!": "running", "@": "waiting", "#": "idle", "&": "error" };
 
-function category(row: SessionRow): StatusFilter {
+export function category(row: SessionRow): StatusFilter {
 	const state = row.state === "remote" ? row.status?.state ?? "idle" : row.state;
 	if (state === "running" || state === "starting") return "running";
 	if (state === "waiting" || state === "question") return "waiting";
@@ -303,18 +303,18 @@ export function rowTone(row: SessionRow): Tone {
 	}
 }
 
-function toned(tone: Tone, text: string, style: ViewStyle): string {
+export function toned(tone: Tone, text: string, style: ViewStyle): string {
 	const t = style.fg(TONE_COLOR[tone], text);
 	return tone === "question" ? style.bold(t) : t;
 }
 
-function glyphChar(row: SessionRow): string {
+export function glyphChar(row: SessionRow): string {
 	if (row.state === "remote") return "⇢";
 	if (row.state === "closed") return GLYPHS.idle;
 	return GLYPHS[row.state];
 }
 
-function glyph(row: SessionRow, style: ViewStyle): string {
+export function glyph(row: SessionRow, style: ViewStyle): string {
 	return toned(rowTone(row), glyphChar(row), style);
 }
 
@@ -372,7 +372,7 @@ export function countsText(c: SubagentCounts, style: ViewStyle): string {
 	return parts.join(" ");
 }
 
-function threadGlyph(thread: FoldedThread, live: boolean, style: ViewStyle): { glyph: string; word: string } {
+export function threadGlyph(thread: FoldedThread, live: boolean, style: ViewStyle): { glyph: string; word: string } {
 	switch (thread.state) {
 		case "starting":
 		case "running":
@@ -1271,10 +1271,10 @@ export class SessionsView implements Component {
 }
 
 /** Lines a thinking block may take in a subagent preview (its end). */
-const THINKING_LINES = 4;
+export const THINKING_LINES = 4;
 
 /** Wrap `text` (untrusted, any line breaks) into sanitized lines of at most `width` columns. */
-function wrapped(text: string, width: number, indent: string): string[] {
+export function wrapped(text: string, width: number, indent: string): string[] {
 	const out: string[] = [];
 	for (const l of text.split("\n")) {
 		const clean = oneLine(l).trimEnd();
@@ -1285,7 +1285,7 @@ function wrapped(text: string, width: number, indent: string): string[] {
 }
 
 /** The state in words, for the status line. */
-function stateWord(row: SessionRow): string {
+export function stateWord(row: SessionRow): string {
 	switch (row.state) {
 		case "running":
 			return row.status?.autonomous ? "working autonomously" : "working";
@@ -1308,13 +1308,13 @@ function stateWord(row: SessionRow): string {
 	}
 }
 
-function tilde(path: string): string {
+export function tilde(path: string): string {
 	const home = homedir();
 	return path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 }
 
 /** Printable text of a key event (plain or kitty CSI-u), or undefined. */
-function printable(data: string): string | undefined {
+export function printable(data: string): string | undefined {
 	const kitty = decodeKittyPrintable(data);
 	if (kitty) return kitty;
 	if (!data || data.includes("\x1b")) return undefined;
