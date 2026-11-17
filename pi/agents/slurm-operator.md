@@ -44,7 +44,8 @@ noisy part; you hand back a compact, factual report.
   (`sjob run <id> --log FILE -- ...` or `--bg`) and read it with `tail -n 30`,
   `rg -n 'error|Error|Traceback|NaN|Inf|CUDA error' FILE | tail -20`.
 - **Long jobs:** confirm the launch (process up, first log lines, GPUs busy via
-  `sjob gpus <id>`), then poll at 2-5 minute intervals with `sleep`. Send
+  `sjob gpus <id>`), then keep checking with short calls: each `sleep` is at most 60 s, so
+  steering from the parent reaches you within a minute. Send
   `agent_update` only on milestones or problems, not routine health.
 - **Time limits:** before an allocation expires (`sjob left <id>`), make sure the
   work checkpoints, then continue in a fresh allocation or a chained batch job.
