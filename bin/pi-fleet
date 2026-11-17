@@ -5,6 +5,7 @@
 #
 #   pi-fleet open [--session FILE|ID] [--cwd DIR]    open or jump to a session window
 #   pi-fleet pair|peer|bar|seen|ls|run-pi|dashboard  see `pi-fleet help`
+#   pi-fleet deck-start|attach|kill-deck|open --deck  the pi deck (docs/pi-deck-design.md)
 
 # Resolve symlinks to this file, then the repo it lives in.
 self=$0

@@ -36,6 +36,19 @@
  *        a pane is joined. Another ctrl+l, q, ctrl+c, Enter, SIGTERM/SIGHUP send it home
  *        (sendHome). Elsewhere (the `prefix G` popup) ctrl+l jumps to the session's window.
  *
+ * The deck (docs/pi-deck-design.md; tmux layer in deck.ts, private server `tmux -L pifleet`):
+ *   deck-start   start the deck server unless its `deck` session exists; wait for deck.sock.
+ *   open --deck [--session FILE|ID] [--cwd DIR] [--no-focus] [--json] [-- PI_ARGS]
+ *        ensure the deck, then `open` over deck.sock: a new pool pi in DIR, or the session
+ *        (selected if it is in the deck already); shown in the right slot and focused.
+ *        Prints the shown pane (the deck.sock reply with --json). Without --deck: the old window path.
+ *   attach       ensure the deck; in a pane of your tmux: the popup (bin/pi-deck-attach) over that
+ *                client; otherwise pi-deck-attach in this terminal.
+ *   kill-deck [--yes]  ask once, `kill` every deck pi over its control socket (≤ 10 s), kill-server.
+ *   pair --deck PANE [--show] [--json]  the deck pi's nvim (a pool pane, created on first use);
+ *                --show swaps the other half of the pair into PANE's place (prefix e).
+ *   deck         the deck's list process (phase 1: deck.ts runDeckStub; phase 2: the list TUI).
+ *
  * Pairing is by pane id, stored in pane options (they move with the pane on swap/move):
  *   pi pane:   @pi_fleet_role=pi   @pi_fleet_session=ID @pi_fleet_peer=%nvim
  *   nvim pane: @pi_fleet_role=nvim @pi_fleet_session=ID @pi_fleet_peer=%pi @pi_fleet_nvim_sock=SOCK
@@ -47,7 +60,8 @@
  *   PI_FLEET_PI_CMD      pi command for run-pi (words split on spaces; tests use a stub)
  *   PI_FLEET_NVIM_CMD    nvim command for pair (default `nvim`)
  *   PI_FLEET_TMUX_SOCKET tmux socket (-S); otherwise the one in $TMUX, otherwise tmux's default
- *   PI_FLEET_TMUX_GUARD  if set, refuse any tmux call that would reach the default socket (tests)
+ *   PI_FLEET_TMUX_GUARD  if set, refuse any tmux call that would reach the default or pifleet socket (tests)
+ *   PI_FLEET_DECK_SOCKET the deck's tmux socket name or path (default pifleet); PI_FLEET_DECK_CONF its config
  *   PI_FLEET_RUNTIME_DIR node-local socket dir (default /tmp/pi-fleet-$UID, 0700, checked)
  *   PI_FLEET_STATE_DIR   status files (status.ts)
  * Every tmux/nvim call uses execFile with an argument array.
@@ -109,7 +123,7 @@ function sessionsRoot(env: NodeJS.ProcessEnv): string {
 }
 
 /** Find a binary on PATH (or accept a path). */
-function which(cmd: string, env: NodeJS.ProcessEnv): string | undefined {
+export function which(cmd: string, env: NodeJS.ProcessEnv): string | undefined {
 	if (cmd.includes("/")) return existsSync(cmd) ? resolve(cmd) : undefined;
 	for (const dir of (env.PATH ?? "").split(delimiter)) {
 		if (!dir) continue;
@@ -123,7 +137,7 @@ function which(cmd: string, env: NodeJS.ProcessEnv): string | undefined {
 	return undefined;
 }
 
-function words(cmd: string | undefined, fallback: string): string[] {
+export function words(cmd: string | undefined, fallback: string): string[] {
 	const w = (cmd ?? "").trim().split(/\s+/).filter(Boolean);
 	return w.length ? w : [fallback];
 }
@@ -134,11 +148,16 @@ export function isDefaultSocket(socket: string): boolean {
 	return basename(socket) === "default";
 }
 
+/** Sockets PI_FLEET_TMUX_GUARD (tests) never lets a tmux call reach: the user's and the real deck. */
+export function guardedSocket(socket: string): boolean {
+	return !socket || isDefaultSocket(socket) || basename(socket) === "pifleet";
+}
+
 /** `-S socket` for this process: $PI_FLEET_TMUX_SOCKET, else $TMUX, else tmux's default. */
 export function tmuxBaseArgs(env: NodeJS.ProcessEnv = process.env): string[] {
 	const socket = env.PI_FLEET_TMUX_SOCKET || env.TMUX?.split(",")[0] || "";
-	if (env.PI_FLEET_TMUX_GUARD && (!socket || isDefaultSocket(socket))) {
-		throw new Error("pi-fleet: PI_FLEET_TMUX_GUARD refuses the default tmux server");
+	if (env.PI_FLEET_TMUX_GUARD && guardedSocket(socket)) {
+		throw new Error("pi-fleet: PI_FLEET_TMUX_GUARD refuses the default tmux server (and pifleet)");
 	}
 	return socket ? ["-S", socket] : [];
 }
@@ -273,11 +292,13 @@ export async function focusPane(pane: string, env: NodeJS.ProcessEnv = process.e
 }
 
 // Variables the new window gets from the caller (the tmux server's environment may be older).
-const PASS_ENV = [
+export const PASS_ENV = [
 	"PATH",
 	"PI_CODING_AGENT_DIR",
 	"PI_CODING_AGENT_SESSION_DIR",
 	"PI_FLEET_BIN",
+	"PI_FLEET_DECK_CONF",
+	"PI_FLEET_DECK_SOCKET",
 	"PI_FLEET_NODE",
 	"PI_FLEET_PI_CMD",
 	"PI_FLEET_NVIM_CMD",
@@ -286,7 +307,7 @@ const PASS_ENV = [
 	"PI_FLEET_TMUX_GUARD",
 	"PI_FLEET_TMUX_SOCKET",
 ];
-function passEnv(env: NodeJS.ProcessEnv): string[] {
+export function passEnv(env: NodeJS.ProcessEnv): string[] {
 	const out: string[] = [];
 	for (const name of PASS_ENV) if (env[name] !== undefined) out.push("-e", `${name}=${env[name]}`);
 	// tmux.conf starts shells with SSH_AUTH_SOCK on this stable link; do the same for pi.
@@ -323,7 +344,7 @@ export function readStatuses(env: NodeJS.ProcessEnv = process.env): StatusEntry[
 	return out;
 }
 
-function readStatus(sessionId: string, env: NodeJS.ProcessEnv): StatusEntry | undefined {
+export function readStatus(sessionId: string, env: NodeJS.ProcessEnv = process.env): StatusEntry | undefined {
 	try {
 		const status = JSON.parse(readFileSync(statusPath(sessionId, env), "utf8")) as StatusFile;
 		return { status, live: liveness(status) };
@@ -359,7 +380,7 @@ function sessionHeader(file: string): { id?: string; cwd?: string } {
 }
 
 /** Resolve `--session FILE|ID` to a full id, file and cwd where possible. */
-function resolveSession(arg: string, env: NodeJS.ProcessEnv): { id: string; file?: string; cwd?: string } {
+export function resolveSession(arg: string, env: NodeJS.ProcessEnv = process.env): { id: string; file?: string; cwd?: string } {
 	if (arg.endsWith(".jsonl") || arg.includes("/")) {
 		const file = resolve(arg);
 		const h = sessionHeader(file);
@@ -406,7 +427,7 @@ export interface PairResult {
 }
 
 /** Unlink a socket path nobody listens on (only if it is a socket we own). */
-async function clearStaleSocket(path: string): Promise<boolean> {
+export async function clearStaleSocket(path: string): Promise<boolean> {
 	let st;
 	try {
 		st = lstatSync(path);
@@ -856,7 +877,7 @@ export async function dashboardWindow(pane: string | undefined, env: NodeJS.Proc
 }
 
 /** Quote a word for sh. */
-function shQuote(s: string): string {
+export function shQuote(s: string): string {
 	return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
@@ -1196,16 +1217,177 @@ const HELP = `usage: pi-fleet <command>
   ls [--json]
   run-pi [PI_ARGS]
   dashboard [--window [--pane PANE]]
+  deck-start                         start the deck server (tmux -L pifleet) unless it runs
+  open --deck [--session FILE|ID] [--cwd DIR] [--no-focus] [--json] [-- PI_ARGS]
+  attach                             the deck: popup in tmux, else attach this terminal
+  kill-deck [--yes]                  kill every deck pi (after asking), then the deck server
+  pair --deck PANE [--show] [--json] the deck pi's nvim (created on first use); --show swaps it in
+  deck                               the deck's list process (run by the deck server)
 `;
+
+// ---------------------------------------------------------------- deck (deck.ts; docs/pi-deck-design.md)
+
+/** `open --deck`: ensure the deck, then `open` over deck.sock. Prints the shown pane (or the reply with --json). */
+async function deckOpenCmd(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+	const { values, positionals } = parseArgs({
+		args,
+		options: { session: { type: "string" }, cwd: { type: "string" }, "no-focus": { type: "boolean" }, json: { type: "boolean" } },
+		allowPositionals: true,
+		strict: true,
+	});
+	const deck = await import("./deck.ts");
+	await deck.startDeck({ size: await outerPopupSize(env) }, env);
+	const message: Record<string, unknown> = { type: "open", focus: !values["no-focus"], piArgs: positionals };
+	if (values.session) message.session = values.session;
+	else message.cwd = resolve((values.cwd as string | undefined) ?? process.cwd());
+	const reply = await deck.deckRequest(message, env);
+	if (values.json) process.stdout.write(`${JSON.stringify(reply)}\n`);
+	if (!reply.ok) {
+		if (!values.json) process.stderr.write(`pi-fleet: ${String(reply.error)}\n`);
+		return 1;
+	}
+	if (!values.json) process.stdout.write(`${String(reply.pane)}\n`);
+	return 0;
+}
+
+/** In a pane of some tmux (not the deck): that client's size, which the popup's size derives from. */
+async function outerPopupSize(env: NodeJS.ProcessEnv): Promise<{ width: number; height: number } | undefined> {
+	if (!env.TMUX || !env.TMUX_PANE) return undefined;
+	const deck = await import("./deck.ts");
+	if (deck.inDeck(env)) return undefined;
+	const out = await tmux(["display-message", "-p", "-t", env.TMUX_PANE, "#{client_width} #{client_height}"], env).catch(() => "");
+	const [w, h] = out.split(" ").map(Number);
+	return w && h ? deck.initialDeckSize(env, { width: w, height: h }) : undefined;
+}
+
+/**
+ * `attach`: ensure the deck; in a pane of the user's tmux open the popup (bin/pi-deck-attach) over
+ * that client; otherwise (a terminal, or already in a popup) run pi-deck-attach here.
+ */
+async function deckAttachCmd(env: NodeJS.ProcessEnv): Promise<number> {
+	const deck = await import("./deck.ts");
+	if (deck.inDeck(env)) {
+		await deck.focusList(env).catch(() => "");
+		return 0;
+	}
+	await deck.startDeck({ size: await outerPopupSize(env) }, env);
+	if (env.TMUX && env.TMUX_PANE) {
+		await spawnPopup(deck.deckPopupArgs(env.TMUX_PANE, env), env);
+		return 0;
+	}
+	const child = spawn(deck.deckAttachBin(env), [], { stdio: "inherit", env });
+	return new Promise((res) => {
+		child.once("exit", (code) => res(code ?? 1));
+		child.once("error", (e) => {
+			process.stderr.write(`pi-fleet: ${e.message}\n`);
+			res(127);
+		});
+	});
+}
+
+/** Run a display-popup on the outer server without waiting for it to close (immediate failures are reported). */
+function spawnPopup(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
+	return new Promise<void>((res, rej) => {
+		let base: string[];
+		try {
+			base = tmuxBaseArgs(env);
+		} catch (error) {
+			rej(error);
+			return;
+		}
+		const child = spawn("tmux", [...base, ...args], { env, stdio: ["ignore", "ignore", "pipe"], detached: true });
+		let err = "";
+		child.stderr?.on("data", (d) => (err += d.toString("utf8")));
+		const timer = setTimeout(() => {
+			child.stderr?.destroy();
+			child.unref();
+			res();
+		}, 300);
+		child.once("error", (e) => {
+			clearTimeout(timer);
+			rej(e);
+		});
+		child.once("exit", (code) => {
+			clearTimeout(timer);
+			if (code) rej(new Error(err.trim() || `display-popup exited ${code}`));
+			else res();
+		});
+	});
+}
+
+/** One line from the terminal (for kill-deck's question). */
+function readLine(): Promise<string> {
+	return new Promise((res) => {
+		const stdin = process.stdin;
+		let buf = "";
+		const onData = (d: Buffer) => {
+			buf += d.toString("utf8");
+			if (buf.includes("\n")) {
+				stdin.off("data", onData);
+				stdin.pause();
+				res(buf.split("\n")[0]);
+			}
+		};
+		stdin.on("data", onData);
+		stdin.once("end", () => res(buf));
+		stdin.resume();
+	});
+}
+
+async function killDeckCmd(yes: boolean, env: NodeJS.ProcessEnv): Promise<number> {
+	const deck = await import("./deck.ts");
+	if (!(await deck.deckRunning(env)) && !(await deck.deckPanes(env)).length) {
+		process.stdout.write("pi-fleet: no deck running\n");
+		return 0;
+	}
+	const live = (await deck.deckPanes(env)).filter((p) => p.role === "pi" && !p.dead && p.session);
+	for (const p of live) {
+		const entry = readStatus(p.session, env);
+		process.stdout.write(`  ${p.session.slice(0, 8)}  ${entry ? windowLabel(entry.status) : "?"}  ${p.cwd}\n`);
+	}
+	if (!yes) {
+		if (!process.stdin.isTTY) {
+			process.stderr.write("pi-fleet: kill-deck needs --yes when stdin is not a terminal\n");
+			return 1;
+		}
+		process.stdout.write(`Kill the deck and its ${live.length} session(s)? [y/N] `);
+		if (!/^y(es)?$/i.test((await readLine()).trim())) return 1;
+	}
+	const r = await deck.killDeck({}, env);
+	if (r.stillAlive.length) process.stderr.write(`pi-fleet: ${r.stillAlive.length} pi(s) did not exit in time; killed with the server\n`);
+	return r.killedServer ? 0 : 1;
+}
+
+/** `pair --deck PANE [--show] [--json]`; with --show (prefix e) errors go to the deck's message line. */
+async function deckPairCmd(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+	const { values, positionals } = parseArgs({ args, options: { show: { type: "boolean" }, json: { type: "boolean" } }, allowPositionals: true, strict: true });
+	const deck = await import("./deck.ts");
+	const pane = positionals[0] ?? env.TMUX_PANE;
+	if (!pane) throw new Error("pair --deck: no pane");
+	try {
+		const r = await deck.deckPair(pane, { show: !!values.show }, env);
+		process.stdout.write(values.json ? `${JSON.stringify(r)}\n` : `${r.nvimPane}\n`);
+		return 0;
+	} catch (error) {
+		const message = `pi-fleet: ${(error as Error).message}`;
+		if (values.show) {
+			const clients = (await deck.deckTmux(["list-clients", "-F", "#{client_name}"], env).catch(() => "")).split("\n").filter(Boolean);
+			for (const c of clients) await deck.deckTmux(["display-message", "-c", c, message], env).catch(() => "");
+		}
+		process.stderr.write(`${message}\n`);
+		return 1;
+	}
+}
 
 export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
 	const [cmd, ...rest] = argv;
 	// Fail loudly on the tmux guard (helpers that probe panes would otherwise read it as "gone").
-	if (["open", "pair", "peer", "dashboard"].includes(cmd ?? "")) tmuxBaseArgs(env);
+	if (["open", "pair", "peer", "dashboard"].includes(cmd ?? "") && !rest.includes("--deck")) tmuxBaseArgs(env);
 	const parse = (options: Record<string, { type: "string" | "boolean" }>) =>
 		parseArgs({ args: rest, options, allowPositionals: true, strict: true });
 	switch (cmd) {
 		case "open": {
+			if (rest.includes("--deck")) return deckOpenCmd(rest.filter((a) => a !== "--deck"), env);
 			const { values, positionals } = parse({ session: { type: "string" }, cwd: { type: "string" }, target: { type: "string" } });
 			const result = await openSession(
 				{ session: values.session as string | undefined, cwd: values.cwd as string | undefined, target: (values.target as string | undefined) ?? env.TMUX_PANE, piArgs: positionals },
@@ -1220,6 +1402,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
 			return 0;
 		}
 		case "pair": {
+			if (rest.includes("--deck")) return deckPairCmd(rest.filter((a) => a !== "--deck"), env);
 			const { values, positionals } = parse({ session: { type: "string" }, cwd: { type: "string" }, json: { type: "boolean" } });
 			const pane = positionals[0] ?? env.TMUX_PANE;
 			if (!pane) throw new Error("pair: no pane (not inside tmux)");
@@ -1262,6 +1445,23 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
 				return 0;
 			}
 			return dashboardTui(env);
+		}
+		case "deck-start": {
+			const deck = await import("./deck.ts");
+			const r = await deck.startDeck({}, env);
+			process.stdout.write(`${r.started ? "started" : "running"} ${deck.deckSocketPath(env)}\n`);
+			return 0;
+		}
+		case "attach":
+			return deckAttachCmd(env);
+		case "kill-deck": {
+			const { values } = parse({ yes: { type: "boolean" } });
+			return killDeckCmd(!!values.yes, env);
+		}
+		case "deck": {
+			const deck = await import("./deck.ts");
+			// The list owns stdin, signals and sockets: leave once it is done.
+			process.exit(await deck.runDeckStub(env));
 		}
 		case undefined:
 		case "help":

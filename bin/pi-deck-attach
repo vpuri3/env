@@ -1,0 +1,79 @@
+#!/bin/sh
+# pi-deck-attach: attach the pi deck, the private tmux server `tmux -L pifleet` (docs/pi-deck-design.md §8).
+# POSIX sh, no node: it is what the `prefix g` popup runs, and the popup must open at once.
+#
+#   in a display-popup of your tmux ($TMUX set, no $TMUX_PANE): record the outer `socket|client` in the deck's
+#       @deck_outer, attach (creating the deck if needed), and after the detach jump the outer client to the pane
+#       the list left in @deck_jump (an outside session), then exit, which closes the popup.
+#   in a terminal: attach (creating the deck if needed).
+#   in an ordinary tmux pane: refused (the outer tmux would eat the shared C-s prefix); use the popup.
+#
+# PI_FLEET_DECK_SOCKET (socket name, or a path with /; default pifleet), PI_FLEET_DECK_CONF (default
+# <repo>/pi/deck.tmux.conf). PI_FLEET_TMUX_GUARD refuses the `default` and `pifleet` sockets (tests).
+
+self=$0
+while [ -L "$self" ]; do
+    link=$(readlink "$self") || exit 1
+    case "$link" in
+        /*) self=$link ;;
+        *) self=${self%/*}/$link ;;
+    esac
+done
+bin_dir=$(cd "${self%/*}" && pwd -P) || exit 1
+
+sock=${PI_FLEET_DECK_SOCKET:-pifleet}
+if [ -n "${PI_FLEET_TMUX_GUARD:-}" ]; then
+    case "${sock##*/}" in
+        default | pifleet)
+            echo "pi-deck-attach: PI_FLEET_TMUX_GUARD refuses the $sock socket" >&2
+            exit 1
+            ;;
+    esac
+fi
+case "$sock" in
+    */*) set -- -S "$sock" ;;
+    *) set -- -L "$sock" ;;
+esac
+conf=${PI_FLEET_DECK_CONF:-${bin_dir%/*}/pi/deck.tmux.conf}
+
+outer=
+client=
+if [ -n "${TMUX:-}" ]; then
+    if [ -n "${TMUX_PANE:-}" ]; then
+        echo "pi-deck-attach: inside a tmux pane; open the deck with prefix g (a popup)" >&2
+        exit 1
+    fi
+    outer=$(tmux display-message -p '#{socket_path}|#{client_name}' 2>/dev/null) || outer=
+    client=${outer#*|}
+fi
+
+# The deck server's environment: ours without the outer tmux's, with the stable agent link (as tmux.conf does).
+if [ -e "$HOME/.ssh/ssh_auth_sock" ]; then
+    SSH_AUTH_SOCK=$HOME/.ssh/ssh_auth_sock
+    export SSH_AUTH_SOCK
+fi
+deck() {
+    env -u TMUX -u TMUX_PANE -u PI_FLEET_TMUX_SOCKET -u PI_FLEET_SESSION -u PI_FLEET_DECK tmux "$@"
+}
+
+# The list pane's command (deck.ts listCommand): `pi-fleet deck`, restarted in place if it exits.
+# shellcheck disable=SC2016
+list_loop='while :; do "$0" deck; sleep 0.3; done'
+if [ -n "$outer" ]; then
+    deck "$@" -f "$conf" set-option -g @deck_outer "$outer" \; new-session -A -s deck -n deck sh -c "$list_loop" "$bin_dir/pi-fleet" \
+        \; set-option -w -t =deck:=deck window-size latest
+else
+    deck "$@" -f "$conf" set-option -gu @deck_outer \; new-session -A -s deck -n deck sh -c "$list_loop" "$bin_dir/pi-fleet" \
+        \; set-option -w -t =deck:=deck window-size latest
+fi
+status=$?
+
+# An outside session picked in the list: switch the outer client there (the popup closes as we exit).
+if [ -n "$client" ]; then
+    jump=$(deck "$@" show-options -gqv @deck_jump 2>/dev/null) || jump=
+    if [ -n "$jump" ]; then
+        deck "$@" set-option -gu @deck_jump 2>/dev/null
+        tmux switch-client -c "$client" -t "$jump" \; select-window -t "$jump" \; select-pane -t "$jump" 2>/dev/null
+    fi
+fi
+exit "$status"
