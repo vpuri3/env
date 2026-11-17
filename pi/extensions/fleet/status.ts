@@ -11,7 +11,8 @@
  * State model: a pure reducer (reduce/derive) over events taken from pi:
  *   session_start→starting, then idle once startup finished
  *   agent_start/turn_start→running (sub `tool:<name>` while a tool runs)
- *   ui_prompt_start (not the fleet's own pickers) or a running ask_user_question→question
+ *   ui_prompt_start during a run (not the fleet's own pickers) or a running ask_user_question
+ *   →question (a dialog the user opens while idle is not the agent asking)
  *   agent_settled of the current run→waiting (acked=false), or error after a failed run;
  *   an aborted run (Esc) settles as already acknowledged
  *   ack: the next user `input`, or `pi-fleet seen` → idle
@@ -22,7 +23,8 @@
  *
  * `pi-fleet seen` (phase 2 CLI) acks by writing <state dir>/status/<sessionId>.seen containing
  * `{"runId":"r7"}` (see writeSeen); this module polls for it every second while waiting and
- * deletes it. The control socket (§10) deliberately has no `seen` command.
+ * deletes it. A `.seen` left over from an earlier, already acknowledged run is deleted when the
+ * next run settles. The control socket (§10) deliberately has no `seen` command.
  *
  * Readers (bar, ls, dashboard) derive `crashed`/`remote` with liveness().
  *
@@ -37,8 +39,8 @@
  */
 
 import { execFile } from "node:child_process";
-import { mkdirSync, chmodSync, readFileSync, unlinkSync, statSync } from "node:fs";
-import { writeFile, rename, unlink } from "node:fs/promises";
+import { mkdirSync, chmodSync, unlinkSync } from "node:fs";
+import { readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -351,6 +353,10 @@ export function register(pi: ExtensionAPI): void {
 	let writing: Promise<void> = Promise.resolve();
 	let ownSpan = false;
 	let generation = 0;
+	/** A checkSeen read is in flight (ticks must not overlap on slow NFS). */
+	let seenBusy = false;
+	/** Bumped when a run settles: a .seen read that started before it is stale. */
+	let settleEpoch = 0;
 
 	const active = () => shared.main && !!file;
 
@@ -422,27 +428,35 @@ export function register(pi: ExtensionAPI): void {
 		}
 	};
 
-	const checkSeen = () => {
-		if (!seenFile || derived.acked) return;
-		let text: string;
+	/** Never awaited by shutdown; a result that arrives after stop() or a settle is dropped. */
+	const checkSeen = async () => {
+		const target = seenFile;
+		if (!target || derived.acked || seenBusy) return;
+		const gen = generation;
+		const epoch = settleEpoch;
+		seenBusy = true;
 		try {
-			text = readFileSync(seenFile, "utf8");
+			let text: string;
+			try {
+				text = await readFile(target, "utf8");
+			} catch {
+				return;
+			}
+			await unlink(target).catch(() => {});
+			if (gen !== generation || epoch !== settleEpoch) return;
+			let runId: string | undefined;
+			try {
+				const data = JSON.parse(text);
+				if (typeof data?.runId === "string") runId = data.runId;
+			} catch {
+				// an empty or odd file acks whatever is waiting
+			}
+			apply({ type: "seen", runId });
 		} catch {
-			return;
+			// never let a poll crash pi
+		} finally {
+			seenBusy = false;
 		}
-		try {
-			unlinkSync(seenFile);
-		} catch {
-			// gone already
-		}
-		let runId: string | undefined;
-		try {
-			const data = JSON.parse(text);
-			if (typeof data?.runId === "string") runId = data.runId;
-		} catch {
-			// an empty or odd file acks whatever is waiting
-		}
-		apply({ type: "seen", runId });
 	};
 
 	const stop = () => {
@@ -484,11 +498,17 @@ export function register(pi: ExtensionAPI): void {
 		derived = derive(model);
 		since = new Date().toISOString();
 		let cost = 0;
-		let last: string | undefined;
 		for (const entry of sm.getEntries() as any[]) {
-			if (entry.type !== "message") continue;
-			cost += messageCost(entry.message);
-			last = assistantText(entry.message) ?? last;
+			if (entry.type === "message") cost += messageCost(entry.message);
+		}
+		let last: string | undefined;
+		try {
+			const branch = sm.getBranch() as any[];
+			for (let i = branch.length - 1; i >= 0 && last === undefined; i--) {
+				if (branch[i]?.type === "message") last = assistantText(branch[i].message);
+			}
+		} catch {
+			// no branch: no lastAssistant
 		}
 		const pane = process.env.TMUX_PANE;
 		const socket = process.env.TMUX?.split(",")[0];
@@ -519,6 +539,13 @@ export function register(pi: ExtensionAPI): void {
 			current: () => (file ? { ...file } : undefined),
 		};
 		refreshMeta();
+		try {
+			fold.update(sm.getBranch() as any);
+		} catch {
+			// refreshSubagents retries
+		}
+		// Threads a previous (crashed) process left running are not running now (registry.ts).
+		fold.markInterrupted();
 		refreshSubagents();
 		flush();
 		void gitRoot(c.cwd).then((repo) => {
@@ -536,7 +563,7 @@ export function register(pi: ExtensionAPI): void {
 		ticks = 0;
 		ticker = setInterval(() => {
 			ticks++;
-			checkSeen();
+			void checkSeen();
 			if (ticks % (FOLD_MS / 1000) === 0 && (model.working > 0 || model.runActive)) refreshSubagents();
 			if (ticks % (HEARTBEAT_MS / 1000) === 0) flush();
 		}, 1000);
@@ -591,17 +618,22 @@ export function register(pi: ExtensionAPI): void {
 		refreshSubagents();
 	});
 	pi.on("agent_settled", async (event, c) => {
+		// A .seen not consumed yet belongs to an earlier, acknowledged run: it must not ack this one.
+		const runId = model.runId;
+		settleEpoch++;
+		if (active() && seenFile) await unlink(seenFile).catch(() => {});
 		ctx = c;
 		refreshMeta();
 		refreshSubagents();
-		apply({ type: "agent_settled", runId: model.runId, aborted: event.aborted });
+		apply({ type: "agent_settled", runId, aborted: event.aborted });
 	});
 	pi.on("ui_prompt_start", async () => {
 		if (shared.ownPrompts > 0) {
 			ownSpan = true;
 			return;
 		}
-		apply({ type: "prompt_start" });
+		// Only the agent asks: a dialog the user opens while idle is not a question (§5).
+		if (model.runActive) apply({ type: "prompt_start" });
 	});
 	pi.on("ui_prompt_end", async () => {
 		if (ownSpan) {

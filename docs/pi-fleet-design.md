@@ -89,14 +89,14 @@ The fleet extension in each main pi writes its status file atomically (tmp + ren
 |---|---|---|
 | `starting` | ⟳ | `session_start` |
 | `running` | ● | `agent_start`/`turn_start`; `sub`=`tool:<name>`. Also when idle but subagents are working (`sub`=`bg 2`) |
-| `question` | ? | `ui_prompt_start` (except the fleet's own pickers) or `ask_user_question` running |
+| `question` | ? | `ui_prompt_start` during a run (except the fleet's own pickers) or `ask_user_question` running |
 | `waiting` | ◐ | `agent_settled` for the current `runId`, `acked=false` |
 | `idle` | ○ | waiting + acknowledged: next `input` event, or `pi-fleet seen` from the tmux `session-window-changed` hook |
 | `error` | ✕ | settled after a failed run |
 | `crashed` (derived) | ✕ | same host and pid dead, or heartbeat older than 60 s |
 | `remote` (derived) | dimmed | other host, heartbeat fresh |
 
-Subagent counts fold registry entries from `ctx.sessionManager.getEntries()`. The fold is incremental and runs on `turn_end`, `agent_settled`, and every 3 s while any thread runs. Mapping: starting/running→working, paused→waiting, completed/stopped→done, failed→error. For sessions that are not running, the reader folds the JSONL and shows dead-but-working threads as **interrupted**. A clean quit deletes the file. Entering `waiting`, `question` or `error` rings BEL.
+Subagent counts fold registry entries from `ctx.sessionManager.getEntries()`. The fold is incremental and runs on `turn_end`, `agent_settled`, and every 3 s while any thread runs. Mapping: starting/running→working, paused→waiting, completed/stopped→done, failed→error. For sessions that are not running, the reader folds the JSONL and shows dead-but-working threads as **interrupted**. A dialog the user opens while the agent is idle (no run active) is not a `question`: only prompts raised during a run count. A clean quit deletes the file. Entering `waiting`, `question` or `error` rings BEL.
 
 ## 6. Session index and grouping
 

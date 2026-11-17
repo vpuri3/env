@@ -124,7 +124,8 @@ test("question from a UI prompt and from ask_user_question, back to running afte
 	]);
 	assert.deepEqual(r.states.slice(1), ["running", "question", "running", "question(ask)", "running"]);
 	assert.deepEqual(r.bells, ["question", "question"]);
-	// A prompt while idle (e.g. an extension dialog) is a question too.
+	// The reducer treats any prompt as a question; register() only feeds prompt_start during a
+	// run (see status-handlers.test.ts).
 	assert.equal(run([{ type: "ready" }, { type: "prompt_start" }]).derived.state, "question");
 });
 

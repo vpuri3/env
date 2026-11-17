@@ -105,6 +105,23 @@ test("malformed entries and foreign-root deltas are skipped and flagged, never t
 	assert.deepEqual(states(fold), ["/z:completed"]);
 });
 
+test("markInterrupted: running threads of a dead process become paused; later deltas override", () => {
+	const pre = [full([["/a", "running"], ["/b", "starting"], ["/c", "completed"]])];
+	const fold = new RegistryFold().update(pre).markInterrupted();
+	assert.deepEqual(states(fold), ["/a:paused", "/b:paused", "/c:completed"]);
+	assert.deepEqual(fold.counts(), { working: 0, waiting: 2, done: 1, error: 0 });
+	const resumed = [...pre, delta([{ path: "/a", view: { state: "running" } }])];
+	fold.update(resumed);
+	assert.deepEqual(states(fold), ["/a:running", "/b:paused", "/c:completed"]);
+	// A refold (e.g. /tree) keeps the mark for the pre-interruption entries only.
+	const other = [...pre, { ...delta([{ path: "/b", view: { state: "running" } }]), id: "other" }];
+	assert.deepEqual(states(fold.update(other)), ["/a:paused", "/b:running", "/c:completed"]);
+	assert.deepEqual(states(fold.update(pre)), ["/a:paused", "/b:paused", "/c:completed"]);
+	// reset() (a new session) forgets it.
+	fold.reset();
+	assert.deepEqual(states(fold.update(pre)), ["/a:running", "/b:starting", "/c:completed"]);
+});
+
 test("countSubagents with no threads", () => {
 	assert.deepEqual(countSubagents([]), { working: 0, waiting: 0, done: 0, error: 0 });
 });

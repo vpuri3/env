@@ -9,6 +9,9 @@
  *     `state` (pi-subagent-manager 1.7.1 src/orch/registry.ts, RegistryWriter.threadChange).
  *   - countSubagents() maps thread states to the status file's `subagents` counts.
  *   - isSubagentSession() recognises a subagent pi (skipped by status.ts).
+ *   - markInterrupted(): after a crash + resume, threads the dead process left starting/running
+ *     are not running. pi-subagent-manager marks them paused in memory only (nothing persisted),
+ *     so status.ts calls this once at session_start; later deltas still override.
  * Phase 4 adds the session index scan (`~/.pi/agent/sessions/*\/*.jsonl`, §6) here.
  *
  * The registry format is private to pi-subagent-manager. The fold never throws: unknown or
@@ -84,13 +87,26 @@ export class RegistryFold {
 	formatError = false;
 	private foldedCount = 0;
 	private lastId: string | undefined;
+	/** Ids of the registry entries applied in the current fold, in order. */
+	private registryIds: string[] = [];
+	/** Ids of the registry entries folded when markInterrupted() was called. */
+	private interruptedIds: Set<string> | undefined;
+	/** Refolding: pause live threads before the first registry entry not in interruptedIds. */
+	private pausePending = false;
 
 	reset(): void {
+		this.refold();
+		this.interruptedIds = undefined;
+		this.pausePending = false;
+	}
+
+	private refold(): void {
 		this.threads = new Map();
 		this.rootSessionId = undefined;
 		this.formatError = false;
 		this.foldedCount = 0;
 		this.lastId = undefined;
+		this.registryIds = [];
 	}
 
 	update(branch: readonly EntryLike[]): this {
@@ -98,15 +114,44 @@ export class RegistryFold {
 			this.foldedCount > 0 &&
 			branch.length >= this.foldedCount &&
 			branch[this.foldedCount - 1]?.id === this.lastId;
-		if (!prefixKept) this.reset();
+		if (!prefixKept) {
+			this.refold();
+			// The pre-interruption registry entries are a prefix of the registry entries of any
+			// branch (an entry's ancestors are older), so re-pause where the branch leaves them.
+			this.pausePending = this.interruptedIds !== undefined;
+		}
 		for (let i = this.foldedCount; i < branch.length; i++) this.apply(branch[i]!);
+		if (this.pausePending) this.pauseLive();
 		this.foldedCount = branch.length;
 		this.lastId = branch.at(-1)?.id;
 		return this;
 	}
 
+	/**
+	 * The process that ran the threads folded so far is gone: their starting/running threads
+	 * are `paused` (what pi-subagent-manager shows after a resume). Deltas folded later still
+	 * override, and the mark survives a refold (e.g. /tree) until reset().
+	 */
+	markInterrupted(): this {
+		this.interruptedIds = new Set(this.registryIds);
+		this.pausePending = false;
+		this.pauseLive();
+		return this;
+	}
+
+	private pauseLive(): void {
+		this.pausePending = false;
+		for (const [path, thread] of this.threads) {
+			if (thread.state === "starting" || thread.state === "running") this.threads.set(path, { ...thread, state: "paused" });
+		}
+	}
+
 	private apply(entry: EntryLike): void {
 		if (entry.type !== "custom") return;
+		if (entry.customType !== REGISTRY_ENTRY && entry.customType !== REGISTRY_DELTA_ENTRY) return;
+		const id = typeof entry.id === "string" ? entry.id : "";
+		if (this.pausePending && !this.interruptedIds?.has(id)) this.pauseLive();
+		this.registryIds.push(id);
 		if (entry.customType === REGISTRY_ENTRY) {
 			const data = entry.data;
 			if (!isObject(data) || data.version !== 1 || !Array.isArray(data.threads)) {
