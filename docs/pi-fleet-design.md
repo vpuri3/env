@@ -297,7 +297,7 @@ The fleet binds nothing at the pi editor level, so Tab (follow-up) and Up (deque
 5. **nvim bridge.** `pi_fleet.lua` and `nvim.ts`: readonly and re-readonly, winbar, `:PiHelp`, `:w!`/`:w!!` with the `<CR>` mapping, `agent_changed`, `checktime_all`, `:PiDiff`/`:PiFocus`. Test: headless nvim; `feedkeys(":w!!\r")` sends `mode:"steer"` to a test socket, and in an unpaired nvim `:w!!` is not rewritten; `nvim --headless -c 'qa!'` stays clean.
 6. **`/view`.** `view.ts`, `files.ts`, `tool-output.ts`; remove `/view` from compact-tools. Accept: tiered completion under 50 ms on 50k paths, `tool:N`, bare picker, nvim gets focus, compact-tools rendering unchanged. Test: ranker unit tests; RPC `/view src/x.py:10` checks the nvim buffer and cursor; diff compact-tools render output before and after.
 7. **Edit delivery.** `edits.ts`: the §11 table, coalescing, cap, widget, write guard. Test: policy unit test, then RPC pi plus headless nvim with writes during a stubbed run.
-8. **Leader keys.** `vim-mode.ts`: pending-leader state machine, decided maps, and proposals behind a list; the `pi-fleet:action` handler in `index.ts`-registered `leader.ts`, a stub from phase 1. Test: feed key strings to the wrapped editor; check timeout and replay (`Space j` selects); INSERT mode unaffected; events emitted.
+8. **Leader keys.** `vim-mode.ts`: pending-leader state machine, all maps in §12; the `pi-fleet:action` handler in `index.ts`-registered `leader.ts`, a stub from phase 1. Test: feed key strings to the wrapped editor; check timeout and cancel (`Space j` does nothing, `v j` selects); INSERT mode unaffected; events emitted.
 9. **Docs and bootstrap.** `docs/tmux.md`, `docs/nvim.md`, the README section, the vim-mode header comment, and a `tests/bootstrap_test.sh` check for `bin/pi-fleet` and the linked `extensions/fleet/index.ts`.
 
 ## 15. Risks
@@ -319,5 +319,5 @@ The fleet binds nothing at the pi editor level, so Tab (follow-up) and Up (deque
 | nvim pane | Always created at session start |
 | `/view` | One command: `/view FILE` (session-touched files first, then the repo) and `/view tool:N`. No `/output`. Focus moves to nvim |
 | nvim saves | Read-only buffers. `:w!` = save + note (next message, or steer if the agent is working on that file; blind `write` blocked). `:w!!` = save + interrupt (steer now). Explained by winbar and `:PiHelp` |
-| Leader keys | Space leader in vim-mode NORMAL: `Space e` `/sessions`, `Space f f` file picker into nvim; others are proposals (§12) |
+| Leader keys | Space leader in vim-mode NORMAL: `Space e` `/sessions`, `Space f f` file picker into nvim, plus `f g` `f b` `f s` `f h` `g s` `t`; selection on `v`/`V` (§12) |
 | Keys | No Alt, no Ctrl+Shift; the fleet uses neither Tab nor Up |
