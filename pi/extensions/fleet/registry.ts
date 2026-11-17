@@ -12,14 +12,30 @@
  *   - markInterrupted(): after a crash + resume, threads the dead process left starting/running
  *     are not running. pi-subagent-manager marks them paused in memory only (nothing persisted),
  *     so status.ts calls this once at session_start; later deltas still override.
- * Phase 4 adds the session index scan (`~/.pi/agent/sessions/*\/*.jsonl`, §6) here.
+ *
+ * Phase 4: the session index (§6), SessionIndex below.
+ *   - scan() lists `<sessions dir>/*\/*.jsonl` and classifies each file from its first 16 KB
+ *     (classifyHead): id, cwd, parentSession, name, first user message, and whether it is a
+ *     subagent (thread entry, or `parentSession` + a `<type> /<path>` name) or a main (forks are
+ *     mains). Results are cached by (path, size, mtime) in `<cache dir>/index.json`.
+ *   - detail() folds a whole file (sessionDetail): current name, subagent threads (the same
+ *     RegistryFold over the active branch), last assistant text. Cached the same way.
+ *   - repoOf(cwd): `git -C cwd rev-parse --show-toplevel`, else cwd; cached per cwd.
+ *   The sessions dir is $PI_CODING_AGENT_SESSION_DIR, else $PI_CODING_AGENT_DIR/sessions, else
+ *   ~/.pi/agent/sessions; the cache dir is $PI_FLEET_CACHE_DIR, else $XDG_CACHE_HOME/pi-fleet,
+ *   else ~/.cache/pi-fleet. Readers merge live status files over this (sessions-view.ts).
  *
  * The registry format is private to pi-subagent-manager. The fold never throws: unknown or
  * malformed entries set `formatError` and unknown states count as `unknown` ("?" in the UI).
  *
- * Pure module (type-only imports) so node can import it directly in tests and the CLI.
+ * Only node: imports at runtime (pi types are type-only), so node can import it directly in
+ * tests and the CLI.
  */
 
+import { execFileSync } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export const REGISTRY_ENTRY = "pi-subagent:registry:v1";
@@ -283,6 +299,297 @@ export function isSubagentSession(session: SessionLike): boolean {
 	return typeof name === "string" && SUBAGENT_NAME.test(name);
 }
 
+// ---------------------------------------------------------------- session index (§6)
+
+export const HEAD_BYTES = 16 * 1024;
+const INDEX_VERSION = 1;
+const TASK_CHARS = 200;
+const LAST_ASSISTANT_CHARS = 2000;
+
+export function sessionsRoot(env: NodeJS.ProcessEnv = process.env): string {
+	if (env.PI_CODING_AGENT_SESSION_DIR) return env.PI_CODING_AGENT_SESSION_DIR;
+	return join(env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "sessions");
+}
+
+export function cacheDir(env: NodeJS.ProcessEnv = process.env): string {
+	if (env.PI_FLEET_CACHE_DIR) return env.PI_FLEET_CACHE_DIR;
+	return join(env.XDG_CACHE_HOME || join(homedir(), ".cache"), "pi-fleet");
+}
+
+/** What the first 16 KB of a session file tell. */
+export interface SessionHead {
+	id?: string;
+	cwd?: string;
+	parentSession?: string;
+	/** Header timestamp (creation), ms. */
+	created?: number;
+	name?: string;
+	firstMessage?: string;
+	subagent: boolean;
+	/** Thread entry of a subagent: the main session id and the thread path. */
+	rootId?: string;
+	threadPath?: string;
+}
+
+/** What a whole session file tells. */
+export interface SessionDetail {
+	name?: string;
+	threads: FoldedThread[];
+	formatError: boolean;
+	lastAssistant?: string;
+}
+
+export interface IndexEntry extends SessionHead {
+	path: string;
+	size: number;
+	mtimeMs: number;
+	detail?: SessionDetail & { size: number; mtimeMs: number };
+}
+
+function textOf(content: unknown): string | undefined {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return undefined;
+	const parts = content.filter((c) => isObject(c) && c.type === "text" && typeof c.text === "string").map((c) => c.text as string);
+	return parts.length ? parts.join("\n") : undefined;
+}
+
+function oneLine(text: string, max: number): string {
+	const s = text.replace(/\s+/g, " ").trim();
+	return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+/**
+ * Classify a session from the start of its file (§6). `complete` says the text is the whole
+ * file; otherwise the last (possibly cut) line is ignored.
+ */
+export function classifyHead(text: string, complete = false): SessionHead {
+	const lines = text.split("\n");
+	if (!complete) lines.pop();
+	const entries = parseJsonl(lines.join("\n"));
+	const header = entries[0]?.type === "session" ? entries[0] : undefined;
+	const head: SessionHead = { subagent: false };
+	if (header) {
+		if (typeof header.id === "string") head.id = header.id;
+		if (typeof header.cwd === "string") head.cwd = header.cwd;
+		if (typeof header.parentSession === "string") head.parentSession = header.parentSession;
+		const created = typeof header.timestamp === "string" ? Date.parse(header.timestamp) : NaN;
+		if (Number.isFinite(created)) head.created = created;
+	}
+	for (const entry of entries) {
+		if (entry.type === "session_info" && typeof entry.name === "string") head.name = entry.name;
+		else if (entry.type === "custom" && entry.customType === THREAD_ENTRY && isObject(entry.data)) {
+			if (typeof entry.data.rootId === "string") head.rootId = entry.data.rootId;
+			if (typeof entry.data.threadPath === "string") head.threadPath = entry.data.threadPath;
+		} else if (head.firstMessage === undefined && entry.type === "message" && isObject(entry.message) && entry.message.role === "user") {
+			const text = textOf(entry.message.content);
+			if (text?.trim()) head.firstMessage = oneLine(text, 120);
+		}
+	}
+	head.subagent = isSubagentSession({
+		getHeader: () => (head.parentSession ? { parentSession: head.parentSession } : {}),
+		getEntries: () => entries,
+		getSessionName: () => head.name,
+	});
+	return head;
+}
+
+/** Fold a whole session file: name, subagent threads of the active branch, last assistant text. */
+export function sessionDetail(text: string): SessionDetail {
+	const entries = parseJsonl(text);
+	const branch = branchOf(entries);
+	const fold = new RegistryFold().update(branch);
+	let name: string | undefined;
+	for (const entry of entries) if (entry.type === "session_info" && typeof entry.name === "string") name = entry.name;
+	let lastAssistant: string | undefined;
+	for (let i = branch.length - 1; i >= 0 && lastAssistant === undefined; i--) {
+		const entry = branch[i]!;
+		if (entry.type !== "message" || !isObject(entry.message) || entry.message.role !== "assistant") continue;
+		const text = textOf(entry.message.content)?.trim();
+		if (text) lastAssistant = text.length > LAST_ASSISTANT_CHARS ? `…${text.slice(-LAST_ASSISTANT_CHARS)}` : text;
+	}
+	const threads = [...fold.threads.values()].map((t) => (t.task && t.task.length > TASK_CHARS ? { ...t, task: oneLine(t.task, TASK_CHARS) } : t));
+	return { name, threads, formatError: fold.formatError, lastAssistant };
+}
+
+function readHead(path: string): { text: string; complete: boolean } {
+	const fd = openSync(path, "r");
+	try {
+		const buf = Buffer.alloc(HEAD_BYTES);
+		const n = readSync(fd, buf, 0, buf.length, 0);
+		return { text: buf.subarray(0, n).toString("utf8"), complete: n < HEAD_BYTES };
+	} finally {
+		closeSync(fd);
+	}
+}
+
+const FIRST_MESSAGE_BYTES = 1024 * 1024;
+
+/** The first user message within the first 1 MB of a session file. */
+function firstUserMessage(path: string): string | undefined {
+	let text: string;
+	const fd = openSync(path, "r");
+	try {
+		const buf = Buffer.alloc(FIRST_MESSAGE_BYTES);
+		const n = readSync(fd, buf, 0, buf.length, 0);
+		text = buf.subarray(0, n).toString("utf8");
+	} finally {
+		closeSync(fd);
+	}
+	for (const line of text.split("\n")) {
+		if (!line.includes('"user"')) continue;
+		const [entry] = parseJsonl(line);
+		if (entry?.type !== "message" || !isObject(entry.message) || entry.message.role !== "user") continue;
+		const t = textOf(entry.message.content);
+		if (t?.trim()) return oneLine(t, 120);
+	}
+	return undefined;
+}
+
+interface IndexFile {
+	v: number;
+	files: Record<string, IndexEntry>;
+	repos: Record<string, string>;
+}
+
+/**
+ * The session index of one process (the dashboard, or one /sessions picker). scan() is cheap
+ * when nothing changed: one readdir per project dir and one stat per file.
+ */
+export class SessionIndex {
+	readonly root: string;
+	readonly cachePath: string;
+	private files = new Map<string, IndexEntry>();
+	private repos = new Map<string, string>();
+	private dirty = false;
+	private env: NodeJS.ProcessEnv;
+
+	constructor(env: NodeJS.ProcessEnv = process.env) {
+		this.env = env;
+		this.root = sessionsRoot(env);
+		this.cachePath = join(cacheDir(env), "index.json");
+		try {
+			const cached = JSON.parse(readFileSync(this.cachePath, "utf8")) as IndexFile;
+			if (cached?.v === INDEX_VERSION) {
+				for (const [path, entry] of Object.entries(cached.files ?? {})) this.files.set(path, entry);
+				for (const [cwd, repo] of Object.entries(cached.repos ?? {})) this.repos.set(cwd, repo);
+			}
+		} catch {
+			// no or unreadable cache: rebuild
+		}
+	}
+
+	/** All session files, classified. Files that vanished are dropped. */
+	scan(): IndexEntry[] {
+		const seen = new Set<string>();
+		let dirs: string[];
+		try {
+			dirs = readdirSync(this.root);
+		} catch {
+			dirs = [];
+		}
+		for (const dir of dirs) {
+			let names: string[];
+			try {
+				names = readdirSync(join(this.root, dir));
+			} catch {
+				continue;
+			}
+			for (const name of names) {
+				if (!name.endsWith(".jsonl")) continue;
+				const path = join(this.root, dir, name);
+				let st;
+				try {
+					st = statSync(path);
+				} catch {
+					continue;
+				}
+				if (!st.isFile()) continue;
+				seen.add(path);
+				const cached = this.files.get(path);
+				if (cached && cached.size === st.size && cached.mtimeMs === st.mtimeMs) continue;
+				let head: SessionHead;
+				try {
+					const { text, complete } = readHead(path);
+					head = classifyHead(text, complete);
+				} catch {
+					continue;
+				}
+				// The first user message can sit behind a large system entry: look further, once.
+				if (!head.firstMessage) head.firstMessage = cached?.firstMessage ?? (st.size > HEAD_BYTES ? firstUserMessage(path) : undefined);
+				// Keep the old detail: detail() refreshes it when asked, by its own size/mtime.
+				this.files.set(path, { ...head, path, size: st.size, mtimeMs: st.mtimeMs, detail: cached?.detail });
+				this.dirty = true;
+			}
+		}
+		for (const path of [...this.files.keys()]) {
+			if (!seen.has(path)) {
+				this.files.delete(path);
+				this.dirty = true;
+			}
+		}
+		return [...this.files.values()];
+	}
+
+	get(path: string): IndexEntry | undefined {
+		return this.files.get(path);
+	}
+
+	/** The folded detail of a scanned file, recomputed only when its size or mtime changed. */
+	detail(entry: IndexEntry): SessionDetail | undefined {
+		const current = this.files.get(entry.path) ?? entry;
+		const d = current.detail;
+		if (d && d.size === current.size && d.mtimeMs === current.mtimeMs) return d;
+		let text: string;
+		try {
+			text = readFileSync(current.path, "utf8");
+		} catch {
+			return d;
+		}
+		current.detail = { ...sessionDetail(text), size: current.size, mtimeMs: current.mtimeMs };
+		this.files.set(current.path, current);
+		this.dirty = true;
+		return current.detail;
+	}
+
+	/** `git rev-parse --show-toplevel` of cwd, else cwd. Cached per cwd. */
+	repoOf(cwd: string): string {
+		const cached = this.repos.get(cwd);
+		if (cached !== undefined) return cached;
+		let repo = cwd;
+		if (existsSync(cwd)) {
+			try {
+				repo =
+					execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+						encoding: "utf8",
+						timeout: 3000,
+						stdio: ["ignore", "pipe", "ignore"],
+						env: this.env,
+					}).trim() || cwd;
+			} catch {
+				// not a repo
+			}
+		}
+		this.repos.set(cwd, repo);
+		this.dirty = true;
+		return repo;
+	}
+
+	/** Write the cache (atomically, 0600 in a 0700 dir) if anything changed. Never throws. */
+	save(): void {
+		if (!this.dirty) return;
+		try {
+			mkdirSync(cacheDir(this.env), { recursive: true, mode: 0o700 });
+			const data: IndexFile = { v: INDEX_VERSION, files: Object.fromEntries(this.files), repos: Object.fromEntries(this.repos) };
+			const tmp = `${this.cachePath}.${process.pid}.tmp`;
+			writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
+			renameSync(tmp, this.cachePath);
+			this.dirty = false;
+		} catch {
+			// a cache only
+		}
+	}
+}
+
 export function register(_pi: ExtensionAPI): void {
-	// Phase 4: session index scan. The fold above is used by status.ts.
+	// Nothing to register: status.ts uses the fold, sessions-view.ts and the CLI the index.
 }

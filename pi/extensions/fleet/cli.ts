@@ -28,8 +28,8 @@
  *        it has modified buffers. Non-zero → `pi exited (N). r restart · q close`. A SIGTERM
  *        to run-pi is forwarded to pi and run-pi exits 143 (no prompt).
  *   dashboard [--window [--pane P]]
- *        --window: toggle/create the `fleet` window. The TUI itself is phase 4; until then a
- *        placeholder shows `ls` every second.
+ *        The sessions dashboard (sessions-view.ts, full-screen with a live preview; pi-tui
+ *        from pi's install, see locatePiPackages). --window: toggle/create the `fleet` window.
  *
  * Pairing is by pane id, stored in pane options (they move with the pane on swap/move):
  *   pi pane:   @pi_fleet_role=pi   @pi_fleet_session=ID @pi_fleet_peer=%nvim
@@ -831,11 +831,133 @@ async function dashboardWindow(pane: string | undefined, env: NodeJS.ProcessEnv)
 	await tmux(["set-option", "-w", "-t", window, "@pi_fleet_dashboard", "1"], env);
 }
 
-/** Placeholder until phase 4's dashboard: `ls` every second, q quits. */
-async function dashboardPlaceholder(env: NodeJS.ProcessEnv): Promise<number> {
+/*
+ * The dashboard TUI (design §9) is SessionsView (sessions-view.ts) full-screen with a preview,
+ * rendered by pi's own pi-tui (TuiMainScreen + ProcessTerminal on the alternate screen). pi-tui
+ * is plain JS under pi's install, so node imports it without type stripping; a module resolve
+ * hook maps `@earendil-works/*` to that install, which lets sessions-view.ts import pi-tui the
+ * same way inside pi and here. Without a pi install the dashboard falls back to `ls` output.
+ */
+
+/**
+ * The node_modules dir holding pi's `@earendil-works/pi-tui`: $PI_FLEET_PI_PACKAGES, else from
+ * `realpath(which pi)`: the managed launcher (<agent>/bin/pi → <agent>/install/current-version
+ * → install/releases/<v>/node_modules), or the node_modules above an npm-installed pi.
+ */
+export function locatePiPackages(env: NodeJS.ProcessEnv = process.env): string | undefined {
+	const has = (dir: string) => existsSync(join(dir, "@earendil-works", "pi-tui", "package.json"));
+	if (env.PI_FLEET_PI_PACKAGES) return has(env.PI_FLEET_PI_PACKAGES) ? env.PI_FLEET_PI_PACKAGES : undefined;
+	const pi = which("pi", env);
+	if (!pi) return undefined;
+	let real: string;
+	try {
+		real = realpathSync(pi);
+	} catch {
+		return undefined;
+	}
+	const agent = resolve(real, "..", "..");
+	try {
+		const version = readFileSync(join(agent, "install", "current-version"), "utf8").trim();
+		const dir = join(agent, "install", "releases", version, "node_modules");
+		if (/^[\w.+-]+$/.test(version) && has(dir)) return dir;
+	} catch {
+		// not the managed launcher
+	}
+	for (let dir = resolve(real, ".."); ; dir = resolve(dir, "..")) {
+		if (basename(dir) === "node_modules" && has(dir)) return dir;
+		if (has(join(dir, "node_modules"))) return join(dir, "node_modules");
+		if (dir === resolve(dir, "..")) return undefined;
+	}
+}
+
+/** Resolve `@earendil-works/*` imports from `packages` (a node_modules dir) in this process. */
+export async function usePiPackages(packages: string): Promise<void> {
+	const { registerHooks } = await import("node:module");
+	const { pathToFileURL } = await import("node:url");
+	const parentURL = pathToFileURL(join(packages, "pi-fleet-resolve.js")).href;
+	registerHooks({
+		resolve(specifier, context, next) {
+			if (specifier.startsWith("@earendil-works/")) return next(specifier, { ...context, parentURL });
+			return next(specifier, context);
+		},
+	});
+}
+
+async function inDashboardWindow(env: NodeJS.ProcessEnv): Promise<boolean> {
+	if (!env.TMUX_PANE) return false;
+	return (await tmux(["show-options", "-wqv", "-t", env.TMUX_PANE, "@pi_fleet_dashboard"], env).catch(() => "")) === "1";
+}
+
+/**
+ * The dashboard TUI. q/Esc: in the `fleet` window back to the last window (the dashboard keeps
+ * running), elsewhere (the `prefix G` popup) quit. ctrl+c always quits. A popup also quits once
+ * Enter/x/n moved focus to another window.
+ */
+async function dashboardTui(env: NodeJS.ProcessEnv): Promise<number> {
+	const packages = locatePiPackages(env);
+	if (!packages) {
+		process.stderr.write("pi-fleet: pi's pi-tui not found (set PI_FLEET_PI_PACKAGES); showing `ls`\n");
+		return dashboardPlain(env);
+	}
+	await usePiPackages(packages);
+	const piTui = await import("@earendil-works/pi-tui");
+	const sv = await import("./sessions-view.ts");
+	const terminal = new piTui.ProcessTerminal();
+	const tui = new piTui.TuiMainScreen(terminal);
+	let finish: (code: number) => void = () => {};
+	const finished = new Promise<number>((res) => (finish = res));
+	let view: InstanceType<typeof sv.SessionsView>;
+	const onAction = async (action: import("./sessions-view.ts").SessionsAction) => {
+		const popup = !(await inDashboardWindow(env));
+		if (action.type === "close") {
+			if (popup) finish(0);
+			else {
+				const me = await paneInfo(env.TMUX_PANE ?? "", env);
+				await tmuxOk(["last-window", ...(me ? ["-t", me.session] : [])], env);
+			}
+			return;
+		}
+		const moved = await sv.runAction(action, (message) => view.flash(message), { env, target: env.TMUX_PANE });
+		if (moved && popup) finish(0);
+		view.refresh();
+		tui.requestRender();
+	};
+	view = new sv.SessionsView({
+		source: sv.fleetSource(env),
+		style: sv.ansiStyle,
+		mode: "dashboard",
+		height: () => terminal.rows,
+		preview: sv.panePreview(env),
+		requestRender: () => tui.requestRender(),
+		onAction: (action) => void onAction(action),
+	});
+	tui.addInputListener((data: string) => {
+		if (data !== "\x03") return undefined;
+		finish(0);
+		return { consume: true };
+	});
+	const quit = () => finish(0);
+	process.once("SIGTERM", quit);
+	process.once("SIGHUP", quit);
+	process.stdout.write("\x1b[?1049h\x1b[H");
+	tui.addChild(view);
+	tui.setFocus(view);
+	tui.start();
+	view.start();
+	const code = await finished;
+	view.dispose();
+	tui.stop();
+	process.stdout.write("\x1b[?1049l");
+	process.off("SIGTERM", quit);
+	process.off("SIGHUP", quit);
+	return code;
+}
+
+/** Fallback without pi-tui: `ls` every second, q quits. */
+async function dashboardPlain(env: NodeJS.ProcessEnv): Promise<number> {
 	const draw = async () => {
 		const text = await ls(false, env);
-		process.stdout.write(`\x1b[2J\x1b[H pi-fleet  ${hostname()}   (placeholder dashboard; q quits)\r\n\r\n${text.replace(/\n/g, "\r\n")}\r\n`);
+		process.stdout.write(`\x1b[2J\x1b[H pi-fleet  ${hostname()}   (no pi-tui: plain list; q quits)\r\n\r\n${text.replace(/\n/g, "\r\n")}\r\n`);
 	};
 	await draw();
 	const timer = setInterval(() => void draw(), 1000);
@@ -923,7 +1045,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
 				await dashboardWindow((values.pane as string | undefined) ?? env.TMUX_PANE, env);
 				return 0;
 			}
-			return dashboardPlaceholder(env);
+			return dashboardTui(env);
 		}
 		case undefined:
 		case "help":
