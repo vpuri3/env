@@ -496,6 +496,25 @@ function fakePi() {
 	return { pi, events, fire };
 }
 
+test("nvim.ts: user_edit is refused with ok:false \"session ending\" once edits.ts is shut down", () => {
+	const { pi, events } = fakePi();
+	const control: Record<string, Function> = {};
+	fleetOf(pi).main = true;
+	(fleetOf(pi) as any).control = { on: (type: string, h: Function) => (control[type] = h) };
+	register(pi);
+	const good = { type: "user_edit", v: 1, mode: "note", path: "/w/a.py", diff: "@@ -1 +1 @@\n-a\n+b\n", added: 1, removed: 1, session: "" };
+	// edits.ts not loaded (editsLive undefined): forwarded as before
+	assert.equal(control[USER_EDIT](good), undefined);
+	fleetOf(pi).editsLive = true;
+	assert.equal(control[USER_EDIT](good), undefined);
+	assert.equal(events.length, 2);
+	// session_shutdown ran in edits.ts: control.ts turns the throw into {"ok":false,"error":"session ending"}
+	fleetOf(pi).editsLive = false;
+	assert.throws(() => control[USER_EDIT](good), /^Error: session ending$/);
+	assert.throws(() => control[USER_EDIT]({ ...good, mode: "steer" }), /session ending/);
+	assert.equal(events.length, 2, "nothing forwarded while ending");
+});
+
 nvimTest("nvim.ts: edit/write tool results reload the paired nvim; user_edit handler", async () => {
 	const runtime = mkdtempSync(join(tmpdir(), "pfr-"));
 	const saved = process.env.PI_FLEET_RUNTIME_DIR;

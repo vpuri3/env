@@ -48,6 +48,11 @@ export interface FleetShared {
 	 * status.ts started writing ours (session_start); lifecycle.ts's duplicate guard reads it.
 	 */
 	prior: StatusFile | undefined;
+	/**
+	 * edits.ts: true between session_start and session_shutdown, when user saves can still be
+	 * delivered. Undefined while edits.ts is not loaded. nvim.ts refuses `user_edit` when false.
+	 */
+	editsLive?: boolean;
 }
 
 function controlRegistry(): ControlRegistry {

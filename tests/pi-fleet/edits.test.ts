@@ -474,8 +474,10 @@ test("wiring: session_shutdown warns about dropped notes (not on quit); saves af
 		const f = await setup();
 		try {
 			const a = join(f.root, "a.py");
+			assert.equal(fleetOf(f.pi).editsLive, true, "editsLive after session_start");
 			f.edit(a, "note", D1);
 			await f.fire("session_shutdown", { reason });
+			assert.equal(fleetOf(f.pi).editsLive, false, "editsLive after session_shutdown (nvim.ts refuses saves)");
 			if (reason === "quit") assert.deepEqual(f.notes, []);
 			else assert.deepEqual(f.notes, [{ text: "pi-fleet: dropped unsent edit notes for a.py", level: "warning" }]);
 			// not live: a late save is ignored

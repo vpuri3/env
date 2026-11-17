@@ -612,12 +612,12 @@ export function registerEdits(pi: ExtensionAPI, opts: EditsOptions = {}): void {
 		reset();
 		ctx = c;
 		cwd = c.cwd;
-		live = true;
+		live = shared.editsLive = true;
 		if (shared.main) updateWidget();
 	});
 
 	pi.on("session_shutdown", async (event, c) => {
-		live = false;
+		live = shared.editsLive = false;
 		const lost = new Set([...pending.keys(), ...[...inflight.values()].flat().map((p) => p.path)]);
 		if (shared.main && lost.size && event?.reason !== "quit") {
 			const files = [...lost].map((p) => displayPath(p, cwd)).join(", ");

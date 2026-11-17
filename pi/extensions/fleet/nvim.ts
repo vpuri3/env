@@ -423,6 +423,8 @@ export function register(pi: ExtensionAPI): void {
 		registeredWith = control;
 		// control.ts replies {"ok":true} on return and {"ok":false,error} on a throw.
 		control.on(USER_EDIT, (msg) => {
+			// nvim warns with this instead of the save vanishing in a pi that is shutting down.
+			if (shared.editsLive === false) throw new Error("session ending");
 			if (!handleUserEdit(pi, msg, sessionId)) throw new Error("user_edit dropped: malformed, other session, or not a main session");
 			return undefined;
 		});
