@@ -5,9 +5,10 @@
  *                  openSession, in-process): /new opens a new focused window in this cwd;
  *                  /resume opens the target in a new window, or jumps to its window if it is
  *                  live, or says where it runs. The current session is never torn down.
- *                  Outside tmux pi's own behaviour stays, with a one-line notice.
- *                  Anything else that switches sessions through pi (ctx.newSession/switchSession
- *                  from another extension, RPC new_session/switch_session) goes the same way.
+ *                  Outside tmux pi's own behaviour stays, with a one-line notice. /import (a
+ *                  "resume" whose target file does not exist yet) imports in place, with a notice.
+ *                  Anything else that switches sessions through pi in a TUI pi
+ *                  (ctx.newSession/switchSession from another extension) goes the same way.
  *   /fork, /clone  If subagents are working: confirm that this replaces the session and stops them.
  *                  The fork replaces the session in this window (§8), so on session_start a pane
  *                  paired for another id is re-keyed: pane options and the nvim's
@@ -23,6 +24,10 @@
  *   Duplicate guard  If another live pi (other pid, or other host with a fresh heartbeat) had
  *                  the status file of this session: `Jump there / Quit`; both quit this pi, and
  *                  its status file is put back. control.ts does not bind the socket meanwhile.
+ *   TUI only       /new, /resume, the /fork guard and the duplicate guard act only in an
+ *                  interactive TUI pi (ctx.mode "tui"). RPC/print/json pis keep pi's own behaviour
+ *                  even with $TMUX set: programs never open windows in the user's tmux, and a
+ *                  dialog nobody answers cannot hold a pi. /kill and the control socket stay.
  *   Window names   A pi started by hand in tmux (TUI) marks its window @pi_fleet_named=1, so
  *                  `pi-fleet bar` gives it glyph names, unless the user renamed the window
  *                  (automatic-rename off). Its nvim pane comes from nvim.ts (§7 pairing).
@@ -34,6 +39,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ctlSockPath, focusPane, inTmux, livePeer, openSession, paneInfo, tmux } from "./cli.ts";
@@ -41,11 +47,14 @@ import { duplicateOf } from "./control.ts";
 import { nvimRequest } from "./nvim.ts";
 import { RegistryFold } from "./registry.ts";
 import { fleetOf, ownPrompt } from "./shared.ts";
-import { statusPath, type StatusFile } from "./status.ts";
+import { pidAlive, statusPath, type StatusFile } from "./status.ts";
 
 export const SLURM_ENTRY = "pi-fleet:slurm-job";
 const SUBMITTED = /Submitted batch job (\d+)/g;
 const REKEY_LUA = "local id, sock = ...\nvim.env.PI_FLEET_SESSION = id\nvim.env.PI_FLEET_CTL_SOCK = sock\nreturn true";
+const IMPORT_NOTICE = "pi-fleet: import happens in this window; use /resume to open it elsewhere";
+/** globalThis slot: the session file a TUI /import switches to (see session_before_switch). */
+const IMPORTING = Symbol.for("pi-fleet.importing");
 /** squeue is asked about the most recent job ids only. */
 const SQUEUE_MAX = 100;
 
@@ -79,8 +88,10 @@ export async function queuedJobs(ids: string[]): Promise<SlurmJob[] | undefined>
 	if (r.code !== 0) return /invalid job id/i.test(r.err) ? [] : undefined;
 	const jobs: SlurmJob[] = [];
 	for (const line of r.out.split("\n")) {
-		const [id, state, time] = line.trim().split(/\s+/);
-		if (id && ids.includes(id)) jobs.push({ id, state: state ?? "?", time: time ?? "" });
+		const [raw, state, time] = line.trim().split(/\s+/);
+		// Array tasks (123_4, 123_[5-10]) and het components (456+0): listed once, as the base job.
+		const id = raw?.split(/[_+]/)[0];
+		if (id && ids.includes(id) && !jobs.some((j) => j.id === id)) jobs.push({ id, state: state ?? "?", time: time ?? "" });
 	}
 	return jobs;
 }
@@ -124,6 +135,45 @@ export function killPlan(opts: {
 	}
 	actions.set("Cancel", "cancel");
 	return { title: lines.join("\n"), options: [...actions.keys()], actions };
+}
+
+/** Interactive TUI pi: only then do the window-opening interceptions and guards apply (§8). */
+export function interactive(c: Pick<ExtensionContext, "mode" | "hasUI">): boolean {
+	return c.mode === "tui" && c.hasUI;
+}
+
+export type SwitchAction = "native" | "not-tmux" | "import" | "open-new" | "open-target";
+
+/**
+ * What session_before_switch does (§8): "native" lets pi switch here silently, "not-tmux" and
+ * "import" let it switch here with a notice, "open-*" cancel and open a window. /import emits a
+ * "resume" whose target (the copy in the session dir) does not exist yet.
+ */
+export function switchAction(o: { tui: boolean; tmux: boolean; reason: string; target?: string; targetExists?: boolean }): SwitchAction {
+	if (!o.tui) return "native";
+	if (!o.tmux) return "not-tmux";
+	if (o.reason === "new") return "open-new";
+	if (o.reason !== "resume" || !o.target) return "native";
+	return o.targetExists ? "open-target" : "import";
+}
+
+/**
+ * After a duplicate pi quit: put the other pi's status file back (status.ts removed "ours"),
+ * unless that pi rewrote it already or died meanwhile on this host.
+ */
+export async function restoreStatus(other: StatusFile): Promise<boolean> {
+	if (other.host === hostname() && !pidAlive(other.pid)) return false;
+	const path = statusPath(other.sessionId);
+	if (existsSync(path)) return false;
+	const tmp = `${path}.${process.pid}.restore.tmp`;
+	try {
+		await writeFile(tmp, `${JSON.stringify(other)}\n`, { mode: 0o600 });
+		await rename(tmp, path);
+		return true;
+	} catch {
+		// its next heartbeat writes it
+		return false;
+	}
 }
 
 function textOf(content: unknown): string {
@@ -267,6 +317,12 @@ export function register(pi: ExtensionAPI): void {
 		if (!shared.main) return;
 		ctx = c;
 		const sm = c.sessionManager;
+		const g = globalThis as Record<symbol, unknown>;
+		if (g[IMPORTING] && g[IMPORTING] === sm.getSessionFile()) {
+			delete g[IMPORTING];
+			// After pi has rebuilt the chat of the imported session.
+			setTimeout(() => gen === generation && notify(c, IMPORT_NOTICE), 0);
+		}
 		for (const entry of sm.getEntries() as any[]) {
 			if (entry.type !== "custom" || entry.customType !== SLURM_ENTRY) continue;
 			const id = entry.data?.jobId;
@@ -280,7 +336,7 @@ export function register(pi: ExtensionAPI): void {
 		}
 		// Threads a previous (crashed) process left running are not running now.
 		fold.markInterrupted();
-		const other = duplicateOf(shared);
+		const other = interactive(c) ? duplicateOf(shared) : undefined;
 		if (other) {
 			// After session_start: dialogs and shutdown need a started session.
 			setTimeout(() => void duplicateGuard(c, other, gen).catch(() => {}), 0);
@@ -298,33 +354,30 @@ export function register(pi: ExtensionAPI): void {
 		ctx = undefined;
 		const other = restore;
 		restore = undefined;
-		if (!other) return;
-		// status.ts removed "our" file; put the live pi's file back unless it rewrote it already.
-		const path = statusPath(other.sessionId);
-		if (existsSync(path)) return;
-		const tmp = `${path}.${process.pid}.restore.tmp`;
-		try {
-			await writeFile(tmp, `${JSON.stringify(other)}\n`, { mode: 0o600 });
-			await rename(tmp, path);
-		} catch {
-			// its next heartbeat writes it
-		}
+		if (other) await restoreStatus(other);
 	});
 
 	pi.on("session_before_switch", async (event, c) => {
 		if (!shared.main) return;
-		if (!inTmux()) {
+		const target = event.targetSessionFile;
+		const action = switchAction({ tui: interactive(c), tmux: inTmux(), reason: event.reason, target, targetExists: !!target && existsSync(target) });
+		if (action === "native") return;
+		if (action === "not-tmux") {
 			notify(c, `pi-fleet: not in tmux, so /${event.reason} replaces this session here`);
 			return;
 		}
+		if (action === "import") {
+			// The notice is shown in the imported session: one sent now goes with this session's
+			// chat, and the extension instance is replaced too, hence the process-wide slot.
+			(globalThis as Record<symbol, unknown>)[IMPORTING] = target;
+			return;
+		}
 		try {
-			if (event.reason === "new") {
+			if (action === "open-new") {
 				await openSession({ cwd: c.cwd, target: process.env.TMUX_PANE });
-			} else if (event.targetSessionFile) {
-				const result = await openSession({ session: event.targetSessionFile, target: process.env.TMUX_PANE });
-				if (result.action === "refused") notify(c, `pi-fleet: that session is ${result.reason}`, "warning");
 			} else {
-				return;
+				const result = await openSession({ session: target!, target: process.env.TMUX_PANE });
+				if (result.action === "refused") notify(c, `pi-fleet: that session is ${result.reason}`, "warning");
 			}
 		} catch (error) {
 			notify(c, `pi-fleet: could not open a window: ${(error as Error).message}`, "error");
@@ -336,7 +389,7 @@ export function register(pi: ExtensionAPI): void {
 	pi.on("session_before_fork", async (event, c) => {
 		if (!shared.main) return;
 		const working = workingSubagents(c);
-		if (!working.length || !c.hasUI) return;
+		if (!working.length || !interactive(c)) return;
 		const n = working.length;
 		const what = event.position === "at" ? "Clone" : "Fork";
 		const ok = await ownPrompt(pi, () =>

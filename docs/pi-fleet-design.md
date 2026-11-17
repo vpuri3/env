@@ -149,7 +149,11 @@ Kill session "physicsnemo sweep"?   (agent is working: its run will be aborted)
   Cancel
 ```
 
-Slurm job IDs come from the `tool_result` of `bash` calls that match `Submitted batch job (\d+)`. They are stored via `appendEntry("pi-fleet:slurm-job")` and in `slurmJobs`, and checked with `squeue -h -j … -o '%i %T %M'`.
+The `/new`, `/resume`, `/fork` interceptions and the duplicate guard apply only to an interactive TUI pi (`ctx.mode === "tui"`). RPC, print and json pis keep pi's own behaviour even with `$TMUX` set, so programs never open windows in the user's tmux and a dialog nobody answers cannot hold a pi; `/kill` and the control socket work in every mode. Outside tmux a TUI pi keeps pi's behaviour with a one-line notice.
+
+`/import` emits a `resume` whose target (the copy in the session dir) does not exist yet. It is not redirected: pi imports in place, as outside tmux, with the notice "import happens in this window; use /resume to open it elsewhere".
+
+Slurm job IDs come from the `tool_result` of `bash` calls that match `Submitted batch job (\d+)`. They are stored via `appendEntry("pi-fleet:slurm-job")` and in `slurmJobs`, and checked with `squeue -h -j … -o '%i %T %M'`; array tasks and het components (`123_4`, `123_[5-10]`, `456+0`) are listed once, as the base job.
 
 ## 9. Dashboard and `/sessions` (one component)
 
@@ -187,7 +191,7 @@ Slurm job IDs come from the `tool_result` of `bash` calls that match `Submitted 
 - **Bell**: `\a` written to pi's stdout on waiting/question/error. `tmux.conf`: `monitor-bell on`, `bell-action other`, `visual-bell off`.
 - **Notification bar**: `status-left` gets `#(pi-fleet bar)` with `status-interval 5`. Output looks like `π [3]? flare [5]◐ ckpt`. The numbers are real window indices, so the existing `prefix 3` jumps there.
 - **Window glyphs** as in §7. OSC 7501/777 passthrough is not used.
-- **Control socket** `<id>.pi.sock` (0600 in the 0700 dir) accepts NDJSON `ping`, `kill` and `user_edit` (64 KB cap, 2 s idle drop, private bind + rename).
+- **Control socket** `<id>.pi.sock` (0600 in the 0700 dir) dispatches each NDJSON line on its `type` (`cmd` is accepted as an alias) to the registered handlers: `ping`, `kill` and `user_edit`; anything else gets `{"ok":false,"error":"unknown type …"}` (64 KB cap, 2 s idle drop, private bind + rename).
 
 ## 11. Paired nvim, `/view`, and saves
 
@@ -279,7 +283,7 @@ The fleet binds nothing at the pi editor level, so Tab (follow-up) and Up (deque
 **Security:**
 - The runtime dir `/tmp/pi-fleet-$UID` is created 0700. Before each use, `lstat` checks: no symlink, owned by us, mode 0700. Otherwise fall back to `mkdtemp`.
 - Sockets are 0600, with no TCP. `~/.local/state/pi-fleet` is 0700 and status files are 0600.
-- Only `ping`, `kill` and `user_edit` are accepted on the control socket.
+- The control socket dispatches registered types only (`ping`, `kill`, `user_edit`; `cmd` is an alias of `type`); unknown types are refused.
 - tmux, nvim, squeue and rg are always called with argument arrays. Paths reach nvim only as msgpack-RPC arguments (`nvim_exec_lua` args), never as code.
 
 ## 14. Phases (each one coder task)
