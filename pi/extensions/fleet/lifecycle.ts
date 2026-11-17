@@ -18,7 +18,13 @@
  *                  jobs still in squeue; the default leaves the jobs running. No dialog for an
  *                  empty session with nothing running. Then abort + ctx.shutdown(): exit 0, so
  *                  `pi-fleet run-pi` closes nvim (unless modified) and the window.
- *                  The control socket's `kill` (dashboard `x`) opens the same dialog.
+ *                  The control socket's `kill` opens the same dialog, unless it says
+ *                  `"confirmed":true` (the dashboard's / `/sessions`' `d` asked already): then
+ *                  it kills at once, and scancels only with `"scancel":true`.
+ *   Autonomous     `/leavemealone` (the prompt template, seen in the `input` event) marks the
+ *                  session autonomous: `autonomous: true` in the status file (the views show a
+ *                  working session as "auto") and a "pi-fleet:autonomous" entry, so a resumed
+ *                  session keeps it. `/autonomous off` ends it; `/autonomous` shows it.
  *   Slurm capture  `Submitted batch job N` in a bash tool result → appendEntry("pi-fleet:slurm-job")
  *                  and the status file's `slurmJobs`; restored from the session on start.
  *   Duplicate guard  If another live pi (other pid, or other host with a fresh heartbeat) had
@@ -50,6 +56,7 @@ import { fleetOf, ownPrompt } from "./shared.ts";
 import { pidAlive, statusPath, type StatusFile } from "./status.ts";
 
 export const SLURM_ENTRY = "pi-fleet:slurm-job";
+export const AUTONOMOUS_ENTRY = "pi-fleet:autonomous";
 const SUBMITTED = /Submitted batch job (\d+)/g;
 const REKEY_LUA = "local id, sock = ...\nvim.env.PI_FLEET_SESSION = id\nvim.env.PI_FLEET_CTL_SOCK = sock\nreturn true";
 const IMPORT_NOTICE = "pi-fleet: import happens in this window; use /resume to open it elsewhere";
@@ -69,6 +76,11 @@ export function submittedJobs(text: string): string[] {
 	const ids: string[] = [];
 	for (const m of text.matchAll(SUBMITTED)) if (!ids.includes(m[1])) ids.push(m[1]);
 	return ids;
+}
+
+/** The user input that starts autonomous mode: the `/leavemealone` prompt template. */
+export function startsAutonomous(text: string): boolean {
+	return /^\/leavemealone(?:\s|$)/.test(text.trimStart());
 }
 
 function run(cmd: string, args: string[]): Promise<{ code: number; out: string; err: string }> {
@@ -194,6 +206,7 @@ export function register(pi: ExtensionAPI): void {
 	let jobs: string[] = [];
 	const fold = new RegistryFold();
 	let killing = false;
+	let autonomous = false;
 	/** Set when this pi quits as a duplicate: the other pi's status file to put back. */
 	let restore: StatusFile | undefined;
 	let generation = 0;
@@ -215,30 +228,46 @@ export function register(pi: ExtensionAPI): void {
 		if (jobs.length) shared.status?.patch({ slurmJobs: [...jobs] });
 	};
 
-	const kill = async (c: ExtensionContext): Promise<boolean> => {
+	const publishAutonomous = () => shared.status?.patch({ autonomous: autonomous || undefined });
+	const setAutonomous = (on: boolean) => {
+		autonomous = on;
+		pi.appendEntry(AUTONOMOUS_ENTRY, { on, time: new Date().toISOString() });
+		publishAutonomous();
+	};
+
+	/** `confirmed`: the user already chose in the dashboard / `/sessions` (no dialog here). */
+	const kill = async (c: ExtensionContext, confirmed?: { scancel: boolean }): Promise<boolean> => {
 		if (killing) return false;
 		killing = true;
 		try {
-			const subagents = workingSubagents(c);
-			const queued = await queuedJobs(jobs);
-			const hasMessages = c.sessionManager.getEntries().some((e: any) => e.type === "message");
-			const plan = killPlan({
-				label: sessionLabel(c, shared.status?.current()),
-				busy: !c.isIdle(),
-				hasMessages,
-				subagents,
-				jobs: queued,
-				submitted: jobs,
-			});
 			let action: "kill" | "scancel" | "cancel" = "kill";
-			if (plan) {
-				const choice = await ownPrompt(pi, () => c.ui.select(plan.title, plan.options));
-				action = (choice && plan.actions.get(choice)) || "cancel";
+			let queued: SlurmJob[] | undefined = [];
+			if (confirmed) {
+				if (confirmed.scancel && jobs.length) {
+					queued = await queuedJobs(jobs);
+					action = "scancel";
+				}
+			} else {
+				const subagents = workingSubagents(c);
+				queued = await queuedJobs(jobs);
+				const hasMessages = c.sessionManager.getEntries().some((e: any) => e.type === "message");
+				const plan = killPlan({
+					label: sessionLabel(c, shared.status?.current()),
+					busy: !c.isIdle(),
+					hasMessages,
+					subagents,
+					jobs: queued,
+					submitted: jobs,
+				});
+				if (plan) {
+					const choice = await ownPrompt(pi, () => c.ui.select(plan.title, plan.options));
+					action = (choice && plan.actions.get(choice)) || "cancel";
+				}
 			}
 			if (action === "cancel") return false;
 			if (action === "scancel") {
 				const ids = queued ? queued.map((j) => j.id) : jobs;
-				const r = await run("scancel", ids);
+				const r = ids.length ? await run("scancel", ids) : { code: 0, err: "" };
 				if (r.code !== 0) notify(c, `pi-fleet: scancel failed: ${r.err.trim() || `exit ${r.code}`}`, "error");
 			}
 			// Subagents: pi-subagent-manager stops them on session_shutdown (transcripts stay).
@@ -301,10 +330,11 @@ export function register(pi: ExtensionAPI): void {
 		}
 	};
 
-	shared.control.on("kill", () => {
+	shared.control.on("kill", (message) => {
 		const c = ctx;
 		if (!c || !shared.main) throw new Error("no session");
-		void kill(c).catch(() => {});
+		const confirmed = message.confirmed === true ? { scancel: message.scancel === true } : undefined;
+		void kill(c, confirmed).catch(() => {});
 		return {};
 	});
 
@@ -312,6 +342,7 @@ export function register(pi: ExtensionAPI): void {
 		const gen = ++generation;
 		ctx = undefined;
 		jobs = [];
+		autonomous = false;
 		restore = undefined;
 		fold.reset();
 		if (!shared.main) return;
@@ -324,11 +355,14 @@ export function register(pi: ExtensionAPI): void {
 			setTimeout(() => gen === generation && notify(c, IMPORT_NOTICE), 0);
 		}
 		for (const entry of sm.getEntries() as any[]) {
-			if (entry.type !== "custom" || entry.customType !== SLURM_ENTRY) continue;
+			if (entry.type !== "custom") continue;
+			if (entry.customType === AUTONOMOUS_ENTRY) autonomous = entry.data?.on === true;
+			if (entry.customType !== SLURM_ENTRY) continue;
 			const id = entry.data?.jobId;
 			if (typeof id === "string" && /^\d+$/.test(id) && !jobs.includes(id)) jobs.push(id);
 		}
 		publishJobs();
+		if (autonomous) publishAutonomous();
 		try {
 			fold.update(sm.getBranch() as any);
 		} catch {
@@ -401,6 +435,10 @@ export function register(pi: ExtensionAPI): void {
 		if (!ok) return { cancel: true };
 	});
 
+	pi.on("input", async (event) => {
+		if (shared.main && ctx && !autonomous && startsAutonomous(event.text)) setAutonomous(true);
+	});
+
 	pi.on("tool_result", async (event) => {
 		if (!shared.main || event.toolName !== "bash") return;
 		for (const id of submittedJobs(textOf(event.content))) {
@@ -409,6 +447,26 @@ export function register(pi: ExtensionAPI): void {
 			pi.appendEntry(SLURM_ENTRY, { jobId: id, time: new Date().toISOString() });
 		}
 		publishJobs();
+	});
+
+	pi.registerCommand("autonomous", {
+		description: "pi-fleet: show autonomous mode (set by /leavemealone); /autonomous off ends it",
+		getArgumentCompletions: (prefix: string) => ("off".startsWith(prefix.trim()) ? [{ value: "off", label: "off" }] : null),
+		handler: async (args, c) => {
+			if (!shared.main) {
+				notify(c, "pi-fleet: /autonomous works in a main session only", "warning");
+				return;
+			}
+			const arg = String(args ?? "").trim();
+			if (arg === "off") {
+				if (autonomous) setAutonomous(false);
+				notify(c, "pi-fleet: autonomous mode off");
+			} else if (!arg) {
+				notify(c, autonomous ? "pi-fleet: autonomous (since /leavemealone); /autonomous off ends it" : "pi-fleet: not autonomous (/leavemealone starts it)");
+			} else {
+				notify(c, "pi-fleet: usage: /autonomous [off]", "warning");
+			}
+		},
 	});
 
 	pi.registerCommand("kill", {

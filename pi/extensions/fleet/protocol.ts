@@ -7,7 +7,7 @@
  *
  * Senders:
  *   - nvim/lua/nvconf/pi_fleet.lua: `user_edit` after `:w!` (mode "note") or `:w!!` (mode "steer").
- *   - the dashboard: `ping`, `kill`.
+ *   - the dashboard and /sessions: `ping`, `kill` (`d`: `confirmed`, optional `scancel`).
  *
  * Pure types and validators only: no state, no imports with side effects.
  */
@@ -54,6 +54,10 @@ export interface PingMessage {
 
 export interface KillMessage {
 	type: "kill";
+	/** The sender already asked the user (the dashboard's `d`): no dialog in the target pi. */
+	confirmed?: boolean;
+	/** With `confirmed`: also scancel this session's queued/running Slurm jobs. Default false. */
+	scancel?: boolean;
 }
 
 export type ControlMessage = UserEditMessage | PingMessage | KillMessage;

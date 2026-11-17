@@ -490,6 +490,34 @@ test("rpc pi: Slurm capture, no /fork guard, /kill dialog (control socket and co
 	}
 });
 
+test("rpc pi: /leavemealone marks the status autonomous until /autonomous off; a confirmed kill (dashboard `d`) asks nothing", { skip: skipRpc, timeout: 90_000 }, async () => {
+	const rig = new Rig();
+	const pi = new RpcPi(rig, rig.tmuxEnv());
+	try {
+		const id = await pi.sessionId();
+		const ctlSock = (await waitFor("ctlSock", () => rig.status(id)?.ctlSock)) as string;
+		await pi.call({ type: "prompt", message: "please submit" });
+		await waitFor("slurmJobs in status", () => rig.status(id)?.slurmJobs?.[0] === "8812345");
+		await waitFor("settle", () => pi.settled() >= 1);
+		// No prompt templates here (-np): the text reaches the input event as typed.
+		await pi.call({ type: "prompt", message: "/leavemealone back at 5" });
+		await waitFor("autonomous in status", () => rig.status(id)?.autonomous === true);
+		await waitFor("settle", () => pi.settled() >= 2);
+		await pi.call({ type: "prompt", message: "/autonomous off" });
+		await waitFor("autonomous cleared", () => rig.status(id) && rig.status(id)?.autonomous === undefined);
+		await pi.call({ type: "prompt", message: "/fake-subagents" });
+
+		assert.deepEqual(await ctl(ctlSock, ['{"type":"kill","confirmed":true}\n'], { half: true }), [{ ok: true }]);
+		assert.equal(await pi.exited, 0, pi.stderr);
+		assert.deepEqual(pi.dialogs(), []);
+		assert.equal(rig.log("scancel.log"), "", "Slurm jobs keep running by default");
+		assert.equal(existsSync(join(rig.statusDir, `${id}.json`)), false);
+	} finally {
+		pi.kill();
+		rig.close();
+	}
+});
+
 test("rpc pi: /kill of an empty session asks nothing; outside tmux /new stays in place", { skip: !havePi && "pi missing", timeout: 60_000 }, async () => {
 	const rig = haveTmux ? new Rig() : undefined;
 	if (!rig) return;
