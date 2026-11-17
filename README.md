@@ -126,6 +126,16 @@ need you by window number.
 | `/view` | picker: touched files, then the last 10 tool calls |
 | `/btw QUESTION` | a side conversation (pi-btw) that runs even while the agent works |
 
+**Session titles.** After the first run of an unnamed session, the fleet
+extension asks a cheap model (the cheapest haiku/flash/mini/nano/lite model of
+the session's provider, else the session's model) for a 3–6 word title and
+sets it as the session name, which the dashboard, the deck and `/resume` show.
+It is rewritten once more after 6 user messages. A name you give with `/name`
+or `--name` is never replaced. `PI_FLEET_TITLE_MODEL=provider/id` picks the
+model, `PI_FLEET_TITLE=off` turns titles off (`on` also titles RPC-mode pis),
+`PI_FLEET_TITLE_DEBUG=FILE` logs failures. `pi-fleet title-backfill [--limit N]
+[--dry-run]` titles the N (default 20) newest closed sessions without a name.
+
 Outside tmux, pi keeps its own `/new` and `/resume`, and `/view` falls back to
 `nvim -R`. **Don't `/reload` while subagents are running.** It reloads every
 extension, including the subagent manager that runs them, so wait until they

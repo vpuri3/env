@@ -17,6 +17,7 @@ import { register as nvim } from "./nvim.ts";
 import { register as registry } from "./registry.ts";
 import { register as sessionsView } from "./sessions-view.ts";
 import { register as status } from "./status.ts";
+import { register as title } from "./title.ts";
 import { register as toolOutput } from "./tool-output.ts";
 import { register as view } from "./view.ts";
 
@@ -32,4 +33,5 @@ export default function piFleet(pi: ExtensionAPI): void {
 	toolOutput(pi);
 	edits(pi);
 	leader(pi);
+	title(pi);
 }

@@ -1223,6 +1223,8 @@ const HELP = `usage: pi-fleet <command>
   kill-deck [--yes]                  kill every deck pi (after asking), then the deck server
   pair --deck PANE [--show] [--json] the deck pi's nvim (created on first use); --show swaps it in
   deck                               the deck's list process (run by the deck server)
+  title-backfill [--limit N] [--dry-run] [--model PROVIDER/ID]
+                                     LLM titles for the N (20) newest closed sessions without a name
 `;
 
 // ---------------------------------------------------------------- deck (deck.ts; docs/pi-deck-design.md)
@@ -1486,6 +1488,19 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
 			} else process.stderr.write("pi-fleet: pi's pi-tui not found (set PI_FLEET_PI_PACKAGES); plain list\n");
 			const deck = await import("./deck.ts");
 			process.exit(await deck.runDeckStub(env));
+		}
+		case "title-backfill": {
+			const { values } = parse({ limit: { type: "string" }, "dry-run": { type: "boolean" }, model: { type: "string" } });
+			const limit = values.limit === undefined ? undefined : Number(values.limit);
+			if (limit !== undefined && !(Number.isInteger(limit) && limit > 0)) throw new Error("title-backfill: --limit must be a positive integer");
+			const packages = locatePiPackages(env);
+			if (!packages) throw new Error("title-backfill: pi's packages not found (set PI_FLEET_PI_PACKAGES)");
+			await usePiPackages(packages);
+			const tb = await import("./title-backfill.ts");
+			const log = (line: string) => process.stdout.write(`${line}\n`);
+			const r = await tb.backfill({ limit, dryRun: !!values["dry-run"], model: values.model as string | undefined }, await tb.piDeps(log), env);
+			if (!values["dry-run"]) process.stdout.write(`titled ${r.titled.length}, failed ${r.failed.length}\n`);
+			return r.failed.length && !r.titled.length ? 1 : 0;
 		}
 		case undefined:
 		case "help":

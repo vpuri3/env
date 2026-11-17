@@ -63,8 +63,8 @@ tmux server (per login node)
 
 | Component | Path |
 |---|---|
-| Fleet extension. `index.ts` only calls `register(pi)` from each module: `status.ts`, `registry.ts`, `sessions-view.ts`, `lifecycle.ts` (new/resume/kill/duplicates), `control.ts` (socket), `nvim.ts`, `view.ts` (files + `tool:N`), `files.ts` (candidates, grep), `tool-output.ts` (moved out of compact-tools), `edits.ts` (user-write delivery), `leader.ts` (handles `pi-fleet:action` from vim-mode) | `pi/extensions/fleet/` |
-| CLI `pi-fleet`: `open`, `pair`, `peer`, `ls`, `bar`, `seen`, `dashboard`, `run-pi` | `pi/extensions/fleet/cli.ts`, shim `bin/pi-fleet` |
+| Fleet extension. `index.ts` only calls `register(pi)` from each module: `status.ts`, `registry.ts`, `sessions-view.ts`, `lifecycle.ts` (new/resume/kill/duplicates), `control.ts` (socket), `nvim.ts`, `view.ts` (files + `tool:N`), `files.ts` (candidates, grep), `tool-output.ts` (moved out of compact-tools), `edits.ts` (user-write delivery), `leader.ts` (handles `pi-fleet:action` from vim-mode), `title.ts` (LLM session titles) | `pi/extensions/fleet/` |
+| CLI `pi-fleet`: `open`, `pair`, `peer`, `ls`, `bar`, `seen`, `dashboard`, `run-pi`, `title-backfill` (`title-backfill.ts`) | `pi/extensions/fleet/cli.ts`, shim `bin/pi-fleet` |
 | nvim side, active only when `$PI_FLEET_SESSION` is set | `nvim/lua/nvconf/pi_fleet.lua` |
 | Leader keys | `pi/extensions/vim-mode.ts` (emits on `pi.events`) |
 | tmux glue | `tmux.conf` |
@@ -107,6 +107,8 @@ Subagent counts fold registry entries from `ctx.sessionManager.getEntries()`. Th
 - A **fork** has `parentSession` but no thread entry; it counts as a main.
 
 Results are cached by `(path, size, mtime)` in `~/.cache/pi-fleet/index.json`. **Repo** = `git -C cwd rev-parse --show-toplevel`, else cwd, cached per cwd. Live status files are merged over the scan.
+
+**Titles** (`title.ts`, added 2026-11-17). Rows show the pi session name, else the first prompt. So that unnamed sessions get a useful name, the extension (main sessions in TUI mode) asks a cheap model for a 3–6 word title after the first settled run, and once more after 6 user messages, detached from the turn with a 15 s timeout. The title is set with `pi.setSessionName` (a `session_info` entry, so `session_info_changed` updates the status file's `name` at once) and followed by a `pi-fleet:title` custom entry holding that entry's id. The extension only retitles while the latest `session_info` is one of its own, so `/name`, `--name` and RPC names (also an empty one) win. `pi-fleet title-backfill` does the same for closed sessions through pi's `ModelRuntime` and `SessionManager`, skipping any session a live pi claims or that changed in the last 10 minutes.
 
 ## 7. tmux windows, panes and lifecycle
 
