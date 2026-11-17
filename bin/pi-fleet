@@ -1,0 +1,51 @@
+#!/bin/sh
+# pi-fleet: many pi sessions in tmux, one window each (pi | nvim). See docs/pi-fleet-design.md.
+# This shim runs pi/extensions/fleet/cli.ts with node >= 22.18, which strips TypeScript types
+# without a flag. node comes from $PI_FLEET_NODE, PATH, or pi's own install (~/.local/share/pi-node).
+#
+#   pi-fleet open [--session FILE|ID] [--cwd DIR]    open or jump to a session window
+#   pi-fleet pair|peer|bar|seen|ls|run-pi|dashboard  see `pi-fleet help`
+
+# Resolve symlinks to this file, then the repo it lives in.
+self=$0
+while [ -L "$self" ]; do
+    link=$(readlink "$self") || exit 1
+    case "$link" in
+        /*) self=$link ;;
+        *) self=${self%/*}/$link ;;
+    esac
+done
+bin_dir=$(cd "${self%/*}" && pwd -P) || exit 1
+cli=${bin_dir%/*}/pi/extensions/fleet/cli.ts
+
+node_ok() {
+    [ -n "$1" ] && [ -x "$1" ] || return 1
+    v=$("$1" --version 2>/dev/null) || return 1
+    v=${v#v}
+    major=${v%%.*}
+    rest=${v#*.}
+    minor=${rest%%.*}
+    [ "$major" -gt 22 ] 2>/dev/null || { [ "$major" -eq 22 ] && [ "$minor" -ge 18 ]; } 2>/dev/null
+}
+
+node=
+for candidate in "${PI_FLEET_NODE:-}" "$(command -v node 2>/dev/null)" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/pi-node/current/bin/node"; do
+    if node_ok "$candidate"; then
+        node=$candidate
+        break
+    fi
+done
+
+if [ -z "$node" ]; then
+    # The tmux status bar and hooks call bar/seen every few seconds: stay quiet there.
+    case "${1:-}" in
+        bar | seen) exit 0 ;;
+    esac
+    echo "pi-fleet: needs node >= 22.18 (set PI_FLEET_NODE)" >&2
+    exit 127
+fi
+
+PI_FLEET_BIN="$bin_dir/pi-fleet"
+export PI_FLEET_BIN
+exec "$node" "$cli" "$@"
