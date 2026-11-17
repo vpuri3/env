@@ -89,7 +89,7 @@ terminal may access clipboard"; VS Code / Cursor terminals do).
 - **No Esc delay** (`escape-time 0`), so vim/nvim mode switches are instant.
 - **Extended keys** (`extended-keys`, CSI-u): `Shift+Enter`, `Ctrl+Enter` and
   `Alt+Enter` reach programs that ask for them. pi uses `Shift+Enter` for a new
-  line and `Alt+Enter` for a follow-up. It needs tmux 3.2+ (CSI-u format 3.5+),
+  line (follow-ups are Tab or ctrl+q in this setup; see the README). It needs tmux 3.2+ (CSI-u format 3.5+),
   is skipped silently on older tmux, and needs a server restart to take effect.
 
 ## Troubleshooting
