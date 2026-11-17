@@ -97,6 +97,40 @@ Treesitter highlights and indents bash, lua, vim, markdown, python, julia,
 javascript, c/c++, fortran, latex/bibtex, make and git files. It skips files
 over 100 KB.
 
+## Paired nvim (pi-fleet)
+
+The nvim on the right of a pi-fleet window is **paired** with its pi. It
+counts as paired when `pi-fleet` started it, i.e. when `$PI_FLEET_SESSION` and
+`$PI_FLEET_CTL_SOCK` are set and it is not running inside another nvim's
+terminal. Any other nvim, including one the agent starts through bash, behaves
+normally. In a paired nvim:
+
+- **File buffers are read-only**, so a stray edit never reaches pi. A winbar
+  shows how to write: `pi ▸ read-only · :w! save + note · :w!! save + interrupt · :PiHelp`.
+- **Plain `:w` fails on purpose** (E45). After every write the buffer is
+  read-only again. Writes with no changes are not sent to pi.
+
+| Command | Does |
+| --- | --- |
+| `:w!` | save + **note**: pi gets your diff with your next message. If the agent is working and touches this file in the current run, it gets the diff before its next step (steer) |
+| `:w!!` | save + **interrupt**: pi gets the diff now (steer). It lands after the running tool call and never aborts a running command |
+| `:PiHelp` | explains the writes, reloads and conflicts (`q` closes) |
+| `:PiDiff` | compare your buffer with the version on disk (`q` closes) |
+| `:PiFocus` | jump to the pi pane (same as tmux `prefix e`) |
+
+**When pi edits a file that is open here:**
+
+- An unmodified buffer reloads silently and keeps your view.
+- A modified buffer is **not** reloaded. The winbar turns into a warning:
+  `:PiDiff` compares, `:e!` takes pi's version, `:w!` keeps yours (pi is told
+  what you changed). nvim never stops on a "file changed" prompt.
+- Changes made through the agent's bash commands are picked up when the agent
+  finishes its turn.
+
+Saves of one file within 2 s go to pi as one diff. pi blocks the agent's
+`edit` and `write` on a file you saved until the agent has read it again.
+`/view` and the pi leader keys open files here and then focus this pane.
+
 ## Troubleshooting
 
 | Symptom | Fix |

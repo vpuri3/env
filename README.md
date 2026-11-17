@@ -8,8 +8,8 @@ clusters (bash), with an idempotent bootstrap script.
 | Doc | Covers |
 | --- | --- |
 | [docs/bootstrap.md](docs/bootstrap.md) | what bootstrap does, options, re-running, testing |
-| [docs/tmux.md](docs/tmux.md) | tmux keys (prefix `Ctrl+s`), copy mode, ssh agent |
-| [docs/nvim.md](docs/nvim.md) | Neovim keys, plugins, LSP |
+| [docs/tmux.md](docs/tmux.md) | tmux keys (prefix `Ctrl+s`), copy mode, ssh agent, pi-fleet keys |
+| [docs/nvim.md](docs/nvim.md) | Neovim keys, plugins, LSP, the pi-fleet paired nvim |
 | [docs/vscode.md](docs/vscode.md) | Cursor / VS Code with vscode-neovim |
 | [AGENTS.md](AGENTS.md) | rules for coding agents working in this repo (`CLAUDE.md` links to it) |
 | [skills/](skills/) | agent skills (`env-deploy`, `env-add-cluster`, `slurm-jobs`, `cluster-login`, `cluster-python-env`, `dataset-download`, `leavemealone`), linked into `~/.agents/skills/` |
@@ -89,6 +89,80 @@ Host github.com
     IdentityFile ~/.ssh/id_ed25519_github
     IdentitiesOnly yes
 ```
+
+## pi-fleet
+
+pi-fleet runs several pi sessions at once in tmux, one window each: pi on the
+left, a **paired nvim** on the right. A dashboard lists every session on this
+login node, grouped by repo. Switching windows never pauses or kills a session.
+It is made of `pi/extensions/fleet/` (the pi extension), `bin/pi-fleet` (the
+CLI), `nvim/lua/nvconf/pi_fleet.lua` and the tmux keys in
+[docs/tmux.md](docs/tmux.md). The design is in
+[docs/pi-fleet-design.md](docs/pi-fleet-design.md).
+
+Start with `pi-fleet open` inside tmux (or `pi-fleet open --cwd DIR`,
+`pi-fleet open --session FILE|ID`). A session that is already live is jumped
+to and never started twice; one live on another login node is refused.
+
+Status glyphs: ● running · ? question · ◐ waiting (unseen) · ○ idle · ✕ error or
+crashed · ⟳ starting. A stopped pi rings the bell, and the tmux status bar
+lists the sessions that need you by window number.
+
+| In pi | Does |
+| --- | --- |
+| `/new` | a new session in a new window (the current one keeps running) |
+| `/resume` | pi's picker; the chosen session opens in a new window, or is jumped to if live |
+| `/kill` | end this session: a dialog lists the subagents it stops and its Slurm jobs (left running by default) |
+| `/sessions` | the session list (the dashboard without the preview) |
+| `/view FILE[:LINE]` | open a file in the paired nvim at LINE, then focus it; completes files this session touched first, then the repo |
+| `/view tool:N` | the Nth most recent tool call's full output, read-only in nvim (`tool:` completes) |
+| `/view` | picker: touched files, then the last 10 tool calls |
+| `/btw QUESTION` | a side conversation (pi-btw) that runs even while the agent works |
+
+Outside tmux, pi keeps its own `/new` and `/resume`, and `/view` falls back to
+`nvim -R`. **Don't `/reload` while subagents are running.** It reloads every
+extension, including the subagent manager that runs them, so wait until they
+finish.
+
+| Dashboard (`prefix g`, popup `prefix G`) | Does |
+| --- | --- |
+| `j` / `k` (or arrows) | move |
+| `Space` | show a session's subagents; collapse a repo |
+| `Enter` | jump to the session, or open it in a new window (on a subagent: its main) |
+| `x` | kill the session (the dialog appears in its own window) |
+| `n` | new session in the row's repo |
+| `/` | filter by name, repo, cwd or last message (`Esc` stops typing) |
+| `!` `@` `#` `&` / `0` | only running / waiting / idle / error; `0` shows all |
+| `?` | help |
+| `q` | close (`Esc` clears filters first) |
+
+**vim-mode** (`pi/extensions/vim-mode.ts`, `Esc` enters NORMAL mode). Leader
+keys work in NORMAL mode only and mirror nvim's `<leader>` keys. The mode
+line shows `␣…` while one is pending. Any other key, or 1 s with no key,
+cancels it.
+
+| NORMAL mode | Does |
+| --- | --- |
+| `Space e` | `/sessions` |
+| `Space f f` | file picker (session files, then the repo), opening in the paired nvim |
+| `Space f g` | git files only |
+| `Space f b` | files touched in this session |
+| `Space f s` | grep (`Grep >` prompt, ripgrep), opening the hit at its line |
+| `Space f h` | slash commands; the chosen one goes into the prompt |
+| `Space g s` | `:Git` (fugitive) in the paired nvim, then focus it |
+| `Space t` | tool output picker |
+| `v` / `V` | start a character / line selection; `y` copies |
+
+| INSERT mode | Does |
+| --- | --- |
+| `Tab` while the agent works | queue the prompt as a follow-up (when idle: autocomplete) |
+| `Up` on the first line | take queued messages back into the prompt |
+
+The agent's `ask_user_question` takes an optional `timeoutSeconds`: if nobody
+answers in time, the options marked "(Recommended)" are chosen and the agent is
+told so. Any keypress cancels the countdown. In the paired nvim, files are
+read-only: `:w!` saves and tells pi with your next message, and `:w!!` saves
+and tells it now. See [docs/nvim.md](docs/nvim.md#paired-nvim-pi-fleet).
 
 ## Python work directory and caches
 

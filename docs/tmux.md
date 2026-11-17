@@ -38,6 +38,29 @@ switch sessions, or `prefix w` for the window/session tree.
 
 The mouse is on: click to focus, drag borders to resize, scroll to enter copy mode.
 
+## pi-fleet (pi sessions)
+
+Each pi session gets its own window, with pi on the left and its paired nvim
+on the right (see the README's pi-fleet section). These keys run
+`~/env/bin/pi-fleet`. Without it they do nothing.
+
+| Keys | Does |
+| --- | --- |
+| `prefix e` | jump between pi and its paired nvim. Pairing is by pane id, so panes you add or swap don't matter. From a pi whose nvim is gone, it pairs a new one |
+| `prefix g` | the `fleet` dashboard window; from the dashboard, back to the last window |
+| `prefix G` | the dashboard as a popup (95% × 90%); `q` closes it |
+| `prefix 0`..`9` | the numbers in the status bar are real window indices, so they jump straight there |
+
+- **Bell.** A pi that stops (waiting ◐, question ?, error ✕) rings the bell.
+  tmux flags that window in the window list unless it is the current one
+  (`monitor-bell on`, `bell-action other`, `visual-bell off`).
+- **Status bar.** `status-left` lists sessions that need you, newest first,
+  e.g. `π [3]? flare [5]◐ ckpt`. It refreshes every 5 s. Window names are
+  `<glyph> <session name>`.
+- **Hooks.** Switching to a window or session (`session-window-changed`,
+  `client-session-changed`) runs `pi-fleet seen`, which marks its waiting
+  sessions as seen: ◐ becomes ○ and they leave the status bar.
+
 ## Copy mode (vi keys)
 
 | Keys | Does |

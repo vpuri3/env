@@ -26,6 +26,7 @@ check() {
 }
 
 is_real_file() { [ -f "$1" ] && [ ! -L "$1" ]; }
+is_exec_file() { [ -f "$1" ] && [ -x "$1" ]; }
 is_absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
 no_rc_files() { is_absent "$1/.bashrc" && is_absent "$1/.zshrc" && is_absent "$1/.bash_profile"; }
 
@@ -128,6 +129,8 @@ check "Cursor settings linked into repo" [ "$(readlink "$cursor_user/settings.js
 check "Cursor keybindings linked into repo" [ "$(readlink "$cursor_user/keybindings.json")" = "$home/env/vscode_keybindings.json" ]
 check "pi keybindings linked into repo" [ "$(readlink "$home/.pi/agent/keybindings.json")" = "$home/env/pi/keybindings.json" ]
 check "pi extensions linked into repo" [ "$(readlink "$home/.pi/agent/extensions")" = "$home/env/pi/extensions" ]
+check "pi-fleet extension visible to pi" is_real_file "$home/.pi/agent/extensions/fleet/index.ts"
+check "pi-fleet CLI executable in ~/bin" is_exec_file "$home/bin/pi-fleet"
 check "pi prompts linked into repo" [ "$(readlink "$home/.pi/agent/prompts")" = "$home/env/pi/prompts" ]
 check "slurm-operator agent is a real file" is_real_file "$home/.pi/agent/subagent-manager/agents/slurm-operator.md"
 check "slurm-operator agent matches repo" cmp -s "$home/env/pi/agents/slurm-operator.md" "$home/.pi/agent/subagent-manager/agents/slurm-operator.md"
