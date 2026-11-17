@@ -28,10 +28,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Input, truncateToWidth, type Component, type Focusable, type TUI } from "@earendil-works/pi-tui";
 import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import { inTmux, focusPane, pairPane } from "./cli.ts";
+import { fmtLiteral, inTmux, focusPane, pairPane } from "./cli.ts";
 import {
 	absPath,
 	displayPath,
+	displayText,
 	filesOf,
 	grep,
 	parseTarget,
@@ -51,6 +52,8 @@ export type FileScope = "all" | "git" | "session";
 const COMPLETION_LIMIT = 20;
 const COMPLETION_WAIT_MS = 200;
 const PICKER_TOOL_CALLS = 10;
+/** `tool:` completion only offers the most recent calls. */
+const COMPLETION_TOOL_CALLS = 200;
 const PICKER_VISIBLE = 12;
 const NVIM_OPEN_TIMEOUT_MS = 10_000;
 const PAIR_WAIT_MS = 5_000;
@@ -218,7 +221,7 @@ export async function openExternal(ctx: ExtensionContext, file: string, line: nu
 		? ["nvim", "-R", ...(line ? [`+${line}`] : []), file]
 		: [...(process.env.PAGER || "less").split(/\s+/).filter(Boolean), file];
 	if (process.env.TMUX) {
-		const r = spawnSync("tmux", ["new-window", "-n", title, "-c", ctx.cwd, ...argv], { stdio: "ignore" });
+		const r = spawnSync("tmux", ["new-window", "-n", fmtLiteral(title), "-c", fmtLiteral(ctx.cwd), ...argv], { stdio: "ignore" });
 		if (!r.error && r.status === 0) return `pi-fleet: no paired nvim; opened ${title} in a new tmux window`;
 	}
 	if (!isTui(ctx)) return undefined;
@@ -472,7 +475,7 @@ export function fileItems(pi: ExtensionAPI, cwd: string, scope: FileScope, query
 	const tiers: PathList[] = [touched ?? pathList([]), repo ?? pathList([])];
 	return rankTiers(query, tiers, limit).map((r) => ({
 		value: r.path,
-		label: r.path,
+		label: displayText(r.path),
 		description: r.tier === 0 ? "session" : undefined,
 	}));
 }
@@ -542,7 +545,11 @@ export async function openGrepPicker(pi: ExtensionAPI, ctx: ExtensionContext, pa
 	if (!pat?.trim()) return;
 	const hits = await grep(ctx.cwd, pat);
 	if (!hits.length) return ctx.ui.notify(`/view: no matches for ${pat}`, "info");
-	const all: PickItem[] = hits.map((h) => ({ value: `${h.path}:${h.line}`, label: `${h.path}:${h.line}`, description: h.text.trim() }));
+	const all: PickItem[] = hits.map((h) => ({
+		value: `${h.path}:${h.line}`,
+		label: displayText(`${h.path}:${h.line}`),
+		description: displayText(h.text).trim(),
+	}));
 	const item = await pick(pi, ctx, {
 		title: `Grep: ${pat}`,
 		source: (q) => filterItems(all, q, (it) => `${it.label} ${it.description ?? ""}`),
@@ -563,11 +570,18 @@ export async function viewCompletions(
 	const cwd = ctx?.cwd ?? state.cwd;
 	if (prefix.startsWith("tool:")) {
 		if (!ctx) return null;
-		const calls = callsOf(ctx);
+		const calls = callsOf(ctx).slice(0, COMPLETION_TOOL_CALLS);
 		const rest = prefix.slice(5).trim();
-		let items = calls.map((c, i) => ({ value: `tool:${i + 1}`, label: `tool:${i + 1}`, description: callSummary(c, cwd, 50) }));
-		items = /^\d+$/.test(rest) ? items.filter((it) => it.value.slice(5).startsWith(rest)) : filterItems(items, rest, (it) => it.description);
-		items = items.slice(0, COMPLETION_LIMIT);
+		const item = (i: number) => ({ value: `tool:${i + 1}`, label: `tool:${i + 1}`, description: callSummary(calls[i], cwd, 50) });
+		let items: PickItem[];
+		if (/^\d+$/.test(rest)) {
+			// Filter by number first; only the survivors get summarised.
+			const idx: number[] = [];
+			for (let i = 0; i < calls.length && idx.length < COMPLETION_LIMIT; i++) if (String(i + 1).startsWith(rest)) idx.push(i);
+			items = idx.map(item);
+		} else {
+			items = filterItems(calls.map((_, i) => item(i)), rest, (it) => it.description ?? "").slice(0, COMPLETION_LIMIT);
+		}
 		return items.length ? items : null;
 	}
 	const { path, line } = parseTarget(prefix);

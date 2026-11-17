@@ -5,8 +5,9 @@
  *   1. files touched in this session: read/edit/write tool calls (successful ones, seeded from
  *      the session branch on session_start) and the user's saves from the paired nvim
  *      (USER_EDIT_EVENT), most recent first;
- *   2. the repo: `git ls-files --cached --others --exclude-standard` in the session cwd, falling
- *      back to `fd -t f`, then `rg --files`; capped at 50k paths. Cached per cwd for 30 s,
+ *   2. the repo: `git ls-files --cached` (tracked files first) then, with what is left of the
+ *      cap and a short timeout, `git ls-files --others --exclude-standard`, in the session cwd;
+ *      outside a git repo `fd -t f`, then `rg --files`; capped at 50k paths. Cached per cwd for 30 s,
  *      marked stale on agent_settled, and refreshed in the background (stale results are served
  *      meanwhile), so a lookup never waits for the listing longer than its caller allows.
  *
@@ -28,6 +29,7 @@ import { fleetOf } from "./shared.ts";
 export const REPO_CAP = 50_000;
 export const REPO_TTL_MS = 30_000;
 const LIST_TIMEOUT_MS = 15_000;
+const UNTRACKED_TIMEOUT_MS = 3_000;
 const TOUCHED_CAP = 500;
 
 // ---------------------------------------------------------------- ranking (pure)
@@ -200,6 +202,14 @@ export function rankTiers(query: string, tiers: PathList[], limit = 20): Ranked[
 	return out;
 }
 
+/**
+ * Text safe to show in the TUI: C0/C1 control characters (ESC, CR, …) in file names or grep
+ * hits must not reach the terminal. Tabs become spaces, the rest `?`.
+ */
+export function displayText(s: string): string {
+	return s.replace(/[\x00-\x1f\x7f-\x9f]/g, (c) => (c === "\t" ? " " : "?"));
+}
+
 /** `path`, `path:LINE` or `path:LINE:COL` → path and 1-based line. */
 export function parseTarget(arg: string): { path: string; line?: number } {
 	const s = arg.trim();
@@ -270,18 +280,25 @@ export function touchedFromEntries(entries: readonly any[], cwd: string): string
 
 // ---------------------------------------------------------------- repo listing
 
-function run0(cmd: string, args: string[], cwd: string, cap: number, timeoutMs: number): Promise<string[] | undefined> {
+type ListStatus = "ok" | "capped" | "timeout" | "failed";
+
+/** Run a NUL-separated lister; `failed` means it did not run or exited non-zero. */
+function run0(cmd: string, args: string[], cwd: string, cap: number, timeoutMs: number): Promise<{ paths: string[]; status: ListStatus }> {
 	return new Promise((resolvePromise) => {
+		const out: string[] = [];
 		let child;
 		try {
 			child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "ignore"] });
 		} catch {
-			return resolvePromise(undefined);
+			return resolvePromise({ paths: out, status: "failed" });
 		}
-		const out: string[] = [];
 		let rest = "";
 		let capped = false;
-		const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+		let timedOut = false;
+		const timer = setTimeout(() => {
+			timedOut = true;
+			child.kill("SIGKILL");
+		}, timeoutMs);
 		timer.unref?.();
 		child.stdout.setEncoding("utf8");
 		child.stdout.on("data", (d: string) => {
@@ -300,31 +317,47 @@ function run0(cmd: string, args: string[], cwd: string, cap: number, timeoutMs: 
 		});
 		child.on("error", () => {
 			clearTimeout(timer);
-			resolvePromise(undefined);
+			resolvePromise({ paths: out, status: "failed" });
 		});
 		child.on("close", (code) => {
 			clearTimeout(timer);
-			if (capped || code === 0) return resolvePromise(out);
-			// Killed by the timeout: keep what arrived; a real failure: try the next lister.
-			resolvePromise(out.length ? out : undefined);
+			// Killed by the timeout: keep what arrived.
+			const status: ListStatus = capped ? "capped" : code === 0 ? "ok" : timedOut ? "timeout" : "failed";
+			resolvePromise({ paths: out, status });
 		});
 	});
 }
 
-/** Files under `cwd`, relative to it: git, else fd/fdfind, else rg --files. Never throws. */
-export async function listRepoFiles(cwd: string, cap = REPO_CAP, timeoutMs = LIST_TIMEOUT_MS): Promise<string[]> {
+/**
+ * Files under `cwd`, relative to it. In a git repo: tracked files first, then untracked
+ * (not ignored) ones with the rest of the cap and `untrackedTimeoutMs` (on timeout the tracked
+ * list stands). Outside one: fd/fdfind, else rg --files. Never throws.
+ */
+export async function listRepoFiles(
+	cwd: string,
+	cap = REPO_CAP,
+	timeoutMs = LIST_TIMEOUT_MS,
+	untrackedTimeoutMs = UNTRACKED_TIMEOUT_MS,
+): Promise<string[]> {
+	const tracked = await run0("git", ["ls-files", "-z", "--cached"], cwd, cap, timeoutMs);
+	if (tracked.status !== "failed") {
+		// git lists a path once per stage during a merge.
+		const paths = [...new Set(tracked.paths)];
+		if (tracked.status === "ok" && paths.length < cap) {
+			const others = await run0("git", ["ls-files", "-z", "--others", "--exclude-standard"], cwd, cap - paths.length, untrackedTimeoutMs);
+			paths.push(...others.paths);
+		}
+		return paths;
+	}
 	const listers: [string, string[]][] = [
-		["git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]],
 		["fd", ["--type", "f", "--print0", "--color", "never"]],
 		["fdfind", ["--type", "f", "--print0", "--color", "never"]],
 		["rg", ["--files", "--null"]],
 	];
 	for (const [cmd, args] of listers) {
-		const out = await run0(cmd, args, cwd, cap, timeoutMs);
-		if (out) {
-			// git lists a path once per stage during a merge; some fd versions prefix "./".
-			return cmd === "git" ? [...new Set(out)] : out.map((p) => (p.startsWith("./") ? p.slice(2) : p));
-		}
+		const { paths, status } = await run0(cmd, args, cwd, cap, timeoutMs);
+		// Not installed, an error exit or a timeout with nothing listed: try the next lister.
+		if (status === "ok" || paths.length) return paths.map((p) => (p.startsWith("./") ? p.slice(2) : p));
 	}
 	return [];
 }
@@ -412,13 +445,16 @@ export interface GrepHit {
 	text: string;
 }
 
-/** `rg --vimgrep --smart-case PATTERN` (a regex) in `cwd`, at most `limit` hits. */
+/**
+ * `rg --vimgrep --smart-case PATTERN` (a regex) in `cwd`, at most `limit` hits. `--null` ends
+ * each path with NUL, so a file named `a 12:30:45.txt` parses correctly.
+ */
 export function grep(cwd: string, pattern: string, limit = 500, timeoutMs = 10_000): Promise<GrepHit[]> {
 	return new Promise((resolvePromise) => {
 		const hits: GrepHit[] = [];
 		let child;
 		try {
-			child = spawn("rg", ["--vimgrep", "--no-heading", "--color", "never", "--smart-case", "--max-columns", "300", "-e", pattern], {
+			child = spawn("rg", ["--vimgrep", "--null", "--no-heading", "--color", "never", "--smart-case", "--max-columns", "300", "-e", pattern], {
 				cwd,
 				stdio: ["ignore", "pipe", "ignore"],
 			});
@@ -434,9 +470,11 @@ export function grep(cwd: string, pattern: string, limit = 500, timeoutMs = 10_0
 			const lines = (rest + d).split("\n");
 			rest = lines.pop() ?? "";
 			for (const l of lines) {
-				const m = /^(.+?):(\d+):(\d+):(.*)$/.exec(l);
+				const nul = l.indexOf("\0");
+				if (nul <= 0) continue;
+				const m = /^(\d+):(\d+):(.*)$/s.exec(l.slice(nul + 1));
 				if (!m) continue;
-				hits.push({ path: m[1], line: Number(m[2]), col: Number(m[3]), text: m[4] });
+				hits.push({ path: l.slice(0, nul), line: Number(m[1]), col: Number(m[2]), text: m[3] });
 				if (hits.length >= limit) {
 					child.kill("SIGTERM");
 					break;

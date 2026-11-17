@@ -5,12 +5,14 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	displayPath,
+	displayText,
 	filesOf,
+	grep,
 	listRepoFiles,
 	parseTarget,
 	pathList,
@@ -302,6 +304,77 @@ test("listRepoFiles: git ls-files (tracked + untracked, not ignored), fallback o
 	}
 });
 
+test("listRepoFiles: tracked files first, so untracked ones cannot crowd them out of the cap", async () => {
+	const root = mkdtempSync(join(tmpdir(), "pfv-"));
+	try {
+		const git = (...a: string[]) => execFileSync("git", a, { cwd: root, stdio: "ignore", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } });
+		git("init", "-q");
+		writeFileSync(join(root, "zz-tracked.txt"), "");
+		git("add", "zz-tracked.txt");
+		for (let i = 0; i < 60; i++) writeFileSync(join(root, `a${String(i).padStart(2, "0")}.tmp`), "");
+		const capped = await listRepoFiles(root, 10);
+		assert.equal(capped.length, 10);
+		assert.equal(capped[0], "zz-tracked.txt");
+		// Room left: untracked ones fill it after the tracked list.
+		const all = await listRepoFiles(root);
+		assert.equal(all.length, 61);
+		assert.equal(all[0], "zz-tracked.txt");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("listRepoFiles: a hanging untracked listing keeps the tracked list (no fd/rg fallback)", async () => {
+	const root = mkdtempSync(join(tmpdir(), "pfv-"));
+	const bin = mkdtempSync(join(tmpdir(), "pfv-bin-"));
+	const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+	const oldPath = process.env.PATH;
+	try {
+		const git = (...a: string[]) => execFileSync(realGit, a, { cwd: root, stdio: "ignore", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } });
+		git("init", "-q");
+		writeFileSync(join(root, "tracked.txt"), "");
+		git("add", "tracked.txt");
+		writeFileSync(join(root, "untracked.txt"), "");
+		// git whose `--others` listing hangs; fd/fdfind/rg that would list everything.
+		writeFileSync(join(bin, "git"), `#!/bin/sh\ncase " $* " in *" --others "*) exec sleep 30;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`);
+		for (const f of ["fd", "fdfind", "rg"]) writeFileSync(join(bin, f), "#!/bin/sh\nprintf 'tracked.txt\\0untracked.txt\\0fallback\\0'\n");
+		for (const f of ["git", "fd", "fdfind", "rg"]) chmodSync(join(bin, f), 0o755);
+		process.env.PATH = `${bin}:${oldPath}`;
+		const t0 = Date.now();
+		assert.deepEqual(await listRepoFiles(root, 100, 5_000, 300), ["tracked.txt"]);
+		assert.ok(Date.now() - t0 < 3_000);
+	} finally {
+		process.env.PATH = oldPath;
+		rmSync(root, { recursive: true, force: true });
+		rmSync(bin, { recursive: true, force: true });
+	}
+});
+
+test("displayText: control characters never reach the terminal", () => {
+	assert.equal(displayText("a\x1b[31mb\rc\td\x07e\x9bf\x7f"), "a?[31mb?c d?e?f?");
+	assert.equal(displayText("plain/path ✓.ts"), "plain/path ✓.ts");
+});
+
+test("grep: paths containing `:LINE:COL:`-like text parse via --null", { skip: !hasRg() && "rg not found" }, async () => {
+	const root = mkdtempSync(join(tmpdir(), "pfv-"));
+	try {
+		writeFileSync(join(root, "log 12:30:45.txt"), "one\nneedle: 7:8 here\n");
+		const hits = await grep(root, "needle");
+		assert.deepEqual(hits, [{ path: "log 12:30:45.txt", line: 2, col: 1, text: "needle: 7:8 here" }]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+function hasRg(): boolean {
+	try {
+		execFileSync("rg", ["--version"], { stdio: "ignore" });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 // ---------------------------------------------------------------- tool output, completions
 
 const entries = [
@@ -353,6 +426,42 @@ test("view completions: tool:N items; tiered files keeping :LINE; first call wai
 	const t0 = Date.now();
 	assert.deepEqual((await view.viewCompletions(pi2, ctx, "", 50))?.map((f) => f.value), ["a.ts"]);
 	assert.ok(Date.now() - t0 < 1000);
+});
+
+test("view completions: tool: offers only the 200 most recent calls; numbers filter before summarising", { skip: skipPkg }, async () => {
+	const { pi } = fakePi();
+	const many: any[] = [];
+	for (let i = 0; i < 300; i++) many.push(call(`k${i}`, "bash", { command: `echo ${i}` }), result(`k${i}`));
+	const ctx = fakeCtx("/w", many);
+	assert.deepEqual((await view.viewCompletions(pi, ctx, "tool:25"))?.map((t) => t.value), ["tool:25"]);
+	assert.equal(await view.viewCompletions(pi, ctx, "tool:250"), null);
+	const ones = await view.viewCompletions(pi, ctx, "tool:1");
+	assert.deepEqual(ones?.slice(0, 3).map((t) => t.value), ["tool:1", "tool:10", "tool:11"]);
+	assert.equal(ones?.length, 20);
+	assert.match(ones![0].description!, /echo 299/);
+	// Text queries only see the recent 200 (tool:1 = echo 299 … tool:200 = echo 100).
+	assert.deepEqual((await view.viewCompletions(pi, ctx, "tool:echo 99"))?.some((t) => /echo 99\b/.test(t.description!)), false);
+});
+
+test("pickers: file labels and grep descriptions are stripped of control characters", { skip: skipPkg }, async () => {
+	const { pi } = fakePi();
+	filesOf(pi).repo = new RepoFiles(async () => []);
+	filesOf(pi).touched.touch("/w/evil\x1b]0;pwned\x07.txt");
+	const items = view.fileItems(pi, "/w", "session", "");
+	assert.equal(items[0].value, "evil\x1b]0;pwned\x07.txt");
+	assert.equal(items[0].label, "evil?]0;pwned?.txt");
+
+	if (!hasRg()) return;
+	const root = mkdtempSync(join(tmpdir(), "pfv-"));
+	try {
+		writeFileSync(join(root, "a.txt"), "needle \x1b[2J\rgone\n");
+		let labels: string[] = [];
+		const ctx = { ...fakeCtx(root), ui: { notify() {}, select: async (_t: string, l: string[]) => ((labels = l), undefined) } };
+		await view.openGrepPicker(pi, ctx, "needle");
+		assert.deepEqual(labels, ["a.txt:1  · needle ?[2J?gone"]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 test("FuzzyPicker: typing filters, arrows move, enter picks, esc cancels", { skip: skipPkg }, () => {
