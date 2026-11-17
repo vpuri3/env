@@ -13,7 +13,8 @@
  *   Pane options: @pi_fleet_role list|pi|nvim|preview|anchor, @pi_fleet_session, @pi_fleet_peer
  *     (pi <-> nvim), @pi_fleet_nvim_sock, @pi_fleet_shown=nvim (on a pi whose nvim was in the slot
  *     when the slot moved on). Global options: @deck_tui_pid, @deck_bin, @deck_list_pct,
- *     @deck_outer (`socket|client` of the last popup, bin/pi-deck-attach), @deck_jump.
+ *     @deck_outer (`socket|client` of the last popup, bin/pi-deck-attach), @deck_jump, @deck_sock (the
+ *     list's deck.sock path; clients look it up there, deckSockLookup).
  *
  * deck.sock (<runtime dir>/deck.sock; deck-<name>.sock for a non-default deck socket): NDJSON, one
  * reply line per request, private bind + rename, 64 KB line cap, 2 s idle.
@@ -84,8 +85,13 @@ export const POOL_WRAP =
 /**
  * The list pane's command: `pi-fleet deck` restarted in place if it ever exits (a crash), so the list
  * does not depend on pane-died either; the deck config's pane-died hook still respawns a dead list.
+ * After each exit it clears @deck_tui_pid (no SIGUSR2 to a recycled pid), and after 3 runs in a row
+ * shorter than 5 s it waits 10 s between starts (a list that cannot start does not spin).
+ * bin/pi-deck-attach has a copy (`list_loop`); keep them identical.
  */
-export const LIST_LOOP = 'while :; do "$0" deck; sleep 0.3; done';
+export const LIST_LOOP =
+	'n=0; while :; do s=$(date +%s); "$0" deck; tmux set-option -gu @deck_tui_pid 2>/dev/null; ' +
+	'if [ $(($(date +%s) - s)) -lt 5 ]; then n=$((n + 1)); else n=0; fi; [ "$n" -lt 3 ] || sleep 10; sleep 0.3; done';
 export function listCommand(env: NodeJS.ProcessEnv = process.env): string[] {
 	return ["sh", "-c", LIST_LOOP, env.PI_FLEET_BIN || "pi-fleet"];
 }
@@ -120,11 +126,33 @@ export function deckConfPath(env: NodeJS.ProcessEnv = process.env): string {
 	return env.PI_FLEET_DECK_CONF || fileURLToPath(new URL("../../deck.tmux.conf", import.meta.url));
 }
 
-/** <runtime dir>/deck.sock (deck-<name>.sock for another deck socket, so tests never meet the real one). */
+/**
+ * <runtime dir>/deck.sock (deck-<name>.sock for another deck socket, so tests never meet the real one):
+ * where the list binds. Clients use deckSockLookup (the list publishes its path), because the runtime dir
+ * may be a per-process mkdtemp fallback (cli.ts runtimeDir).
+ */
 export function deckSockPath(env: NodeJS.ProcessEnv = process.env): string {
+	return join(runtimeDir(env), deckSockFile(env));
+}
+function deckSockFile(env: NodeJS.ProcessEnv): string {
 	const name = deckSocketName(env);
-	const file = name === "pifleet" ? "deck.sock" : `deck-${basename(name).replace(/[^\w.-]/g, "_")}.sock`;
-	return join(runtimeDir(env), file);
+	return name === "pifleet" ? "deck.sock" : `deck-${basename(name).replace(/[^\w.-]/g, "_")}.sock`;
+}
+
+/** deck.sock as the running list published it (@deck_sock on the deck server), else deckSockPath. */
+export async function deckSockLookup(env: NodeJS.ProcessEnv = process.env): Promise<string> {
+	const published = await deckTmux(["show-options", "-gqv", "@deck_sock"], env).catch(() => "");
+	return published.startsWith("/") ? published : deckSockPath(env);
+}
+
+/** A directory that is ours alone (not a symlink, our uid, mode 0700). */
+function privateDir(dir: string): boolean {
+	try {
+		const st = lstatSync(dir);
+		return st.isDirectory() && st.uid === uid() && (st.mode & 0o777) === 0o700;
+	} catch {
+		return false;
+	}
 }
 
 /** This process runs inside the deck server (a deck pi, nvim or the list). */
@@ -547,6 +575,8 @@ export async function showSession(sessionId: string, opts: { focus?: boolean } =
 	const panes = await deckPanes(env);
 	const pi = sessionPiPane(panes, sessionId);
 	if (!pi) throw new Error(`deck: no pane for session ${sessionId.slice(0, 8)}`);
+	// A finished pi is about to be reconciled away (pane-died fired already): never swap it into the slot.
+	if (pi.gone) throw new Error(`deck: session ${sessionId.slice(0, 8)} has exited`);
 	const nvim = livePeerIn(panes, pi);
 	const slot = panes.find((p) => p.inSlot);
 	let shown: string;
@@ -750,7 +780,10 @@ export async function reconcile(
 	let panes = await deckPanes(env);
 	const slot = panes.find((p) => p.inSlot);
 	if (slot?.gone && slot.role !== "preview") {
-		const by = (await opts.replacement?.(slot.session)) || (await ensureHolder(env));
+		// The replacement must be a live pane outside the slot (a caller's stale view may name the dead pane itself).
+		const want = await opts.replacement?.(slot.session);
+		const byPane = want ? panes.find((p) => p.pane === want) : undefined;
+		const by = byPane && !byPane.gone && !byPane.inSlot ? byPane.pane : await ensureHolder(env);
 		await showPane(by, env);
 		result.slotReplaced = { dead: slot.pane, session: slot.session, by };
 		panes = await deckPanes(env);
@@ -917,8 +950,8 @@ export function ndjsonRequest(sock: string, message: DeckMessage, timeoutMs = 50
 }
 
 /** A request to the deck list over deck.sock. */
-export function deckRequest(message: DeckMessage, env: NodeJS.ProcessEnv = process.env, timeoutMs = 10_000): Promise<Record<string, unknown>> {
-	return ndjsonRequest(deckSockPath(env), message, timeoutMs);
+export async function deckRequest(message: DeckMessage, env: NodeJS.ProcessEnv = process.env, timeoutMs = 10_000): Promise<Record<string, unknown>> {
+	return ndjsonRequest(await deckSockLookup(env), message, timeoutMs);
 }
 
 /** Wait until deck.sock answers a ping. */
@@ -926,7 +959,7 @@ export async function waitDeckSock(env: NodeJS.ProcessEnv = process.env, timeout
 	const end = Date.now() + timeoutMs;
 	for (;;) {
 		try {
-			const r = await ndjsonRequest(deckSockPath(env), { type: "ping" }, 1000);
+			const r = await ndjsonRequest(await deckSockLookup(env), { type: "ping" }, 1000);
 			if (r.ok) return true;
 		} catch {
 			// not yet
@@ -996,7 +1029,24 @@ export interface DeckList {
 export async function startDeckList(hooks: DeckListHooks = {}, env: NodeJS.ProcessEnv = process.env): Promise<DeckList> {
 	const listPane = env.TMUX_PANE;
 	if (!listPane) throw new Error("deck: not in a tmux pane");
-	await initDeck(listPane, env);
+	// SIGUSR2 (a pane died) must never kill us: initDeck publishes our pid before the setup is done.
+	let onDied: (() => void) | undefined;
+	const onUsr2 = () => onDied?.();
+	process.on("SIGUSR2", onUsr2);
+	let sock: DeckSockServer;
+	try {
+		await initDeck(listPane, env);
+		// Bind where the previous list did if that dir is still ours (runtimeDir's fallback is per process).
+		if (!env.PI_FLEET_RUNTIME_DIR) {
+			const published = await deckTmux(["show-options", "-gqv", "@deck_sock"], env).catch(() => "");
+			if (published.startsWith("/") && basename(published) === deckSockFile(env) && privateDir(dirname(published))) {
+				env.PI_FLEET_RUNTIME_DIR = dirname(published);
+			}
+		}
+	} catch (error) {
+		process.off("SIGUSR2", onUsr2);
+		throw error;
+	}
 	let queue: Promise<unknown> = Promise.resolve();
 	const serial = <T>(fn: () => Promise<T>): Promise<T> => {
 		const run = queue.then(fn, fn);
@@ -1010,7 +1060,13 @@ export async function startDeckList(hooks: DeckListHooks = {}, env: NodeJS.Proce
 			if (m.type === "open" || m.type === "select") hooks.onChange?.(m.type);
 			return r;
 		});
-	const sock = await serveDeckSock(handler, env);
+	try {
+		sock = await serveDeckSock(handler, env);
+		await deckTmux(["set-option", "-g", "@deck_sock", sock.path], env);
+	} catch (error) {
+		process.off("SIGUSR2", onUsr2);
+		throw error;
+	}
 	const resize = () =>
 		serial(async () => {
 			const r = await applySizes(env);
@@ -1030,9 +1086,8 @@ export async function startDeckList(hooks: DeckListHooks = {}, env: NodeJS.Proce
 			void resize().catch(() => {});
 		}, 30);
 	};
-	const onUsr2 = () => void doReconcile();
+	onDied = () => void doReconcile();
 	process.on("SIGWINCH", onWinch);
-	process.on("SIGUSR2", onUsr2);
 	// Panes that died while no list was running (a respawn after a crash).
 	void doReconcile();
 	return {
@@ -1046,7 +1101,7 @@ export async function startDeckList(hooks: DeckListHooks = {}, env: NodeJS.Proce
 			if (winchTimer) clearTimeout(winchTimer);
 			sock.close();
 			const pid = await deckTmux(["show-options", "-gqv", "@deck_tui_pid"], env).catch(() => "");
-			if (pid === String(process.pid)) await deckTmux(["set-option", "-gu", "@deck_tui_pid"], env).catch(() => "");
+			if (pid === String(process.pid)) await deckTmux(["set-option", "-gu", "@deck_tui_pid", ";", "set-option", "-gu", "@deck_sock"], env).catch(() => "");
 		},
 	};
 }
@@ -1087,7 +1142,7 @@ export async function startDeck(
 			if (!(await deckRunning(env))) throw error;
 		}
 	}
-	if (!(await waitDeckSock(env, opts.timeoutMs ?? 3000))) throw new Error(`deck: the list did not answer on ${deckSockPath(env)}`);
+	if (!(await waitDeckSock(env, opts.timeoutMs ?? 3000))) throw new Error(`deck: the list did not answer on ${await deckSockLookup(env)}`);
 	return { started };
 }
 
@@ -1119,14 +1174,18 @@ export interface KillDeckResult {
 	sessions: string[];
 	asked: string[];
 	stillAlive: string[];
+	/** nvims still running once the pis are gone (a pi leaves its nvim open when it has modified buffers). */
+	nvims: { pane: string; session: string; cwd: string; nvimSock: string }[];
 	killedServer: boolean;
 }
 
 /**
  * `kill-deck`: send `kill {confirmed, scancel:false}` to each live deck pi's control socket, wait
- * ≤ waitMs for their panes to die, then kill-server (only the deck server).
+ * ≤ waitMs for their panes to die, then kill-server (only the deck server). nvims still running
+ * after that (≤ 2 s more for those quitting) may hold unsaved buffers: without `force` the server
+ * is then left running (killedServer false) and they are returned in `nvims`.
  */
-export async function killDeck(opts: { waitMs?: number } = {}, env: NodeJS.ProcessEnv = process.env): Promise<KillDeckResult> {
+export async function killDeck(opts: { waitMs?: number; force?: boolean } = {}, env: NodeJS.ProcessEnv = process.env): Promise<KillDeckResult> {
 	const live = (await deckPanes(env)).filter((p) => p.role === "pi" && !p.gone && p.session);
 	const asked: string[] = [];
 	for (const p of live) {
@@ -1145,8 +1204,16 @@ export async function killDeck(opts: { waitMs?: number } = {}, env: NodeJS.Proce
 		const now = await deckPanes(env);
 		stillAlive = stillAlive.filter((pane) => now.some((p) => p.pane === pane && !p.gone));
 	}
-	const killedServer = await deckTmuxOk(["kill-server"], env);
-	return { sessions: live.map((p) => p.session), asked, stillAlive, killedServer };
+	// A pi that exited asked its nvim to :qa unless it has modified buffers (cli.ts closePeerNvim).
+	const nvimEnd = Date.now() + (asked.length ? 2000 : 0);
+	let nvims = (await deckPanes(env)).filter((p) => p.role === "nvim" && !p.gone);
+	while (nvims.length && Date.now() < nvimEnd) {
+		await new Promise((r) => setTimeout(r, 100));
+		nvims = (await deckPanes(env)).filter((p) => p.role === "nvim" && !p.gone);
+	}
+	const left = nvims.map((p) => ({ pane: p.pane, session: p.session, cwd: p.cwd, nvimSock: p.nvimSock }));
+	const killedServer = left.length && !opts.force ? false : await deckTmuxOk(["kill-server"], env);
+	return { sessions: live.map((p) => p.session), asked, stillAlive, nvims: left, killedServer };
 }
 
 // ---------------------------------------------------------------- phase-1 stand-in list
@@ -1188,7 +1255,8 @@ export async function runDeckStub(env: NodeJS.ProcessEnv = process.env): Promise
 		if (key === "j" || key === "\x1b[B" || key === "\x0e") void move(1);
 		else if (key === "k" || key === "\x1b[A" || key === "\x10") void move(-1);
 		else if (key === "\r" || key === "\x0c") void focusSlot(env).catch(() => {});
-		else if (key === "q") void deckTmux(["detach-client", "-s", `=${DECK_SESSION}`], env).catch(() => {});
+		// No target: tmux detaches the most recently active client, the one that typed q (not every client).
+		else if (key === "q") void deckTmux(["detach-client"], env).catch(() => {});
 		else if (key === "\x03") finish(0);
 	});
 	const quit = () => finish(0);

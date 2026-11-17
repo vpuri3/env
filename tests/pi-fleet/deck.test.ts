@@ -9,12 +9,12 @@ import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmuxBaseArgs } from "../../pi/extensions/fleet/cli.ts";
-import { deckSockPath, deckTmuxArgs, inDeck, slotSizeFor } from "../../pi/extensions/fleet/deck.ts";
+import { LIST_LOOP, deckSockPath, deckTmuxArgs, inDeck, slotSizeFor } from "../../pi/extensions/fleet/deck.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = join(here, "../..");
@@ -164,11 +164,33 @@ class Deck {
 		await waitFor("stub pi to start", () => this.file(reply.session, "runs") !== "");
 		return { id: reply.session, pane: reply.pane };
 	}
-	request(message: Record<string, unknown>): Record<string, unknown> {
-		const script = `import("${join(repo, "pi/extensions/fleet/deck.ts")}").then(async (d) => { process.stdout.write(JSON.stringify(await d.deckRequest(${JSON.stringify(message)}))); })`;
-		const r = spawnSync(process.execPath, ["--input-type=module", "-e", script], { env: this.env, encoding: "utf8", timeout: 20_000 });
+	request(message: Record<string, unknown>, extra: NodeJS.ProcessEnv = {}): Record<string, unknown> {
+		return this.deckCall(`d.deckRequest(${JSON.stringify(message)})`, extra) as Record<string, unknown>;
+	}
+	/** Evaluate `expr` (with `d` = deck.ts) in a node child with this deck's env; its JSON result. */
+	deckCall(expr: string, extra: NodeJS.ProcessEnv = {}): unknown {
+		const script = `import("${join(repo, "pi/extensions/fleet/deck.ts")}").then(async (d) => { process.stdout.write(JSON.stringify(await ${expr})); })`;
+		const r = spawnSync(process.execPath, ["--input-type=module", "-e", script], { env: { ...this.env, ...extra }, encoding: "utf8", timeout: 30_000 });
 		assert.equal(r.status, 0, r.stderr);
 		return JSON.parse(r.stdout);
+	}
+	/** deckCall without blocking this process (for sockets the test itself serves). */
+	async deckCallAsync(expr: string): Promise<unknown> {
+		const script = `import("${join(repo, "pi/extensions/fleet/deck.ts")}").then(async (d) => { process.stdout.write(JSON.stringify(await ${expr})); })`;
+		const child = spawn(process.execPath, ["--input-type=module", "-e", script], { env: this.env, stdio: ["ignore", "pipe", "pipe"] });
+		let out = "";
+		let err = "";
+		child.stdout.on("data", (b) => (out += b));
+		child.stderr.on("data", (b) => (err += b));
+		const code = await new Promise<number | null>((r) => child.once("exit", r));
+		assert.equal(code, 0, err);
+		return JSON.parse(out);
+	}
+	/** pi-deck-attach run directly (as from a terminal) in a pane of the throwaway server `<label>-<suffix>`. */
+	async attachDirect(suffix: string, size = { x: 180, y: 50 }): Promise<void> {
+		const before = this.tryTmux(["list-clients", "-F", "#{client_name}"])?.split("\n").filter(Boolean).length ?? 0;
+		this.tmux(["-f", "/dev/null", "new-session", "-d", "-s", "h", "-x", String(size.x), "-y", String(size.y), `env -u TMUX ${attachBin}`], suffix);
+		await waitFor("the deck client", () => this.tmux(["list-clients", "-F", "#{client_name}"]).split("\n").filter(Boolean).length > before);
 	}
 	close(): void {
 		for (const name of this.servers) {
@@ -206,6 +228,8 @@ async function harness(d: Deck): Promise<{ keys: (...k: string[]) => void; hex: 
 	);
 	d.tmux(["-f", outerConf, "new-session", "-d", "-s", "main", "-x", "160", "-y", "48", "/bin/sh"], "outer");
 	const outerSocket = d.tmux(["display-message", "-p", "#{socket_path}"], "outer");
+	// As when the user's tmux server was started from inside a pane: popup jobs inherit this $TMUX_PANE.
+	d.tmux(["set-environment", "-g", "TMUX_PANE", d.tmux(["display-message", "-p", "-t", "main", "#{pane_id}"], "outer")], "outer");
 	d.tmux(
 		["-f", "/dev/null", "new-session", "-d", "-s", "h", "-x", "160", "-y", "48", `env -u TMUX ${realTmux} -L ${d.label}-outer attach -t main`],
 		"h",
@@ -269,6 +293,12 @@ test("deck.tmux.conf: options and keys (list-keys, show -gv)", { skip: skipTmux 
 		assert.match(d.tmux(["show", "-sv", "terminal-features"]), /tmux\*:extkeys/);
 		assert.match(d.tmux(["show-hooks", "-wg"]), /pane-died\[0\] if-shell -F "#\{==:#\{@pi_fleet_role\},list\}" respawn-pane/);
 		assert.match(d.tmux(["list-keys", "-T", "root", "C-h"]), /select-pane -t =deck:=deck\.0/);
+		// No right-click menus (Kill, Respawn, Split, Swap would break a pi or the two-pane layout).
+		const root = d.tmux(["list-keys", "-T", "root"]);
+		assert.doesNotMatch(root, /MouseDown3/);
+		assert.doesNotMatch(root, /kill-pane|respawn-pane|split-window|swap-pane|kill-window|new-window/);
+		// The list loop in pi-deck-attach is deck.ts's LIST_LOOP.
+		assert.ok(readFileSync(attachBin, "utf8").includes(`list_loop='${LIST_LOOP}'`), "bin/pi-deck-attach list_loop != LIST_LOOP");
 		const prefix = d.tmux(["list-keys", "-T", "prefix"]);
 		assert.match(prefix, /prefix\s+C-h\s+send-keys C-h/);
 		assert.match(prefix, /prefix\s+g\s+detach-client/);
@@ -307,6 +337,9 @@ test("deck-start: deck (list | slot, 50/50) and pool (manual, default-size = slo
 		assert.match(pid, /^\d+$/);
 		assert.ok(existsSync(join(d.root, "run", `deck-${d.label}.sock`)));
 		assert.deepEqual(d.request({ type: "ping" }), { ok: true, pid: Number(pid) });
+		// The list publishes deck.sock: a client whose runtime dir differs (runtimeDir's per-process fallback) finds it.
+		assert.equal(d.tmux(["show", "-gv", "@deck_sock"]), join(d.root, "run", `deck-${d.label}.sock`));
+		assert.deepEqual(d.request({ type: "ping" }, { PI_FLEET_RUNTIME_DIR: join(d.root, "elsewhere") }), { ok: true, pid: Number(pid) });
 		// A second start finds it running.
 		assert.match(d.cli(["deck-start"]).out, /^running /);
 	} finally {
@@ -388,9 +421,10 @@ test("resizing the deck client resizes every pool window in one tmux call", { sk
 		await d.open();
 		// A client attached directly (pi-deck-attach in a harness pane, as from a terminal), then resized.
 		d.tmux(["set", "-g", "@deck_outer", "stale"]);
-		d.tmux(["-f", "/dev/null", "new-session", "-d", "-s", "h", "-x", "180", "-y", "50", `env -u TMUX ${attachBin}`], "h");
-		await waitFor("the deck client", () => d.tmux(["list-clients", "-F", "#{client_name}"]) !== "");
+		d.tmux(["set", "-g", "@deck_jump", "%999"]);
+		await d.attachDirect("h");
 		assert.equal(d.tryTmux(["show", "-gv", "@deck_outer"]) ?? "", "", "a direct attach is no popup");
+		assert.equal(d.tryTmux(["show", "-gv", "@deck_jump"]) ?? "", "", "a leftover @deck_jump is cleared at attach");
 		const settled = (w: number) =>
 			waitFor(`pool at the slot size for width ${w}`, () => {
 				const slot = d.slot();
@@ -486,6 +520,115 @@ test("kill-deck asks each deck pi to quit, then kills only its own server", { sk
 		assert.equal(err, "", "the pi exited before the server was killed");
 		assert.equal(d.tryTmux(["has-session", "-t", "=deck"]), undefined);
 		assert.notEqual(d.tryTmux(["has-session", "-t", "=x"], "bystander"), undefined);
+	} finally {
+		d.close();
+	}
+});
+
+test("attaching never points ~/.ssh/ssh_auth_sock at itself", { skip: skipTmux, timeout: 60_000 }, async () => {
+	const d = new Deck();
+	const agent = createServer(() => {});
+	try {
+		const agentSock = join(d.root, "agent.sock");
+		await new Promise<void>((r) => agent.listen(agentSock, r));
+		const link = join(d.root, "home", ".ssh", "ssh_auth_sock");
+		mkdirSync(join(d.root, "home", ".ssh"), { recursive: true });
+		symlinkSync(agentSock, link);
+		d.start();
+		await d.attachDirect("h");
+		assert.equal(d.tmux(["show-environment", "SSH_AUTH_SOCK"]), `SSH_AUTH_SOCK=${link}`, "the attach exported the link");
+		// The client-attached hook runs in the background; give it time, and a second attach.
+		await sleep(500);
+		await d.attachDirect("h2");
+		await sleep(500);
+		assert.equal(readlinkSync(link), agentSock);
+	} finally {
+		agent.close();
+		d.close();
+	}
+});
+
+test("select of an exited pi (not yet reconciled) is refused and leaves the slot alone", { skip: skipTmux, timeout: 60_000 }, async () => {
+	const d = new Deck();
+	try {
+		d.start();
+		const a = await d.open();
+		const b = await d.open();
+		assert.equal(d.slot().pane, b.pane);
+		// What POOL_WRAP sets when pi exits, without the SIGUSR2 that would reconcile it.
+		d.tmux(["set-option", "-p", "-t", a.pane, "@pi_fleet_exited", "0"]);
+		const r = d.request({ type: "select", session: a.id });
+		assert.equal(r.ok, false);
+		assert.match(String(r.error), /has exited/);
+		assert.equal(d.slot().pane, b.pane);
+	} finally {
+		d.close();
+	}
+});
+
+test("pi-deck-attach in an ordinary pane is refused; stand-in q detaches only the client that typed it", { skip: skipTmux, timeout: 60_000 }, async () => {
+	const d = new Deck();
+	try {
+		const out = join(d.root, "attach.out");
+		d.tmux(["-f", "/dev/null", "new-session", "-d", "-s", "p", `${attachBin} >${out} 2>&1; echo "rc=$?" >>${out}; sleep 600`], "pane");
+		await waitFor("pi-deck-attach in a pane", () => readFileSync(out, "utf8").includes("rc="));
+		assert.match(readFileSync(out, "utf8"), /inside a tmux pane[\s\S]*rc=1/);
+		assert.equal(d.tryTmux(["has-session", "-t", "=deck"]), undefined, "no deck started");
+
+		// The phase-1 stand-in list (no pi-tui for the list TUI).
+		const started = d.cli(["deck-start"], { PI_FLEET_PI_PACKAGES: join(d.root, "no-packages") });
+		assert.equal(started.code, 0, started.err);
+		await d.attachDirect("h");
+		await d.attachDirect("h2");
+		const clientOf = (suffix: string) => d.tmux(["display-message", "-p", "-t", "h", "#{pane_tty}"], suffix);
+		await waitFor("the stand-in list drawn", () => /stand-in list/.test(d.tmux(["capture-pane", "-p", "-t", "=deck:=deck.0"])));
+		d.tmux(["select-pane", "-t", "=deck:=deck.0"]);
+		d.tmux(["send-keys", "-t", "h", "q"], "h2");
+		await waitFor("one client detached", () => d.tmux(["list-clients", "-F", "#{client_tty}"]).split("\n").filter(Boolean).length === 1);
+		assert.equal(d.tmux(["list-clients", "-F", "#{client_tty}"]), clientOf("h"), "the other client stays");
+	} finally {
+		d.close();
+	}
+});
+
+test("kill-deck leaves the deck running for an nvim with unsaved changes unless told", { skip: skipNvim, timeout: 90_000 }, async () => {
+	const d = new Deck();
+	try {
+		d.start();
+		const s = await d.open();
+		const ctl = createServer((sock) => {
+			sock.setEncoding("utf8");
+			sock.on("data", () => {
+				sock.end(`${JSON.stringify({ ok: true })}\n`);
+				writeFileSync(join(d.stub, `${s.id}.exit`), "0\n");
+			});
+		});
+		await new Promise<void>((r) => ctl.listen(join(d.root, "run", `${s.id}.pi.sock`), r));
+		try {
+			const pair = d.cli(["pair", "--deck", s.pane, "--json"]);
+			assert.equal(pair.code, 0, pair.err);
+			const nvim = JSON.parse(pair.out);
+			const nvimPane: string = nvim.nvimPane;
+			await waitFor("nvim up", () => existsSync(nvim.nvimSock));
+			d.tmux(["send-keys", "-t", nvimPane, "i", "unsaved", "Escape"]);
+			await waitFor("buffer modified", () => {
+				const r = spawnSync("nvim", ["--server", nvim.nvimSock, "--remote-expr", "&modified"], { encoding: "utf8", timeout: 3000 });
+				return r.stdout.trim() === "1";
+			});
+			const r = (await d.deckCallAsync("d.killDeck({ waitMs: 5000 })")) as { killedServer: boolean; nvims: { pane: string }[]; asked: string[] };
+			assert.deepEqual(r.asked, [s.id], JSON.stringify(r));
+			assert.equal(r.killedServer, false);
+			assert.deepEqual(r.nvims.map((n) => n.pane), [nvimPane]);
+			assert.ok(d.tryTmux(["has-session", "-t", "=deck"]) !== undefined, "the deck still runs");
+			const child = spawn(cliBin, ["kill-deck", "--yes"], { env: d.env, stdio: ["ignore", "pipe", "pipe"] });
+			let err = "";
+			child.stderr.on("data", (b) => (err += b));
+			assert.equal(await new Promise<number | null>((r) => child.once("exit", r)), 0, err);
+			assert.match(err, /1 nvim\(s\) still open/);
+			assert.equal(d.tryTmux(["has-session", "-t", "=deck"]), undefined);
+		} finally {
+			ctl.close();
+		}
 	} finally {
 		d.close();
 	}

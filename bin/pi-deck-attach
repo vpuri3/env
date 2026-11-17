@@ -2,7 +2,8 @@
 # pi-deck-attach: attach the pi deck, the private tmux server `tmux -L pifleet` (docs/pi-deck-design.md §8).
 # POSIX sh, no node: it is what the `prefix g` popup runs, and the popup must open at once.
 #
-#   in a display-popup of your tmux ($TMUX set, no $TMUX_PANE): record the outer `socket|client` in the deck's
+#   in a display-popup of your tmux ($TMUX set, our tty is not $TMUX_PANE's: a popup job inherits the outer
+#       server's global environment, which may hold a $TMUX_PANE): record the outer `socket|client` in the deck's
 #       @deck_outer, attach (creating the deck if needed), and after the detach jump the outer client to the pane
 #       the list left in @deck_jump (an outside session), then exit, which closes the popup.
 #   in a terminal: attach (creating the deck if needed).
@@ -39,7 +40,13 @@ conf=${PI_FLEET_DECK_CONF:-${bin_dir%/*}/pi/deck.tmux.conf}
 outer=
 client=
 if [ -n "${TMUX:-}" ]; then
+    in_pane=
     if [ -n "${TMUX_PANE:-}" ]; then
+        tty=$(tty 2>/dev/null) || tty=
+        pane_tty=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_tty}' 2>/dev/null) || pane_tty=
+        [ -n "$tty" ] && [ "$tty" = "$pane_tty" ] && in_pane=1
+    fi
+    if [ -n "$in_pane" ]; then
         echo "pi-deck-attach: inside a tmux pane; open the deck with prefix g (a popup)" >&2
         exit 1
     fi
@@ -47,7 +54,8 @@ if [ -n "${TMUX:-}" ]; then
     client=${outer#*|}
 fi
 
-# The deck server's environment: ours without the outer tmux's, with the stable agent link (as tmux.conf does).
+# The deck server's environment: ours without the outer tmux's, with the stable agent link (as tmux.conf does;
+# deck.tmux.conf's client-attached hook never re-points the link at itself).
 if [ -e "$HOME/.ssh/ssh_auth_sock" ]; then
     SSH_AUTH_SOCK=$HOME/.ssh/ssh_auth_sock
     export SSH_AUTH_SOCK
@@ -56,14 +64,15 @@ deck() {
     env -u TMUX -u TMUX_PANE -u PI_FLEET_TMUX_SOCKET -u PI_FLEET_SESSION -u PI_FLEET_DECK tmux "$@"
 }
 
-# The list pane's command (deck.ts listCommand): `pi-fleet deck`, restarted in place if it exits.
+# The list pane's command (deck.ts LIST_LOOP, keep identical): `pi-fleet deck`, restarted in place if it exits.
 # shellcheck disable=SC2016
-list_loop='while :; do "$0" deck; sleep 0.3; done'
+list_loop='n=0; while :; do s=$(date +%s); "$0" deck; tmux set-option -gu @deck_tui_pid 2>/dev/null; if [ $(($(date +%s) - s)) -lt 5 ]; then n=$((n + 1)); else n=0; fi; [ "$n" -lt 3 ] || sleep 10; sleep 0.3; done'
+# A leftover @deck_jump (set for another client, or while attached directly) must not move this one.
 if [ -n "$outer" ]; then
-    deck "$@" -f "$conf" set-option -g @deck_outer "$outer" \; new-session -A -s deck -n deck sh -c "$list_loop" "$bin_dir/pi-fleet" \
+    deck "$@" -f "$conf" set-option -g @deck_outer "$outer" \; set-option -gu @deck_jump \; new-session -A -s deck -n deck sh -c "$list_loop" "$bin_dir/pi-fleet" \
         \; set-option -w -t =deck:=deck window-size latest
 else
-    deck "$@" -f "$conf" set-option -gu @deck_outer \; new-session -A -s deck -n deck sh -c "$list_loop" "$bin_dir/pi-fleet" \
+    deck "$@" -f "$conf" set-option -gu @deck_outer \; set-option -gu @deck_jump \; new-session -A -s deck -n deck sh -c "$list_loop" "$bin_dir/pi-fleet" \
         \; set-option -w -t =deck:=deck window-size latest
 fi
 status=$?

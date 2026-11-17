@@ -1353,7 +1353,20 @@ async function killDeckCmd(yes: boolean, env: NodeJS.ProcessEnv): Promise<number
 		process.stdout.write(`Kill the deck and its ${live.length} session(s)? [y/N] `);
 		if (!/^y(es)?$/i.test((await readLine()).trim())) return 1;
 	}
-	const r = await deck.killDeck({}, env);
+	let r = await deck.killDeck({ force: yes }, env);
+	if (r.nvims.length) {
+		// nvims the exiting pis left open: they may have unsaved buffers.
+		process.stderr.write(`pi-fleet: ${r.nvims.length} nvim(s) still open, maybe with unsaved changes:\n`);
+		for (const n of r.nvims) process.stderr.write(`  ${n.session.slice(0, 8)}  ${n.cwd}  (nvim --server ${n.nvimSock})\n`);
+		if (!r.killedServer) {
+			process.stdout.write("Kill them too (unsaved changes are lost)? [y/N] ");
+			if (!/^y(es)?$/i.test((await readLine()).trim())) {
+				process.stderr.write("pi-fleet: the deck keeps running; save them (nvim --server SOCK --remote-send '<C-\\><C-N>:wa<CR>'), then kill-deck again\n");
+				return 1;
+			}
+			r = await deck.killDeck({ force: true }, env);
+		}
+	}
 	if (r.stillAlive.length) process.stderr.write(`pi-fleet: ${r.stillAlive.length} pi(s) did not exit in time; killed with the server\n`);
 	return r.killedServer ? 0 : 1;
 }
