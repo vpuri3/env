@@ -13,9 +13,9 @@
  *   n / N            next / previous match
  *   counts           5j, 3w, ...
  * Selection and copy (same keys as ~/env/tmux.conf):
- *   Space            start a selection at the cursor
+ *   v                start a selection at the cursor
  *   V                select whole lines
- *   v                toggle rectangle (block) selection
+ *   (Space is reserved as the leader key, see the fleet design)
  *   o                jump to the other end of the selection
  *   y / Enter        copy to the system clipboard (and the tmux buffer inside tmux),
  *                    then leave NORMAL mode and jump to the bottom, like copy-pipe-and-cancel
@@ -129,7 +129,6 @@ function withVim(Base: any) {
 	declare cursor: Pt | undefined;
 	declare anchor: Pt | undefined; // selection start; undefined = no selection
 	declare lineSelect: boolean;
-	declare block: boolean;
 	declare pendingSearchJump: boolean;
 	declare pendingG: boolean;
 	declare count: string;
@@ -144,7 +143,6 @@ function withVim(Base: any) {
 		this.cursor = undefined;
 		this.anchor = undefined;
 		this.lineSelect = false;
-		this.block = false;
 		this.pendingSearchJump = false;
 		this.pendingG = false;
 		this.count = "";
@@ -306,11 +304,6 @@ function withVim(Base: any) {
 			const cell = this.cells(p.row).find((x) => p.col < x.end);
 			return cell ? cell.end : p.col + 1;
 		};
-		if (this.block) {
-			const from = Math.min(sel.start.col, sel.end.col);
-			const to = Math.max(endOf(sel.start), endOf(sel.end));
-			return [from, to];
-		}
 		const from = row === sel.start.row ? sel.start.col : 0;
 		const to = row === sel.end.row ? endOf(sel.end) : lineEnd;
 		return [from, Math.max(from, to)];
@@ -333,7 +326,6 @@ function withVim(Base: any) {
 	private clearSelection(): void {
 		this.anchor = undefined;
 		this.lineSelect = false;
-		this.block = false;
 	}
 
 	private copySelection(): void {
@@ -536,19 +528,10 @@ function withVim(Base: any) {
 			case "}":
 				for (let k = 0; k < n; k++) s.scrollToPrompt(data === "{" ? -1 : 1);
 				return this.moveTo(this.view().scrollTop, 0);
-			case " ":
-				this.anchor = { ...c };
-				this.lineSelect = false;
-				s.requestRender?.();
-				return;
+			case "v":
 			case "V":
 				this.anchor = { ...c };
-				this.lineSelect = true;
-				s.requestRender?.();
-				return;
-			case "v":
-				this.block = !this.block;
-				if (this.block) this.lineSelect = false;
+				this.lineSelect = data === "V";
 				s.requestRender?.();
 				return;
 			case "o":
@@ -604,8 +587,7 @@ function withVim(Base: any) {
 		if (this.mode === "normal") lines = lines.map((l) => l.split(FAKE_CURSOR_START).join("").split(FAKE_CURSOR_END).join(""));
 		let label = " INSERT ";
 		if (this.mode === "normal") {
-			label = !this.anchor ? " NORMAL " : this.lineSelect ? " V-LINE " : this.block ? " V-BLOCK " : " VISUAL ";
-			if (!this.anchor && this.block) label = " NORMAL (block) ";
+			label = !this.anchor ? " NORMAL " : this.lineSelect ? " V-LINE " : " VISUAL ";
 		}
 		const last = lines.length - 1;
 		if (visibleWidth(lines[last]!) >= label.length) {
