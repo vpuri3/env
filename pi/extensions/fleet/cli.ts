@@ -25,7 +25,8 @@
  *   ls [--json]   status files of this login node (and others, dimmed state)
  *   run-pi [PI_ARGS]
  *        The pi wrapper inside a session pane. Exit 0 → closes the peer nvim with :qa unless
- *        it has modified buffers. Non-zero → `pi exited (N). r restart · q close`.
+ *        it has modified buffers. Non-zero → `pi exited (N). r restart · q close`. A SIGTERM
+ *        to run-pi is forwarded to pi and run-pi exits 143 (no prompt).
  *   dashboard [--window [--pane P]]
  *        --window: toggle/create the `fleet` window. The TUI itself is phase 4; until then a
  *        placeholder shows `ls` every second.
@@ -63,14 +64,16 @@ function uid(): number {
 
 /**
  * Node-local dir for sockets: $PI_FLEET_RUNTIME_DIR or /tmp/pi-fleet-$UID, created 0700. If the
- * default exists but is a symlink, not ours, or not 0700, fall back to a fresh mkdtemp dir.
+ * default exists but is a symlink, not ours, or not 0700, fall back to a fresh mkdtemp dir and
+ * cache it in env.PI_FLEET_RUNTIME_DIR (passed on to new panes), so every socket path agrees and
+ * no further dirs are made. `tmp` is a test-only override of /tmp.
  */
-export function runtimeDir(env: NodeJS.ProcessEnv = process.env): string {
+export function runtimeDir(env: NodeJS.ProcessEnv = process.env, tmp = "/tmp"): string {
 	if (env.PI_FLEET_RUNTIME_DIR) {
 		mkdirSync(env.PI_FLEET_RUNTIME_DIR, { recursive: true, mode: 0o700 });
 		return env.PI_FLEET_RUNTIME_DIR;
 	}
-	const dir = `/tmp/pi-fleet-${uid()}`;
+	const dir = join(tmp, `pi-fleet-${uid()}`);
 	try {
 		mkdirSync(dir, { mode: 0o700 });
 	} catch {
@@ -82,7 +85,9 @@ export function runtimeDir(env: NodeJS.ProcessEnv = process.env): string {
 	} catch {
 		// fall through
 	}
-	return mkdtempSync(`/tmp/pi-fleet-${uid()}-`);
+	const fallback = mkdtempSync(`${dir}-`);
+	env.PI_FLEET_RUNTIME_DIR = fallback;
+	return fallback;
 }
 export function nvimSockPath(sessionId: string, env: NodeJS.ProcessEnv = process.env): string {
 	return join(runtimeDir(env), `${sessionId}.nvim.sock`);
@@ -129,6 +134,11 @@ export function tmuxBaseArgs(env: NodeJS.ProcessEnv = process.env): string[] {
 		throw new Error("pi-fleet: PI_FLEET_TMUX_GUARD refuses the default tmux server");
 	}
 	return socket ? ["-S", socket] : [];
+}
+
+/** Escape `#` for tmux arguments that are format-expanded (-c, -n, rename-window). */
+export function fmtLiteral(s: string): string {
+	return s.replace(/#/g, "##");
 }
 
 export function inTmux(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -431,7 +441,7 @@ export async function pairPane(
 	if (!(await clearStaleSocket(sock))) sock = join(runtimeDir(env), `${session}.${Date.now()}.nvim.sock`);
 	const nvimPane = await tmux(
 		[
-			"split-window", "-h", "-l", "50%", "-d", "-t", piPane, "-c", opts.cwd || me.cwd || homedir(),
+			"split-window", "-h", "-l", "50%", "-d", "-t", piPane, "-c", fmtLiteral(opts.cwd || me.cwd || homedir()),
 			"-P", "-F", "#{pane_id}",
 			"-e", `PI_FLEET_SESSION=${session}`,
 			"-e", `PI_FLEET_CTL_SOCK=${ctlSockPath(session, env)}`,
@@ -529,7 +539,7 @@ export async function openSession(
 		await tmux(
 			[
 				"new-window", "-P", "-F", "#{pane_id}\t#{window_id}", ...targetArgs,
-				"-n", `${GLYPHS.starting} ${label}`, "-c", cwd,
+				"-n", fmtLiteral(`${GLYPHS.starting} ${label}`), "-c", fmtLiteral(cwd),
 				"-e", `PI_FLEET_SESSION=${sessionId}`,
 				"-e", "PI_FLEET_OPENING=1",
 				...passEnv(env),
@@ -589,9 +599,10 @@ export async function bar(opts: { pane?: string }, env: NodeJS.ProcessEnv = proc
 	for (const { entry, pane } of sessions) {
 		const { status, live } = entry;
 		const name = windowName(status, live);
+		// window_name is the literal name; rename-window format-expands its argument.
 		if (pane.named && pane.windowName !== name) {
 			if (renames.length) renames.push(";");
-			renames.push("rename-window", "-t", pane.window, name);
+			renames.push("rename-window", "-t", pane.window, fmtLiteral(name));
 		}
 		if (live !== "crashed" && !BAR_STATES.has(status.state)) continue;
 		if (status.state !== "question" && status.acked && live !== "crashed") continue;
@@ -734,7 +745,11 @@ async function runPi(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
 	process.on("SIGQUIT", ignore);
 	for (;;) {
 		const child = spawn(cmd[0], [...cmd.slice(1), ...args], { stdio: "inherit", env });
-		const forward = () => child.kill("SIGTERM");
+		let terminated = false;
+		const forward = () => {
+			terminated = true;
+			child.kill("SIGTERM");
+		};
 		process.on("SIGTERM", forward);
 		const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((res) => {
 			child.once("exit", (c, s) => res([c, s]));
@@ -748,6 +763,8 @@ async function runPi(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
 			if (env.TMUX_PANE) await closePeerNvim(env.TMUX_PANE, env);
 			return 0;
 		}
+		// We were told to stop (pane or server going away): no crash prompt.
+		if (terminated) return 143;
 		const why = signal ? `killed by ${signal}` : `exited (${code})`;
 		process.stdout.write(`\r\n\x1b[1mpi ${why}.\x1b[0m r restart · q close\r\n`);
 		let key = "";

@@ -6,10 +6,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ctlSockPath, nvimSockPath, runtimeDir } from "../../pi/extensions/fleet/cli.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = join(here, "../..");
@@ -165,6 +166,37 @@ test("harness and CLI refuse the default tmux socket", { skip: skipTmux }, () =>
 	assert.match(viaTmux.stderr, /refuses the default tmux server/);
 });
 
+test("runtimeDir: a bad default dir falls back to one mkdtemp dir, cached for every socket path", () => {
+	const tmp = mkdtempSync(join(tmpdir(), "pft-rt-"));
+	try {
+		const uid = process.getuid?.() ?? 0;
+		const bad = join(tmp, `pi-fleet-${uid}`);
+		mkdirSync(bad);
+		chmodSync(bad, 0o755); // not 0700: rejected
+		const env: NodeJS.ProcessEnv = {};
+		const dir = runtimeDir(env, tmp);
+		assert.notEqual(dir, bad);
+		assert.ok(dir.startsWith(`${bad}-`), dir);
+		assert.equal(statSync(dir).mode & 0o777, 0o700);
+		assert.equal(env.PI_FLEET_RUNTIME_DIR, dir, "cached so later calls (and new panes) agree");
+		assert.equal(runtimeDir(env, tmp), dir);
+		assert.equal(nvimSockPath("s1", env), join(dir, "s1.nvim.sock"));
+		assert.equal(ctlSockPath("s1", env), join(dir, "s1.pi.sock"));
+		assert.equal(execFileSync("ls", [tmp], { encoding: "utf8" }).trim().split("\n").length, 2, "no extra dirs leak");
+		// a good default is used as is (and not cached)
+		const tmp2 = mkdtempSync(join(tmpdir(), "pft-rt-"));
+		try {
+			const env2: NodeJS.ProcessEnv = {};
+			assert.equal(runtimeDir(env2, tmp2), join(tmp2, `pi-fleet-${uid}`));
+			assert.equal(env2.PI_FLEET_RUNTIME_DIR, undefined);
+		} finally {
+			rmSync(tmp2, { recursive: true, force: true });
+		}
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
 test("tmux.conf loads on this tmux: bell, bar, hook, keys; user bindings kept", { skip: skipTmux }, () => {
 	const f = new Fleet({ conf: tmuxConf });
 	try {
@@ -172,6 +204,7 @@ test("tmux.conf loads on this tmux: bell, bar, hook, keys; user bindings kept", 
 		assert.equal(f.tmux(["show", "-gv", "bell-action"]), "other");
 		assert.equal(f.tmux(["show", "-gv", "visual-bell"]), "off");
 		assert.equal(f.tmux(["show", "-gv", "status-interval"]), "5");
+		assert.equal(f.tmux(["show", "-gv", "status-left-length"]), "120");
 		assert.match(f.tmux(["show", "-gv", "status-left"]), /#\(pi-fleet bar --pane "#\{pane_id\}"/);
 		assert.equal(f.tmux(["show", "-gv", "prefix"]), "C-s");
 		const hooks = f.tmux(["show-hooks", "-g"]);
@@ -180,6 +213,7 @@ test("tmux.conf loads on this tmux: bell, bar, hook, keys; user bindings kept", 
 		const keys = f.tmux(["list-keys", "-T", "prefix"]);
 		const key = (k: string) => keys.split("\n").find((l) => new RegExp(`-T prefix +${k} `).test(l)) ?? "";
 		assert.match(key("e"), /@pi_fleet_peer/);
+		assert.match(key("e"), /pi-fleet peer --select [^|]*\|\| true\\*"/, "a failure must not put the pane in view mode");
 		assert.match(key("g"), /@pi_fleet_dashboard.*last-window.*pi-fleet dashboard --window/);
 		assert.match(key("G"), /display-popup -E -h 90% -w 95% "pi-fleet dashboard"/);
 		for (const [k, cmd] of [["h", "select-pane -L"], ["j", "select-pane -D"], ["k", "select-pane -U"], ["l", "select-pane -R"],
@@ -389,6 +423,57 @@ test("bar lists waiting sessions by real window index, renames fleet windows; se
 		assert.equal(ls.length, 5);
 		assert.equal(ls.find((s: any) => s.sessionId === c.id).liveness, "crashed");
 		assert.equal(ls.find((s: any) => s.sessionId === "remote-2").liveness, "remote");
+	} finally {
+		f.close();
+	}
+});
+
+test("# in cwd, names and session names is literal, not a tmux format", { skip: skipNvim, timeout: 60_000 }, async () => {
+	const f = new Fleet();
+	try {
+		f.tmux(["new-session", "-d", "-s", "s#1", "-x", "200", "-y", "50", "sh"]);
+		const target = f.tmux(["display-message", "-p", "-t", "s#1:", "#{pane_id}"]);
+		const cwd = join(f.work, "x#{session_name}#H");
+		mkdirSync(cwd);
+		const r = f.cli(["open", "--cwd", cwd, "--target", target]);
+		assert.equal(r.code, 0, r.err);
+		const pi = r.out.trim();
+		const id = f.opt(pi, "@pi_fleet_session");
+		await waitFor("stub pi to start", () => f.runs(id).length === 1);
+		const nvim = f.opt(pi, "@pi_fleet_peer");
+		assert.equal(f.opt(pi, "session_name"), "s#1");
+		assert.equal(f.opt(pi, "window_name"), "⟳ x#{session_name}#H");
+		assert.equal(f.opt(pi, "pane_current_path"), cwd);
+		await waitFor("nvim cwd", () => f.opt(nvim, "pane_current_path") === cwd);
+
+		f.writeStatus({ sessionId: id, name: "n#{session_name}#H", state: "waiting", acked: false, runId: "r1", tmux: { socket: f.socket, piPane: pi } });
+		const bar = f.cli(["bar", "--pane", f.active()]);
+		assert.equal(bar.out, `π [s##1:${f.opt(pi, "window_index")}]◐ n##{session_… `);
+		assert.equal(f.opt(pi, "window_name"), "◐ n#{session_name}#H");
+		// the next tick sees the literal name and does not rename again
+		f.tmux(["set-hook", "-g", "window-renamed", "set -g @pft_renamed 1"]);
+		f.cli(["bar"]);
+		f.cli(["bar"]);
+		assert.equal(f.tmux(["show", "-gqv", "@pft_renamed"]), "");
+		f.tmux(["rename-window", "-t", pi, "probe"]); // the hook itself works
+		await waitFor("hook fired", () => f.tmux(["show", "-gqv", "@pft_renamed"]) === "1");
+	} finally {
+		f.close();
+	}
+});
+
+test("run-pi: SIGTERM is forwarded to pi and exits 143 without the crash prompt", { skip: skipNvim, timeout: 60_000 }, async () => {
+	const f = new Fleet();
+	try {
+		const s = await f.open();
+		f.tmux(["set-option", "-w", "-t", s.pi, "remain-on-exit", "on"]);
+		process.kill(Number(f.opt(s.pi, "pane_pid")), "SIGTERM");
+		await waitFor("run-pi exited", () => f.opt(s.pi, "pane_dead") === "1");
+		// pane_dead can flip (pty EOF) before tmux has reaped the exit status
+		const status = await waitFor("exit status", () => f.opt(s.pi, "pane_dead_status"), 3000).catch(() => "none (killed by a signal?)");
+		assert.equal(status, "143");
+		assert.doesNotMatch(f.tmux(["capture-pane", "-p", "-t", s.pi]), /r restart/);
+		assert.equal(f.runs(s.id).length, 1);
 	} finally {
 		f.close();
 	}
