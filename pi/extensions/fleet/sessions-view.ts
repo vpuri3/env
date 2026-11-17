@@ -17,11 +17,19 @@
  *
  * Keys (no Alt, no Ctrl+Shift, no Tab): j/k, ↑/↓, ctrl+n/ctrl+p move; PgUp/PgDn page; Space
  * expands/collapses; Enter opens (jumps to a live window, else `pi-fleet open` in a new window;
- * on a subagent: its main); x kill (sends {"type":"kill"} to that pi's control socket, then
- * jumps there); n new session in the row's repo; / filter (every word a case-insensitive
- * substring of name, repo, cwd or last message; while typing, letters go to the filter, Enter
- * opens, Esc stops typing); ! @ # & only running/waiting/idle/error, 0 clears; ? help; Esc
- * clears the filters, then closes; q closes.
+ * on a subagent: its main); d kill: an inline confirm (y kill, s kill + scancel its Slurm jobs,
+ * n/Esc cancel), then {"type":"kill","confirmed":true,"scancel":…} to that pi's control socket
+ * (no dialog there; the view stays open and the row disappears); a new session in the repo of
+ * the row or repo header; / filter (every word a case-insensitive substring of name, repo, cwd
+ * or last message; while typing, letters go to the filter, Enter opens, Esc stops typing);
+ * ! @ # & only running/waiting/idle/error, 0 clears; ? help; Esc clears the filters, then
+ * closes; q closes.
+ *
+ * Colors (glyph and state text only, so the selected row's background stays readable): working
+ * blue, autonomous (/leavemealone) working green "auto", needs you (done, unseen) yellow,
+ * question magenta bold, error/crashed red, idle/closed/remote dim. The selected row gets a
+ * full-width background (pi's selectedBg; a grey in the dashboard) besides the `›` marker. The
+ * line above the key hints describes the selected session.
  *
  * Portions adapted from agent-deck (github.com/asheshgoplani/agent-deck, MIT, commit 80494e5):
  * the preview capture and control-character stripping (internal/ui/home_preview_fetch.go,
@@ -41,7 +49,8 @@ import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { decodeKittyPrintable, isKeyRelease, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
-import { ctlSockPath, focusPane, inTmux, isDefaultSocket, openSession, paneInfo, readStatuses, tmuxBaseArgs } from "./cli.ts";
+import { ctlSockPath, inTmux, isDefaultSocket, openSession, readStatuses, tmuxBaseArgs } from "./cli.ts";
+import { queuedJobs, type SlurmJob } from "./lifecycle.ts";
 import { SessionIndex, countSubagents, type FoldedThread, type IndexEntry, type SubagentCounts } from "./registry.ts";
 import { fleetOf, ownPrompt } from "./shared.ts";
 import { GLYPHS, STALE_MS, type FleetState, type Liveness, type StatusFile } from "./status.ts";
@@ -225,38 +234,117 @@ function category(row: SessionRow): StatusFilter {
 	return "idle";
 }
 
+/** `working` is blue and `question` magenta: semantic colors the pi adapter maps to theme tokens. */
+export type ViewColor = "accent" | "muted" | "dim" | "success" | "warning" | "error" | "border" | "working" | "question";
+
 /** The styling the view needs: pi's theme inside pi, plain ANSI in the dashboard. */
 export interface ViewStyle {
-	fg(color: "accent" | "muted" | "dim" | "success" | "warning" | "error" | "border", text: string): string;
+	fg(color: ViewColor, text: string): string;
 	bold(text: string): string;
+	/** The selected row, already padded to the full width: give it a background. Optional. */
+	selected?(line: string): string;
 }
 
-const ANSI_FG: Record<string, string> = { accent: "36", muted: "37", dim: "90", success: "32", warning: "33", error: "31", border: "90" };
+/** Put `line` on a background (`open`, an SGR), re-opening it after every reset inside. */
+export function withBackground(line: string, open: string): string {
+	return `${open}${line.replace(/\x1b\[(?:0|49)?m/g, (m) => m + open)}\x1b[49m`;
+}
+
+const ANSI_FG: Record<ViewColor, string> = {
+	accent: "36",
+	muted: "37",
+	dim: "90",
+	success: "32",
+	warning: "33",
+	error: "31",
+	border: "90",
+	working: "34",
+	question: "35",
+};
+/** The dashboard's selection background: grey 237 of the 256-color cube. */
+export const ANSI_SELECTED_BG = "\x1b[48;5;237m";
 export const ansiStyle: ViewStyle = {
 	fg: (color, text) => `\x1b[${ANSI_FG[color] ?? "39"}m${text}\x1b[39m`,
 	bold: (text) => `\x1b[1m${text}\x1b[22m`,
+	selected: (line) => withBackground(line, ANSI_SELECTED_BG),
 };
 
-function glyph(row: SessionRow, style: ViewStyle): string {
+/** pi theme tokens for the view's colors (pi's `accent` is violet, its blue is `mdLink`). */
+const PI_COLORS: Record<ViewColor, string> = {
+	accent: "accent",
+	muted: "muted",
+	dim: "dim",
+	success: "success",
+	warning: "warning",
+	error: "error",
+	border: "border",
+	working: "mdLink",
+	question: "accent",
+};
+
+/** ViewStyle over pi's theme: selection background `selectedBg` when the theme has it. */
+export function themeStyle(theme: { fg(color: any, text: string): string; bold(text: string): string; getBgAnsi?(color: any): string }): ViewStyle {
+	let bg: string | undefined;
+	try {
+		bg = typeof theme.getBgAnsi === "function" ? theme.getBgAnsi("selectedBg") : undefined;
+	} catch {
+		bg = undefined;
+	}
+	return {
+		fg: (color, text) => theme.fg(PI_COLORS[color] ?? color, text),
+		bold: (text) => theme.bold(text),
+		selected: bg ? (line) => withBackground(line, bg!) : undefined,
+	};
+}
+
+/** How a row is colored: what it means for the user (§9). */
+export type Tone = "working" | "auto" | "attention" | "question" | "error" | "off";
+const TONE_COLOR: Record<Tone, ViewColor> = { working: "working", auto: "success", attention: "warning", question: "question", error: "error", off: "dim" };
+
+export function rowTone(row: SessionRow): Tone {
 	switch (row.state) {
 		case "running":
-			return style.fg("success", GLYPHS.running);
+			return row.status?.autonomous ? "auto" : "working";
 		case "starting":
-			return style.fg("accent", GLYPHS.starting);
+			return "working";
 		case "question":
-			return style.bold(style.fg("warning", GLYPHS.question));
+			return "question";
 		case "waiting":
-			return style.fg("warning", GLYPHS.waiting);
-		case "idle":
-			return style.fg("muted", GLYPHS.idle);
+			return "attention";
 		case "error":
 		case "crashed":
-			return style.fg("error", GLYPHS.error);
-		case "remote":
-			return style.fg("dim", "⇢");
+			return "error";
 		default:
-			return style.fg("dim", GLYPHS.idle);
+			return "off";
 	}
+}
+
+function toned(tone: Tone, text: string, style: ViewStyle): string {
+	const t = style.fg(TONE_COLOR[tone], text);
+	return tone === "question" ? style.bold(t) : t;
+}
+
+function glyphChar(row: SessionRow): string {
+	if (row.state === "remote") return "⇢";
+	if (row.state === "closed") return GLYPHS.idle;
+	return GLYPHS[row.state];
+}
+
+function glyph(row: SessionRow, style: ViewStyle): string {
+	return toned(rowTone(row), glyphChar(row), style);
+}
+
+/** The color legend: one glyph per tone. */
+export function legend(style: ViewStyle): string {
+	const items: [Tone, string][] = [
+		["working", `${GLYPHS.running} working`],
+		["auto", `${GLYPHS.running} auto`],
+		["attention", `${GLYPHS.waiting} needs you`],
+		["question", `${GLYPHS.question} question`],
+		["error", `${GLYPHS.error} error`],
+		["off", `${GLYPHS.idle} idle`],
+	];
+	return items.map(([tone, text]) => toned(tone, text, style)).join(" ");
 }
 
 /** The middle column: what the session is doing and since when. */
@@ -267,7 +355,7 @@ export function rowDetail(row: SessionRow, now: number): string {
 		case "running": {
 			const sub = s?.sub ?? "";
 			const what = oneLine(sub.startsWith("tool:") ? sub.slice(5) : sub || "working");
-			return `${what} ${duration(now - since)}`;
+			return `${s?.autonomous ? "auto " : ""}${what} ${duration(now - since)}`;
 		}
 		case "starting":
 			return "starting";
@@ -291,7 +379,7 @@ export function rowDetail(row: SessionRow, now: number): string {
 /** Subagent counts: `2w 1◐ 3✓ 1✕ 2 interrupted`. */
 export function countsText(c: SubagentCounts, style: ViewStyle): string {
 	const parts: string[] = [];
-	if (c.working) parts.push(style.fg("success", `${c.working}w`));
+	if (c.working) parts.push(style.fg("working", `${c.working}w`));
 	if (c.waiting) parts.push(style.fg("warning", `${c.waiting}◐`));
 	if (c.done) parts.push(style.fg("dim", `${c.done}✓`));
 	if (c.error) parts.push(style.fg("error", `${c.error}✕`));
@@ -304,7 +392,7 @@ function threadGlyph(thread: FoldedThread, live: boolean, style: ViewStyle): { g
 	switch (thread.state) {
 		case "starting":
 		case "running":
-			return live ? { glyph: style.fg("success", "●"), word: thread.state } : { glyph: style.fg("warning", "◌"), word: "interrupted" };
+			return live ? { glyph: style.fg("working", "●"), word: thread.state } : { glyph: style.fg("warning", "◌"), word: "interrupted" };
 		case "paused":
 			return { glyph: style.fg("warning", "◐"), word: "paused" };
 		case "completed":
@@ -442,7 +530,7 @@ export function panePreview(env: NodeJS.ProcessEnv = process.env): (row: Session
 export type SessionsAction =
 	| { type: "open"; row: SessionRow }
 	| { type: "new"; cwd: string }
-	| { type: "kill"; row: SessionRow }
+	| { type: "kill"; row: SessionRow; scancel: boolean }
 	| { type: "close" };
 
 export interface SessionsViewOptions {
@@ -460,6 +548,14 @@ export interface SessionsViewOptions {
 	currentId?: string;
 	host?: string;
 	now?: () => number;
+	/** Slurm jobs among `ids` still queued (lifecycle.ts queuedJobs); for the `d` confirm. */
+	squeue?: (ids: string[]) => Promise<SlurmJob[] | undefined>;
+}
+
+/** The `d` confirm: Slurm jobs "checking" until squeue answers, undefined if it failed. */
+interface KillConfirm {
+	row: SessionRow;
+	jobs: SlurmJob[] | undefined | "checking";
 }
 
 type Item =
@@ -482,8 +578,8 @@ const HELP_LINES = [
 	"j/k ↑/↓ ctrl+n/ctrl+p   move            PgUp/PgDn   page",
 	"Space                   show subagents of a session / collapse a repo",
 	"Enter                   jump to the session (or open it in a new window)",
-	"x                       kill the session (asks in its own window)",
-	"n                       new session in the row's repo",
+	"d                       kill the session: y kill · s kill + scancel its Slurm jobs · n/Esc no",
+	"a                       new session in the repo of the row (or repo header)",
 	"/                       filter by name, repo, cwd, last message",
 	"! @ # &   0             only running / waiting / idle / error;  all",
 	"Esc                     clear filters, then close     q  close",
@@ -503,6 +599,7 @@ export class SessionsView implements Component {
 	statusFilter: StatusFilter | undefined;
 	private help = false;
 	private message: { text: string; until: number } | undefined;
+	private confirm: KillConfirm | undefined;
 	private previews = new Map<string, PreviewState>();
 	private previewBusy = false;
 	private timers: ReturnType<typeof setInterval>[] = [];
@@ -554,6 +651,11 @@ export class SessionsView implements Component {
 		this.threadCache.clear();
 		const ids = new Set(this.rows.map((r) => r.id));
 		for (const id of [...this.previews.keys()]) if (!ids.has(id)) this.previews.delete(id);
+		const asked = this.confirm?.row;
+		if (asked && !this.rows.some((r) => r.id === asked.id && r.live === "live")) {
+			this.confirm = undefined;
+			this.flash(`${asked.name} is not running`);
+		}
 		this.rebuild();
 	}
 
@@ -640,7 +742,8 @@ export class SessionsView implements Component {
 	handleInput(data: string): void {
 		if (isKeyRelease(data)) return;
 		this.message = undefined;
-		if (this.typing) this.handleTyping(data);
+		if (this.confirm) this.handleConfirm(data);
+		else if (this.typing) this.handleTyping(data);
 		else this.handleKey(data);
 		this.opts.requestRender();
 	}
@@ -715,12 +818,9 @@ export class SessionsView implements Component {
 				this.statusFilter = undefined;
 				this.rebuild();
 				return;
-			case "x": {
-				const item = this.items[this.selected];
-				if (item?.kind === "main") this.opts.onAction({ type: "kill", row: item.row });
-				return;
-			}
-			case "n": {
+			case "d":
+				return this.askKill();
+			case "a": {
 				const item = this.items[this.selected];
 				const repo = item?.kind === "group" ? item.group.repo : item && item.kind !== "note" ? item.row.repo || item.row.cwd : undefined;
 				this.opts.onAction({ type: "new", cwd: repo || process.cwd() });
@@ -731,6 +831,60 @@ export class SessionsView implements Component {
 			const f = STATUS_FILTER_KEYS[ch];
 			this.statusFilter = this.statusFilter === f ? undefined : f;
 			this.rebuild();
+		}
+	}
+
+	/** The confirm being shown, if any (tests). */
+	confirming(): { row: SessionRow; jobs: SlurmJob[] | undefined | "checking" } | undefined {
+		return this.confirm;
+	}
+
+	/** `d`: ask inline whether to kill the selected main session (never a remote or dead one). */
+	private askKill(): void {
+		const item = this.items[this.selected];
+		if (!item || item.kind !== "main") {
+			this.flash("d kills a session: select its row");
+			return;
+		}
+		const row = item.row;
+		if (row.state === "remote") {
+			this.flash(`${row.name} runs on ${row.status?.host ?? "another node"}: kill it there`);
+			return;
+		}
+		if (row.live !== "live") {
+			this.flash(`${row.name} is not running`);
+			return;
+		}
+		const ids = row.status?.slurmJobs ?? [];
+		const confirm: KillConfirm = { row, jobs: ids.length ? "checking" : [] };
+		this.confirm = confirm;
+		if (!ids.length) return;
+		void (this.opts.squeue ?? queuedJobs)(ids)
+			.catch(() => undefined)
+			.then((jobs) => {
+				if (this.confirm !== confirm || this.disposed) return;
+				confirm.jobs = jobs;
+				this.opts.requestRender();
+			});
+	}
+
+	/** Slurm jobs `s` would cancel: queued ones, all of them while unknown or checking. */
+	private confirmJobs(c: KillConfirm): string[] {
+		const ids = c.row.status?.slurmJobs ?? [];
+		return Array.isArray(c.jobs) ? c.jobs.map((j) => j.id) : ids;
+	}
+
+	private handleConfirm(data: string): void {
+		const c = this.confirm!;
+		const ch = printable(data);
+		if (ch === "y" || ch === "s") {
+			const scancel = ch === "s";
+			if (scancel && !this.confirmJobs(c).length) return;
+			this.confirm = undefined;
+			this.flash(`killing ${c.row.name}${scancel ? " and its Slurm jobs" : ""}…`);
+			this.opts.onAction({ type: "kill", row: c.row, scancel });
+		} else if (ch === "n" || ch === "q" || matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+			this.confirm = undefined;
 		}
 	}
 
@@ -793,44 +947,48 @@ export class SessionsView implements Component {
 	static readonly SIDE_BY_SIDE_MIN = 100;
 	private stackedLast = false;
 
+	/** Lines around the body: header, status line, key hints. */
+	static readonly CHROME = 3;
+
 	private listHeight(): number {
-		const bodyH = Math.max(1, this.opts.height() - 2);
+		const bodyH = Math.max(1, this.opts.height() - SessionsView.CHROME);
 		return this.opts.mode === "dashboard" && this.stackedLast ? Math.max(3, Math.floor(bodyH / 2)) : bodyH;
 	}
 	private previewBodyHeight(): number {
-		const bodyH = Math.max(1, this.opts.height() - 2);
+		const bodyH = Math.max(1, this.opts.height() - SessionsView.CHROME);
 		return Math.max(1, (this.stackedLast ? bodyH - this.listHeight() : bodyH) - 1);
 	}
 
 	render(width: number): string[] {
 		const style = this.opts.style;
-		const height = Math.max(3, this.opts.height());
+		const height = Math.max(SessionsView.CHROME + 1, this.opts.height());
 		if (this.message && this.message.until < this.now()) this.message = undefined;
 		const header = this.headerLine(width);
-		const footer = this.footerLine(width);
+		const footer = [this.statusLine(width), this.footerLine(width)];
+		const help = (w: number) => [...HELP_LINES.map((l) => fit(style.fg("muted", ` ${l}`), w)), fit(` ${legend(style)}`, w)];
 		if (this.opts.mode === "list") {
-			const body = this.help ? HELP_LINES.map((l) => fit(style.fg("muted", ` ${l}`), width)) : this.listLines(width, height - 2);
-			return [header, ...body, footer];
+			const body = this.help ? help(width) : this.listLines(width, height - SessionsView.CHROME);
+			return [header, ...body, ...footer];
 		}
-		const bodyH = height - 2;
+		const bodyH = height - SessionsView.CHROME;
 		this.stackedLast = width < SessionsView.SIDE_BY_SIDE_MIN;
 		let body: string[];
 		if (!this.stackedLast) {
 			const listW = Math.max(50, Math.min(80, Math.floor(width * 0.5)));
 			const prevW = width - listW - 1;
-			const list = this.help ? HELP_LINES.map((l) => fit(` ${l}`, listW)) : this.listLines(listW, bodyH);
+			const list = this.help ? help(listW) : this.listLines(listW, bodyH);
 			const prev = this.previewPane(prevW, bodyH);
 			const sep = style.fg("border", "│");
 			body = [];
 			for (let i = 0; i < bodyH; i++) body.push(`${pad(list[i] ?? "", listW)}${sep}${fit(prev[i] ?? "", prevW)}`);
 		} else {
 			const listH = this.listHeight();
-			const list = this.help ? HELP_LINES.map((l) => fit(` ${l}`, width)) : this.listLines(width, listH);
+			const list = this.help ? help(width) : this.listLines(width, listH);
 			while (list.length < listH) list.push("");
 			body = [...list.slice(0, listH), ...this.previewPane(width, bodyH - listH)];
 		}
 		while (body.length < bodyH) body.push("");
-		return [header, ...body.slice(0, bodyH), footer].map((l) => fit(l, width));
+		return [header, ...body.slice(0, bodyH), ...footer].map((l) => fit(l, width));
 	}
 
 	private headerLine(width: number): string {
@@ -842,18 +1000,77 @@ export class SessionsView implements Component {
 		const filters: string[] = [];
 		if (this.statusFilter) filters.push(style.fg("accent", `[${this.statusFilter}]`));
 		if (this.typing || this.filter) filters.push(`/${this.filter}${this.typing ? style.fg("accent", "▏") : ""}`);
-		const right = filters.length ? filters.join(" ") : style.fg("dim", "/ filter   ? help");
+		const right = filters.length ? filters.join(" ") : legend(style);
 		const gap = width - visibleWidth(left) - visibleWidth(right) - 1;
 		return gap >= 2 ? `${left}${" ".repeat(gap)}${right} ` : fit(`${left}  ${right}`, width);
 	}
 
 	private footerLine(width: number): string {
 		const style = this.opts.style;
+		if (this.confirm) {
+			const scancel = this.confirmJobs(this.confirm).length ? " · s kill+scancel" : "";
+			return fit(` ${style.bold(style.fg("warning", `y kill${scancel} · n/Esc cancel`))}`, width);
+		}
 		if (this.message) return fit(` ${style.fg("warning", this.message.text)}`, width);
 		const hint = this.typing
 			? "type to filter · enter open · esc stop typing · ↑/↓ move"
-			: "enter open · space subagents · / filter · !@#& status · x kill · n new · q close";
+			: "enter open · space subagents · d kill · a new · / filter · !@#& status · ? help · q close";
 		return fit(style.fg("dim", ` ${hint}`), width);
+	}
+
+	/** The line above the key hints: the selected session in full, or the kill confirm. */
+	private statusLine(width: number): string {
+		const style = this.opts.style;
+		const sep = style.fg("dim", " · ");
+		if (this.confirm) {
+			const { row, jobs } = this.confirm;
+			const parts: string[] = [];
+			if (row.state === "running" && !row.status?.sub?.startsWith("bg")) parts.push("agent working");
+			if (row.state === "question") parts.push("agent asking");
+			const n = row.counts.working;
+			if (n) parts.push(`${n} subagent${n === 1 ? "" : "s"} working`);
+			const ids = row.status?.slurmJobs ?? [];
+			if (jobs === "checking") parts.push(`Slurm ${ids.join(" ")} (checking)`);
+			else if (jobs === undefined) parts.push(`Slurm ${ids.join(" ")} (state unknown)`);
+			else if (jobs.length) parts.push(`Slurm ${jobs.map((j) => `${j.id} ${j.state.toLowerCase()}`).join(", ")}`);
+			const text = `Kill ${style.bold(oneLine(row.name))}?${parts.length ? ` ${parts.join(" · ")}` : ""}`;
+			return fit(` ${style.fg("warning", text)}`, width);
+		}
+		const item = this.items[this.selected];
+		if (!item || item.kind === "note") return "";
+		const now = this.now();
+		if (item.kind === "group") {
+			const g = item.group;
+			const live = g.rows.filter((r) => r.live === "live").length;
+			const text = `${oneLine(g.label)}${sep}${style.fg("dim", tilde(oneLine(g.repo)))}${sep}${g.rows.length} session${g.rows.length === 1 ? "" : "s"}, ${live} live${sep}${style.fg("dim", "a: new session here")}`;
+			return fit(` ${text}`, width);
+		}
+		const row = item.row;
+		if (item.kind === "sub") {
+			const live = row.live === "live" || row.live === "remote";
+			const { glyph: g, word } = threadGlyph(item.thread, live, style);
+			const parts = [`${g} ${word}`, oneLine(`${item.thread.type ?? "?"} ${item.thread.path}`), `of ${oneLine(row.name)}`];
+			if (item.thread.task) parts.push(style.fg("dim", oneLine(item.thread.task)));
+			return fit(` ${parts.join(sep)}`, width);
+		}
+		const s = row.status;
+		const tone = rowTone(row);
+		const since = s ? Date.parse(s.since) || row.at : row.at;
+		const parts = [toned(tone, `${glyphChar(row)} ${stateWord(row)}`, style)];
+		if (row.state === "running") {
+			const sub = s?.sub ?? "";
+			parts.push(sub.startsWith("tool:") ? `tool ${oneLine(sub.slice(5))}` : sub.startsWith("bg") ? `subagents in the background` : "thinking");
+		} else if (row.state === "question") {
+			parts.push(s?.sub === "ask" ? "ask_user_question" : "a dialog");
+		}
+		if (row.live === "live" || row.live === "remote") parts.push(`for ${duration(now - since)}`);
+		else parts.push(row.state === "crashed" ? `died ${humanizeSince(row.at, now)}` : `last active ${humanizeSince(row.at, now)}`);
+		if (row.costUsd) parts.push(`$${row.costUsd.toFixed(2)}`);
+		const counts = countsText(row.counts, style);
+		if (counts) parts.push(`subagents ${counts}`);
+		if (row.cwd) parts.push(style.fg("dim", tilde(oneLine(row.cwd))));
+		if (row.lastAssistant) parts.push(style.fg("dim", `“${oneLine(row.lastAssistant)}”`));
+		return fit(` ${parts.join(sep)}`, width);
 	}
 
 	private listLines(width: number, height: number): string[] {
@@ -872,6 +1089,8 @@ export class SessionsView implements Component {
 		}
 		if (this.top > 0) lines[0] = this.withMore(lines[0]!, "↑", width);
 		if (this.top + height < this.items.length) lines[lines.length - 1] = this.withMore(lines[lines.length - 1]!, "↓", width);
+		const at = this.selected - this.top;
+		if (style.selected && lines[at] !== undefined) lines[at] = style.selected(pad(lines[at]!, width));
 		return lines;
 	}
 
@@ -911,8 +1130,7 @@ export class SessionsView implements Component {
 		let nameText = row.unnamed ? style.fg("muted", name) : name;
 		if (selected) nameText = style.bold(nameText);
 		else if (dimRow) nameText = style.fg("dim", name);
-		const detail = rowDetail(row, now);
-		const detailText = row.state === "question" || row.state === "waiting" ? style.fg("warning", detail) : style.fg(dimRow ? "dim" : "muted", detail);
+		const detailText = toned(rowTone(row), rowDetail(row, now), style);
 		const cost = row.costUsd ? `$${row.costUsd.toFixed(2)}` : "";
 		const counts = countsText(row.counts, style);
 		const costText = wide ? ` ${padRight(style.fg("dim", cost), 7)}` : "";
@@ -970,6 +1188,35 @@ export class SessionsView implements Component {
 	}
 }
 
+/** The state in words, for the status line. */
+function stateWord(row: SessionRow): string {
+	switch (row.state) {
+		case "running":
+			return row.status?.autonomous ? "working autonomously" : "working";
+		case "starting":
+			return "starting";
+		case "question":
+			return row.status?.autonomous ? "question: needs you (autonomous: times out)" : "question: needs your answer";
+		case "waiting":
+			return "done, needs you";
+		case "idle":
+			return "idle";
+		case "error":
+			return "error";
+		case "crashed":
+			return "crashed";
+		case "remote":
+			return `live on ${oneLine(row.status?.host ?? "?")}`;
+		default:
+			return "not running";
+	}
+}
+
+function tilde(path: string): string {
+	const home = homedir();
+	return path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+}
+
 /** Printable text of a key event (plain or kitty CSI-u), or undefined. */
 function printable(data: string): string | undefined {
 	const kitty = decodeKittyPrintable(data);
@@ -1010,11 +1257,37 @@ export function sendControl(sock: string, message: Record<string, unknown>, time
 	});
 }
 
+/** pi.events channel: `{ name, open }` when a fleet view that takes the screen opens/closes. */
+export const OVERLAY_EVENT = "pi-fleet:overlay";
+
 export type Notify = (message: string, level: "info" | "warning" | "error") => void;
 
 /**
+ * `d`, confirmed in the view: {"type":"kill","confirmed":true,"scancel":…} to the session's
+ * control socket, so it ends without a dialog of its own (lifecycle.ts). Never jumps there.
+ */
+export async function killSession(row: SessionRow, scancel: boolean, notify: Notify, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+	if (row.state === "remote") return notify(`pi-fleet: ${row.name} is running on ${row.status?.host}`, "warning");
+	if (row.live !== "live") return notify(`pi-fleet: ${row.name} is not running`, "warning");
+	const sock = row.status?.ctlSock || ctlSockPath(row.id, env);
+	let reply: string;
+	try {
+		reply = await sendControl(sock, { type: "kill", confirmed: true, scancel });
+	} catch (error) {
+		return notify(`pi-fleet: cannot reach ${row.name} (${(error as Error).message}); use /kill there`, "warning");
+	}
+	let parsed: { ok?: boolean; error?: string } | undefined;
+	try {
+		parsed = JSON.parse(reply);
+	} catch {
+		parsed = undefined;
+	}
+	if (parsed?.ok === false) notify(`pi-fleet: ${row.name} refused the kill: ${parsed.error ?? "?"}`, "warning");
+}
+
+/**
  * Carry out a view action. Returns true if focus moved to another window (the dashboard popup
- * then closes). `target` is the pane whose tmux session gets new windows.
+ * then closes). `target` is the pane whose tmux session gets new windows. `kill` never moves.
  */
 export async function runAction(
 	action: SessionsAction,
@@ -1023,6 +1296,10 @@ export async function runAction(
 ): Promise<boolean> {
 	const env = opts.env ?? process.env;
 	if (action.type === "close") return false;
+	if (action.type === "kill") {
+		await killSession(action.row, action.scancel, notify, env);
+		return false;
+	}
 	if (!inTmux(env)) {
 		const file = action.type === "new" ? undefined : action.row.file;
 		notify(`pi-fleet: not inside tmux${file ? ` (pi --session ${file})` : ""}`, "warning");
@@ -1038,27 +1315,6 @@ export async function runAction(
 		if (row.id === opts.currentId && action.type === "open") return false;
 		if (row.state === "remote") {
 			notify(`pi-fleet: ${row.name} is running on ${row.status?.host}`, "warning");
-			return false;
-		}
-		if (action.type === "kill") {
-			if (row.live !== "live") {
-				notify(`pi-fleet: ${row.name} is not running here`, "warning");
-				return false;
-			}
-			const sock = row.status?.ctlSock || ctlSockPath(row.id, env);
-			try {
-				await sendControl(sock, { type: "kill" });
-			} catch (error) {
-				notify(`pi-fleet: cannot reach ${row.name} (${(error as Error).message}); use /kill there`, "warning");
-			}
-			// Jump there only if the pane is on the server the status names (as openSession does).
-			const pane = row.status?.tmux?.piPane;
-			const info = pane ? await paneInfo(pane, env) : undefined;
-			const socket = row.status?.tmux?.socket;
-			if (pane && info && (!socket || socket === info.socket)) {
-				await focusPane(pane, env);
-				return true;
-			}
 			return false;
 		}
 		const result = await openSession({ session: row.file || row.id, target }, env);
@@ -1086,24 +1342,43 @@ export async function openSessions(pi: ExtensionAPI, ctx: ExtensionContext): Pro
 		return;
 	}
 	const currentId = ctx.sessionManager.getSessionId();
-	const action = await ownPrompt(pi, () =>
-		ctx.ui.custom<SessionsAction | undefined>((tui, theme, _keybindings, done) => {
-			const view: SessionsView = new SessionsView({
-				source: fleetSource(process.env),
-				style: { fg: (color, text) => theme.fg(color, text), bold: (text) => theme.bold(text) },
-				mode: "list",
-				height: () => Math.max(8, Math.floor(tui.terminal.rows * 0.7)),
-				onAction: (a) => {
-					view.dispose();
-					done(a);
-				},
-				requestRender: () => tui.requestRender(),
-				currentId,
-			});
-			view.start();
-			return view;
-		}),
-	);
+	// vim-mode hides its transcript cursor (and the prompt's) while this is open.
+	pi.events.emit(OVERLAY_EVENT, { name: "sessions", open: true });
+	let action: SessionsAction | undefined;
+	try {
+		action = await ownPrompt(pi, () =>
+			ctx.ui.custom<SessionsAction | undefined>((tui, theme, _keybindings, done) => {
+				const view: SessionsView = new SessionsView({
+					source: fleetSource(process.env),
+					style: themeStyle(theme as any),
+					mode: "list",
+					height: () => Math.max(8, Math.floor(tui.terminal.rows * 0.7)),
+					onAction: (a) => {
+						if (a.type === "kill") {
+							// The picker stays open; the row disappears once that pi has ended.
+							const flash: Notify = (message) => {
+								view.flash(message);
+								tui.requestRender();
+							};
+							void runAction(a, flash, { currentId }).then(() => {
+								view.refresh();
+								tui.requestRender();
+							});
+							return;
+						}
+						view.dispose();
+						done(a);
+					},
+					requestRender: () => tui.requestRender(),
+					currentId,
+				});
+				view.start();
+				return view;
+			}),
+		);
+	} finally {
+		pi.events.emit(OVERLAY_EVENT, { name: "sessions", open: false });
+	}
 	if (action) await runAction(action, (message, level) => ctx.ui.notify(message, level), { currentId });
 }
 

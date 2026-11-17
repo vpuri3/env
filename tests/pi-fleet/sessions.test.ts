@@ -148,7 +148,7 @@ test("source: a stale status of another host is not a remote row", { skip }, () 
 test("render: groups by repo, ordered by urgency (? > ✕ > ◐ > ● > ○), counts per main", { skip }, () => {
 	const { view } = makeView({ currentId: IDS.ckpt });
 	assert.deepEqual(screen(view), [
-		" pi-fleet  node1   3 live · 2 waiting                                             / filter   ? help ",
+		" pi-fleet  node1   3 live · 2 waiting        ● working ● auto ◐ needs you ? question ✕ error ○ idle ",
 		" ▾ gamma (2)",
 		"   ? flare refactor                 question 12m         $0.80 1◐",
 		"   ○ what does gamma do?            2d ago                     ",
@@ -160,7 +160,8 @@ test("render: groups by repo, ordered by urgency (? > ✕ > ◐ > ● > ○), co
 		"›  ◐ ckpt restart (this)            done 2m ago          $0.40 ",
 		"   ● physicsnemo sweep              bash 4m              $3.41 2w 1◐ 3✓",
 		"   ○ start the old run              3h ago                     1✓ 1 interrupted",
-		" enter open · space subagents · / filter · !@#& status · x kill · n new · q close",
+		` ◐ done, needs you · for 2m · $0.40 · ${fx.repos.alpha}`,
+		" enter open · space subagents · d kill · a new · / filter · !@#& status · ? help · q close",
 	]);
 });
 
@@ -216,25 +217,27 @@ test("keys: / filters (j and k type), Enter opens the match, Esc stops typing, c
 	const { view, actions } = makeView();
 	press(view, "/", "c", "k", "p", "t");
 	assert.equal(view.filter, "ckpt");
-	assert.deepEqual(screen(view).slice(1, -1), [" ▾ alpha (1)", "›  ◐ ckpt restart                   done 2m ago          $0.40 "]);
+	assert.deepEqual(screen(view).slice(1, -2), [" ▾ alpha (1)", "›  ◐ ckpt restart                   done 2m ago          $0.40 "]);
 	assert.match(screen(view)[0]!, /\/ckpt▏ $/);
-	press(view, "\x7f", "\x7f", "\x7f", "\x7f", "j", "k"); // backspace to empty, then j k are typed
-	assert.equal(view.filter, "jk");
-	press(view, "\x7f", "\x7f", ..."gamma does");
+	press(view, "\x7f", "\x7f", "\x7f", "\x7f", "j", "k", "d", "a"); // backspace to empty, then j k d a are typed
+	assert.equal(view.filter, "jkda");
+	assert.equal(view.confirming(), undefined);
+	assert.equal(actions.length, 0);
+	press(view, "\x7f", "\x7f", "\x7f", "\x7f", ..."gamma does");
 	assert.match(selectedLine(view), /what does gamma do/); // matches its last message
 	press(view, "\x1b");
 	assert.equal(view.typing, false);
 	assert.equal(view.filter, "gamma does");
 	press(view, "\x1b"); // clears the filter
 	assert.equal(view.filter, "");
-	assert.equal(screen(view).length, 13);
+	assert.equal(screen(view).length, 14);
 	press(view, "\x1b"); // closes
 	assert.equal(actions.at(-1)?.type, "close");
 	press(view, "/", "o", "l", "d", "\r");
 	assert.equal((actions.at(-1) as { row: { id: string } }).row.id, IDS.old);
 });
 
-test("keys: ! @ # & status filters, 0 clears; x kill, n new, q close, ? help", { skip }, () => {
+test("keys: ! @ # & status filters, 0 clears; d on a dead row, a new, q close, ? help", { skip }, () => {
 	const { view, actions } = makeView();
 	const names = () => screen(view).filter((l) => /^[ ›]  \S /.test(l)).map((l) => l.slice(5, 30).trim());
 	press(view, "!");
@@ -246,14 +249,20 @@ test("keys: ! @ # & status filters, 0 clears; x kill, n new, q close, ? help", {
 	press(view, "&");
 	assert.deepEqual(names(), ["crashy"]);
 	assert.match(screen(view)[0]!, /\[error\] $/);
-	press(view, "x");
-	assert.deepEqual([actions.at(-1)?.type, (actions.at(-1) as { row: { id: string } }).row.id], ["kill", IDS.crashy]);
-	press(view, "n");
+	press(view, "d"); // crashed: nothing to kill
+	assert.equal(view.confirming(), undefined);
+	assert.equal(actions.length, 0);
+	assert.match(screen(view).at(-1)!, /crashy is not running/);
+	press(view, "a");
 	assert.deepEqual(actions.at(-1), { type: "new", cwd: fx.repos.beta });
+	press(view, "x", "n"); // no longer bound
+	assert.equal(actions.length, 1);
 	press(view, "0");
 	assert.equal(names().length, 8);
 	press(view, "?");
 	assert.ok(screen(view).some((l) => l.includes("Space") && l.includes("subagents")));
+	assert.ok(screen(view).some((l) => /^ d\s+kill the session: y kill · s kill \+ scancel/.test(l)));
+	assert.ok(screen(view).some((l) => l === " ● working ● auto ◐ needs you ? question ✕ error ○ idle"));
 	press(view, "?", "q");
 	assert.equal(actions.at(-1)?.type, "close");
 	// Kitty CSI-u letters work like plain ones.
@@ -371,29 +380,27 @@ test("index: repoOf caches the cwd fallback only when git exits non-zero, not on
 	}
 });
 
-test("runAction kill: sends kill to the control socket, then focuses the pane only on the status's tmux server", { skip }, async () => {
+test("runAction kill: a confirmed kill on the control socket, scancel only when asked; never jumps or needs tmux", { skip }, async () => {
 	const f = buildFixture();
 	const server = createServer();
 	try {
+		// Any tmux call would be logged here: a kill must not jump to the pane.
 		const bin = join(f.root, "faketmux");
 		mkdirSync(bin, { recursive: true });
 		const log = join(f.root, "tmux.log");
-		writeFileSync(
-			join(bin, "tmux"),
-			`#!/bin/sh\necho "$*" >> "${log}"\ncase "$*" in *display-message*) printf '%%12\\t@1\\t1\\t$1\\tmain\\tpi\\tx\\t\\t\\t/tmp\\t%s\\tw\\t0\\n' /srv/a.sock ;; esac\n`,
-		);
+		writeFileSync(join(bin, "tmux"), `#!/bin/sh\necho "$*" >> "${log}"\n`);
 		chmodSync(join(bin, "tmux"), 0o755);
-		const env = { ...f.env, PATH: `${bin}:${process.env.PATH}`, PI_FLEET_TMUX_SOCKET: join(f.root, "fake.sock") };
+		const env = { ...f.env, PATH: `${bin}:${process.env.PATH}`, TMUX: "/tmp/fake,1,0", TMUX_PANE: "%1" };
 		const ctlSock = join(f.root, "ctl.sock");
-		const got: string[] = [];
+		const got: unknown[] = [];
 		server.on("connection", (c) =>
 			c.on("data", (d) => {
-				got.push(d.toString("utf8").trim());
+				got.push(JSON.parse(d.toString("utf8")));
 				c.end('{"ok":true}\n');
 			}),
 		);
 		await new Promise<void>((r) => server.listen(ctlSock, r));
-		const row = (socket?: string) =>
+		const row = (fields: Record<string, unknown> = {}) =>
 			({
 				id: "kill-me",
 				name: "victim",
@@ -403,25 +410,29 @@ test("runAction kill: sends kill to the control socket, then focuses the pane on
 				live: "live",
 				at: 0,
 				counts: { working: 0, waiting: 0, done: 0, error: 0 },
-				status: { ctlSock, tmux: { piPane: "%12", socket } },
+				status: { ctlSock, host: "node1", tmux: { piPane: "%12" } },
+				...fields,
 			}) as unknown as import("../../pi/extensions/fleet/sessions-view.ts").SessionRow;
-		const focused = () => (existsSync(log) ? readFileSync(log, "utf8") : "").split("\n").filter((l) => l.startsWith("-S") && l.includes("select-window")).length;
 		const messages: string[] = [];
 		const notify = (m: string) => messages.push(m);
 
-		assert.equal(await sv.runAction({ type: "kill", row: row("/srv/a.sock") }, notify, { env }), true);
-		assert.deepEqual(got, ['{"type":"kill"}']);
-		assert.equal(focused(), 1);
-
-		// The pane id exists on this server, but the session runs on another one: no jump.
-		assert.equal(await sv.runAction({ type: "kill", row: row("/srv/b.sock") }, notify, { env }), false);
-		assert.equal(got.length, 2, "the kill is still sent");
-		assert.equal(focused(), 1);
-
-		// No socket in the status: as openSession, the pane on this server is it.
-		assert.equal(await sv.runAction({ type: "kill", row: row(undefined) }, notify, { env }), true);
-		assert.equal(focused(), 2);
+		assert.equal(await sv.runAction({ type: "kill", row: row(), scancel: false }, notify, { env }), false);
+		assert.equal(await sv.runAction({ type: "kill", row: row(), scancel: true }, notify, { env }), false);
+		assert.deepEqual(got, [
+			{ type: "kill", confirmed: true, scancel: false },
+			{ type: "kill", confirmed: true, scancel: true },
+		]);
 		assert.deepEqual(messages, []);
+		assert.equal(existsSync(log), false, "no tmux call (no jump)");
+
+		// Dead or remote rows: nothing is sent.
+		await sv.runAction({ type: "kill", row: row({ live: "crashed", state: "crashed" }), scancel: false }, notify, { env });
+		await sv.runAction({ type: "kill", row: row({ live: "remote", state: "remote" }), scancel: false }, notify, { env });
+		assert.equal(got.length, 2);
+		assert.deepEqual(messages, ["pi-fleet: victim is not running", "pi-fleet: victim is running on node1"]);
+		// Outside tmux too (the kill needs only the socket).
+		await sv.runAction({ type: "kill", row: row(), scancel: false }, notify, { env: f.env });
+		assert.equal(got.length, 3);
 	} finally {
 		server.close();
 		f.cleanup();
@@ -481,6 +492,234 @@ test("escape sequences in names, cwds, hosts, thread paths and messages never re
 			assert.ok(text.includes(want), `${JSON.stringify(want)} not shown`);
 		}
 		for (const l of lines.map(strip)) assert.doesNotMatch(l, /[\x00-\x1f\x7f-\x9f]/, JSON.stringify(l));
+	} finally {
+		f.cleanup();
+	}
+});
+
+// ---------------------------------------------------------------- highlight, colors, status line, d / a
+
+/** A view over its own fixture (statuses may be rewritten), with ANSI colors unless `style` says. */
+function polishView(f: Fixture, opts: { style?: unknown; squeue?: (ids: string[]) => Promise<unknown>; mode?: "list" | "dashboard" } = {}) {
+	const actions: Action[] = [];
+	let renders = 0;
+	const view = new sv.SessionsView({
+		source: sv.fleetSource(f.env),
+		style: (opts.style ?? sv.ansiStyle) as never,
+		mode: opts.mode ?? "list",
+		height: () => 30,
+		onAction: (a) => actions.push(a),
+		requestRender: () => renders++,
+		preview: opts.mode === "dashboard" ? () => undefined : undefined,
+		now: () => f.now,
+		host: "node1",
+		squeue: opts.squeue as never,
+	});
+	view.refresh();
+	const select = (name: string) => {
+		for (let i = 0; i < 40; i++) press(view, "k");
+		for (let i = 0; i < 40 && !strip(view.render(120).find((l) => strip(l).startsWith("›")) ?? "").includes(name); i++) press(view, "j");
+		const line = view.render(120).find((l) => strip(l).startsWith("›")) ?? "";
+		assert.ok(strip(line).includes(name), `selected ${name}`);
+		return line;
+	};
+	return { view, actions, select, renders: () => renders };
+}
+const rowOf = (lines: string[], name: string) => lines.find((l) => strip(l).includes(` ${name}`)) ?? "";
+
+test("highlight: the selected row (only it) gets a full-width background, in the list and the dashboard", { skip }, () => {
+	const f = buildFixture();
+	try {
+		for (const mode of ["list", "dashboard"] as const) {
+			const { view, select } = polishView(f, { mode });
+			select("physicsnemo sweep");
+			const lines = view.render(120);
+			const hit = lines.filter((l) => l.includes(sv.ANSI_SELECTED_BG));
+			assert.equal(hit.length, 1, mode);
+			assert.match(strip(hit[0]!), /^›\s+● physicsnemo sweep/);
+			// Padded to the list width; every reset inside re-opens the background.
+			const listW = mode === "list" ? 120 : Math.max(50, Math.min(80, 60));
+			const sel = hit[0]!.slice(0, hit[0]!.lastIndexOf("\x1b[49m") + 5);
+			assert.equal(tui.visibleWidth(sel), listW, mode);
+			for (const m of sel.matchAll(/\x1b\[(?:0|49)?m/g)) {
+				if (m.index! + m[0].length === sel.length) continue;
+				assert.ok(sel.startsWith(sv.ANSI_SELECTED_BG, m.index! + m[0].length), `${mode}: bg re-opened after ${JSON.stringify(m[0])}`);
+			}
+			// A group header highlights too.
+			press(view, "k", "k");
+			assert.ok(view.render(120).filter((l) => l.includes(sv.ANSI_SELECTED_BG)).some((l) => strip(l).includes("▾ alpha")), mode);
+			view.dispose();
+		}
+		// Inside pi: the theme's selectedBg (when the theme has one); none, only the › marker, without.
+		const theme = { fg: (_c: string, t: string) => t, bold: (t: string) => t, getBgAnsi: (c: string) => (c === "selectedBg" ? "\x1b[48;5;17m" : "") };
+		const { view } = polishView(f, { style: sv.themeStyle(theme) });
+		assert.equal(view.render(100).filter((l) => l.includes("\x1b[48;5;17m")).length, 1);
+		const bare = polishView(f, { style: sv.themeStyle({ fg: (_c: string, t: string) => t, bold: (t: string) => t }) }).view;
+		assert.ok(!bare.render(100).some((l) => l.includes("\x1b[48")));
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("colors: glyph + state text by tone; autonomous working is green `auto`, an autonomous question stays magenta", { skip }, () => {
+	const f = buildFixture();
+	try {
+		const { view } = polishView(f);
+		const lines = view.render(120);
+		const fg = (code: string, text: string) => `\x1b[${code}m${text}\x1b[39m`;
+		// sweep: working (blue), glyph and detail; the name stays uncolored.
+		assert.ok(rowOf(lines, "physicsnemo sweep").includes(fg("34", "●")));
+		assert.ok(rowOf(lines, "physicsnemo sweep").includes(fg("34", "bash 4m")));
+		assert.ok(rowOf(lines, "physicsnemo sweep").includes(" physicsnemo sweep "));
+		assert.ok(rowOf(lines, "flare refactor").includes(`\x1b[1m${fg("35", "?")}\x1b[22m`), "question: magenta bold");
+		assert.ok(rowOf(lines, "ckpt restart").includes(fg("33", "◐")), "waiting: yellow");
+		assert.ok(rowOf(lines, "ckpt restart").includes(fg("33", "done 2m ago")));
+		assert.ok(rowOf(lines, "crashy").includes(fg("31", "✕")), "crashed: red");
+		assert.ok(rowOf(lines, "start the old run").includes(fg("90", "○")), "closed: dim");
+		assert.ok(rowOf(lines, "notes").includes(fg("90", "⇢")), "remote: dim");
+		assert.ok(lines[0]!.includes(fg("32", "● auto")), "legend in the header");
+
+		const sweep = JSON.parse(readFileSync(join(f.statusDir, `${IDS.sweep}.json`), "utf8"));
+		f.writeStatus(IDS.sweep, { ...sweep, autonomous: true });
+		const flare = JSON.parse(readFileSync(join(f.statusDir, `${IDS.flare}.json`), "utf8"));
+		f.writeStatus(IDS.flare, { ...flare, autonomous: true });
+		view.refresh();
+		const auto = view.render(120);
+		assert.ok(rowOf(auto, "physicsnemo sweep").includes(fg("32", "●")));
+		assert.ok(rowOf(auto, "physicsnemo sweep").includes(fg("32", "auto bash 4m")));
+		assert.ok(rowOf(auto, "flare refactor").includes(`\x1b[1m${fg("35", "?")}\x1b[22m`));
+		assert.ok(rowOf(auto, "flare refactor").includes("question 12m"));
+		// Inside pi: working is the theme's blue (mdLink), question its accent (violet).
+		const used: string[] = [];
+		const theme = { fg: (c: string, t: string) => (used.push(c), t), bold: (t: string) => t };
+		polishView(f, { style: sv.themeStyle(theme) }).view.render(120);
+		for (const token of ["mdLink", "accent", "success", "warning", "error", "dim"]) assert.ok(used.includes(token), token);
+		assert.ok(!used.includes("working") && !used.includes("question"), "only real theme tokens");
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("status line: the selected session in full; a repo header; a subagent", { skip }, () => {
+	const f = buildFixture();
+	try {
+		const { view, select } = polishView(f, { style: plainStyle });
+		const statusLine = () => view.render(200).map(strip).at(-2)!;
+		select("physicsnemo sweep");
+		assert.equal(statusLine(), ` ● working · tool bash · for 4m · $3.41 · subagents 2w 1◐ 3✓ · ${f.repos.alpha} · “sweeping”`);
+		const sweep = JSON.parse(readFileSync(join(f.statusDir, `${IDS.sweep}.json`), "utf8"));
+		f.writeStatus(IDS.sweep, { ...sweep, autonomous: true });
+		view.refresh();
+		assert.match(statusLine(), /^ ● working autonomously · tool bash · for 4m · /);
+		select("flare refactor");
+		assert.match(statusLine(), /^ \? question: needs your answer · a dialog · for 12m · \$0\.80 · subagents 1◐ · /);
+		select("start the old run");
+		assert.match(statusLine(), /^ ○ not running · last active 3h ago · subagents 1✓ 1 interrupted · .*alpha\/sub · “the old run finished”$/);
+		select("crashy");
+		assert.match(statusLine(), /^ ✕ crashed · died just now · subagents 1 interrupted · /);
+		press(view, "k");
+		assert.equal(statusLine(), ` beta · ${f.repos.beta} · 3 sessions, 0 live · a: new session here`);
+		select("physicsnemo sweep");
+		press(view, " ", "j");
+		assert.match(statusLine(), /^ ✓ completed · type1 \/agent-1 · of physicsnemo sweep/);
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("d: inline confirm with subagents and Slurm jobs; y kills, s kills + scancel, n/Esc cancel; j does not move", { skip }, async () => {
+	const f = buildFixture();
+	try {
+		const sweep = JSON.parse(readFileSync(join(f.statusDir, `${IDS.sweep}.json`), "utf8"));
+		f.writeStatus(IDS.sweep, { ...sweep, slurmJobs: ["8812345", "8812346"] });
+		let answer: (jobs: unknown) => void = () => {};
+		const asked: string[][] = [];
+		const squeue = (ids: string[]) => {
+			asked.push(ids);
+			return new Promise((r) => (answer = r));
+		};
+		const { view, actions, select, renders } = polishView(f, { style: plainStyle, squeue });
+		const bottom = () => view.render(200).map(strip).slice(-2);
+		select("physicsnemo sweep");
+		press(view, "d");
+		assert.equal(view.confirming()?.row.id, IDS.sweep);
+		assert.deepEqual(asked, [["8812345", "8812346"]]);
+		assert.deepEqual(bottom(), [
+			" Kill physicsnemo sweep? agent working · 2 subagents working · Slurm 8812345 8812346 (checking)",
+			" y kill · s kill+scancel · n/Esc cancel",
+		]);
+		const before = renders();
+		answer([{ id: "8812345", state: "RUNNING", time: "1:02" }]);
+		await new Promise((r) => setTimeout(r, 10));
+		assert.ok(renders() > before, "re-rendered when squeue answered");
+		assert.equal(bottom()[0], " Kill physicsnemo sweep? agent working · 2 subagents working · Slurm 8812345 running");
+		press(view, "j", "a", "x"); // other keys do nothing while asking
+		assert.equal(view.confirming()?.row.id, IDS.sweep);
+		assert.equal(actions.length, 0);
+		press(view, "\x1b");
+		assert.equal(view.confirming(), undefined);
+		assert.match(strip(view.render(200).find((l) => strip(l).startsWith("›"))!), /physicsnemo sweep/);
+		press(view, "d", "n");
+		assert.equal(view.confirming(), undefined);
+		assert.equal(actions.length, 0);
+
+		press(view, "d");
+		answer([{ id: "8812345", state: "RUNNING", time: "1:02" }]);
+		await new Promise((r) => setTimeout(r, 10));
+		press(view, "s");
+		assert.deepEqual(actions.map((a) => [a.type, (a as { row?: { id: string } }).row?.id, (a as { scancel?: boolean }).scancel]), [["kill", IDS.sweep, true]]);
+		assert.match(bottom()[1]!, /killing physicsnemo sweep and its Slurm jobs…/);
+		press(view, "d", "y");
+		assert.deepEqual(actions.at(-1), { type: "kill", row: view.selectedRow(), scancel: false });
+
+		// No Slurm jobs: no `s` offered, and s does nothing.
+		select("ckpt restart");
+		press(view, "d");
+		assert.deepEqual(bottom(), [" Kill ckpt restart?", " y kill · n/Esc cancel"]);
+		press(view, "s");
+		assert.ok(view.confirming());
+		press(view, "y");
+		assert.equal((actions.at(-1) as { row: { id: string } }).row.id, IDS.ckpt);
+
+		// The session ends while asking: the confirm goes away.
+		press(view, "d");
+		const ckpt = JSON.parse(readFileSync(join(f.statusDir, `${IDS.ckpt}.json`), "utf8"));
+		f.writeStatus(IDS.ckpt, { ...ckpt, pid: 999_999_999 });
+		view.refresh();
+		assert.equal(view.confirming(), undefined);
+		assert.match(bottom()[1]!, /ckpt restart is not running/);
+
+		// Closed, crashed and remote rows: a flash, no confirm.
+		const n = actions.length;
+		for (const [name, flash] of [["start the old run", /is not running/], ["crashy", /is not running/], ["notes", /runs on other-node: kill it there/]] as const) {
+			select(name);
+			press(view, "d");
+			assert.equal(view.confirming(), undefined, name);
+			assert.match(bottom()[1]!, flash);
+		}
+		press(view, "k");
+		press(view, "d"); // a repo header
+		assert.equal(view.confirming(), undefined);
+		assert.equal(actions.length, n);
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("a: a new session in the repo of the row, or of the repo header", { skip }, () => {
+	const f = buildFixture();
+	try {
+		const { view, actions, select } = polishView(f, { style: plainStyle });
+		select("start the old run"); // cwd alpha/sub, repo alpha
+		press(view, "a");
+		assert.deepEqual(actions.at(-1), { type: "new", cwd: f.repos.alpha });
+		select("forked idea");
+		press(view, "a");
+		assert.deepEqual(actions.at(-1), { type: "new", cwd: f.repos.beta });
+		for (let i = 0; i < 20 && !/^›▾ gamma/.test(strip(view.render(120).find((l) => strip(l).startsWith("›"))!)); i++) press(view, "k");
+		assert.match(strip(view.render(120).find((l) => strip(l).startsWith("›"))!), /^›▾ gamma/);
+		press(view, "a");
+		assert.deepEqual(actions.at(-1), { type: "new", cwd: f.repos.gamma });
 	} finally {
 		f.cleanup();
 	}

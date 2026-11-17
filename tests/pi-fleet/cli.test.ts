@@ -396,7 +396,8 @@ test("bar lists waiting sessions by real window index, renames fleet windows; se
 		const ib = f.opt(b.pi, "window_index");
 		const r = f.cli(["bar", "--pane", a.pi]);
 		assert.equal(r.code, 0, r.err);
-		assert.equal(r.out, `π [${ib}]? a very long… [${ia}]◐ flare##1 `);
+		// Glyphs colored as in the dashboard: question magenta bold, waiting yellow.
+		assert.equal(r.out, `π [${ib}]#[fg=magenta,bold]?#[default] a very long… [${ia}]#[fg=yellow]◐#[default] flare##1 `);
 		assert.equal(f.opt(a.pi, "window_name"), "◐ flare#1");
 		assert.equal(f.opt(c.pi, "window_name"), "● busy");
 		assert.equal(f.opt(c.pi, "window_index"), "7");
@@ -416,7 +417,7 @@ test("bar lists waiting sessions by real window index, renames fleet windows; se
 
 		// crashed (pid dead) with its pane present: ✕ in the bar
 		f.writeStatus({ sessionId: c.id, name: "busy", state: "running", pid: 999_999_999, tmux: { socket: sock, piPane: c.pi } });
-		assert.match(f.cli(["bar"]).out, /\[7\]✕ busy/);
+		assert.match(f.cli(["bar"]).out, /\[7\]#\[fg=red\]✕#\[default\] busy/);
 		assert.equal(f.opt(c.pi, "window_name"), "✕ busy");
 
 		const ls = JSON.parse(f.cli(["ls", "--json"]).out);
@@ -448,7 +449,7 @@ test("# in cwd, names and session names is literal, not a tmux format", { skip: 
 
 		f.writeStatus({ sessionId: id, name: "n#{session_name}#H", state: "waiting", acked: false, runId: "r1", tmux: { socket: f.socket, piPane: pi } });
 		const bar = f.cli(["bar", "--pane", f.active()]);
-		assert.equal(bar.out, `π [s##1:${f.opt(pi, "window_index")}]◐ n##{session_… `);
+		assert.equal(bar.out, `π [s##1:${f.opt(pi, "window_index")}]#[fg=yellow]◐#[default] n##{session_… `);
 		assert.equal(f.opt(pi, "window_name"), "◐ n#{session_name}#H");
 		// the next tick sees the literal name and does not rename again
 		f.tmux(["set-hook", "-g", "window-renamed", "set -g @pft_renamed 1"]);

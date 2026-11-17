@@ -105,8 +105,11 @@ Start with `pi-fleet open` inside tmux (or `pi-fleet open --cwd DIR`,
 to and never started twice; one live on another login node is refused.
 
 Status glyphs: ● running · ? question · ◐ waiting (unseen) · ○ idle · ✕ error or
-crashed · ⟳ starting. A stopped pi rings the bell, and the tmux status bar
-lists the sessions that need you by window number.
+crashed · ⟳ starting. Colors, the same in the dashboard, `/sessions` and the
+tmux status bar: working blue, working autonomously (after `/leavemealone`)
+green "auto", needs you yellow, question magenta, error red, idle dim. A
+stopped pi rings the bell, and the tmux status bar lists the sessions that
+need you by window number.
 
 | In pi | Does |
 | --- | --- |
@@ -114,6 +117,7 @@ lists the sessions that need you by window number.
 | `/resume` | pi's picker; the chosen session opens in a new window, or is jumped to if live |
 | `/kill` | end this session: a dialog lists the subagents it stops and its Slurm jobs (left running by default) |
 | `/sessions` | the session list (the dashboard without the preview) |
+| `/autonomous [off]` | is this session autonomous (set by `/leavemealone`)? `off` ends it |
 | `/view FILE[:LINE]` | open a file in the paired nvim at LINE, then focus it; completes files this session touched first, then the repo |
 | `/view tool:N` | the Nth most recent tool call's full output, read-only in nvim (`tool:` completes) |
 | `/view` | picker: touched files, then the last 10 tool calls |
@@ -129,12 +133,15 @@ finish.
 | `j` / `k` (or arrows) | move |
 | `Space` | show a session's subagents; collapse a repo |
 | `Enter` | jump to the session, or open it in a new window (on a subagent: its main) |
-| `x` | kill the session (the dialog appears in its own window) |
-| `n` | new session in the row's repo |
+| `d` | kill the session: confirm with `y`, or `s` to also scancel its Slurm jobs (`n`/`Esc` cancel); you stay in the list |
+| `a` | new session in the repo of the row or repo header |
 | `/` | filter by name, repo, cwd or last message (`Esc` stops typing) |
 | `!` `@` `#` `&` / `0` | only running / waiting / idle / error; `0` shows all |
 | `?` | help |
 | `q` | close (`Esc` clears filters first) |
+
+The selected row is highlighted across the list, and the line above the key
+hints shows that session's state, current tool, time, cost, subagents and cwd.
 
 **vim-mode** (`pi/extensions/vim-mode.ts`, `Esc` enters NORMAL mode). Leader
 keys work in NORMAL mode only and mirror nvim's `<leader>` keys. The mode

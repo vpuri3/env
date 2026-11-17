@@ -6,8 +6,9 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fleetOf } from "../../pi/extensions/fleet/shared.ts";
@@ -27,6 +28,7 @@ const packages = piPackages();
 const skip = packages ? false : "pi's packages not found (pi not on PATH)";
 let leader: typeof import("../../pi/extensions/fleet/leader.ts");
 let vim: typeof import("../../pi/extensions/vim-mode.ts");
+let sv: typeof import("../../pi/extensions/fleet/sessions-view.ts");
 let createEventBus: () => { emit(c: string, d: unknown): void; on(c: string, h: (d: unknown) => void): () => void };
 let builtins: { name: string; description: string }[] = [];
 
@@ -35,6 +37,7 @@ before(async () => {
 	await usePackages(packages);
 	leader = await import("../../pi/extensions/fleet/leader.ts");
 	vim = await import("../../pi/extensions/vim-mode.ts");
+	sv = await import("../../pi/extensions/fleet/sessions-view.ts");
 	const dist = join(packages, "@earendil-works", "pi-coding-agent", "dist");
 	({ createEventBus } = await import(pathToFileURL(join(dist, "core", "event-bus.js")).href));
 	builtins = (await import(pathToFileURL(join(dist, "core", "slash-commands.js")).href)).BUILTIN_SLASH_COMMANDS;
@@ -285,5 +288,66 @@ test("Space g s: :Git runs in the paired nvim (args as data); a missing :Git is 
 		assert.deepEqual(f.notes, [["pi-fleet: :Git is not available in nvim (vim-fugitive missing?)", "warning"]]);
 	} finally {
 		nvim.kill();
+	}
+});
+
+test("/sessions hides vim-mode's cursors while open (pi-fleet:overlay); d y kills without closing it", { skip }, async () => {
+	assert.equal(sv.OVERLAY_EVENT, vim.FLEET_OVERLAY_EVENT);
+	const f = fakePi();
+	f.ctx.mode = "tui";
+	// vim-mode on the same event bus (its own fake pi: one handler map per pi).
+	vim.default({ on: () => {}, events: f.pi.events } as any);
+	const events: unknown[] = [];
+	f.pi.events.on(sv.OVERLAY_EVENT, (d: any) => events.push({ ...d }));
+	// A live session of this host with a control socket.
+	const ctlSock = join(root, "victim.sock");
+	const got: unknown[] = [];
+	const server = createServer((c) =>
+		c.on("data", (d) => {
+			got.push(JSON.parse(d.toString("utf8")));
+			c.end('{"ok":true}\n');
+		}),
+	);
+	await new Promise<void>((r) => server.listen(ctlSock, r));
+	const id = "00000000-0000-7000-8000-0000000f0001";
+	const now = new Date().toISOString();
+	mkdirSync(join(root, "state", "status"), { recursive: true });
+	writeFileSync(
+		join(root, "state", "status", `${id}.json`),
+		JSON.stringify({ v: 1, sessionId: id, name: "victim", cwd: root, host: hostname(), pid: process.pid, ctlSock, state: "idle", acked: true, since: now, heartbeat: now, subagents: { working: 0, waiting: 0, done: 0, error: 0 } }),
+	);
+	let view: any;
+	let closed = false;
+	f.ctx.ui.custom = (factory: any) =>
+		new Promise((res) => {
+			view = factory({ terminal: { rows: 40 }, requestRender: () => {} }, { fg: (_c: string, t: string) => t, bold: (t: string) => t }, {}, (r: unknown) => {
+				closed = true;
+				res(r);
+			});
+		});
+	try {
+		const opened = sv.openSessions(f.pi, f.ctx);
+		for (let i = 0; i < 100 && !view; i++) await sleep(10);
+		assert.deepEqual(events, [{ name: "sessions", open: true }]);
+		assert.equal(vim.overlayOpen(), true);
+		// The view never asks for the hardware cursor (pi-tui shows it only at CURSOR_MARKER).
+		assert.ok(!view.render(100).join("").includes("\x1b_pi:c\x07"));
+		assert.equal(view.selectedRow()?.id, id);
+		view.handleInput("d");
+		view.handleInput("y");
+		for (let i = 0; i < 100 && !got.length; i++) await sleep(10);
+		assert.deepEqual(got, [{ type: "kill", confirmed: true, scancel: false }]);
+		await sleep(20);
+		assert.equal(closed, false, "the picker stays open");
+		assert.equal(vim.overlayOpen(), true);
+		view.handleInput("q");
+		await opened;
+		assert.equal(closed, true);
+		assert.deepEqual(events, [{ name: "sessions", open: true }, { name: "sessions", open: false }]);
+		assert.equal(vim.overlayOpen(), false);
+	} finally {
+		view?.dispose();
+		server.close();
+		rmSync(join(root, "state", "status", `${id}.json`), { force: true });
 	}
 });

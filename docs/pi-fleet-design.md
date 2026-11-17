@@ -82,8 +82,10 @@ The fleet extension in each main pi writes its status file atomically (tmp + ren
   "nvimSock":"…", "ctlSock":"…",
   "state":"running", "sub":"tool:bash", "acked":false, "since":"…", "lastAssistant":"≤200 chars",
   "model":"…", "costUsd":3.41, "contextPct":41,
-  "subagents":{"working":2,"waiting":1,"done":3,"error":0}, "slurmJobs":["8812345"], "heartbeat":"…" }
+  "subagents":{"working":2,"waiting":1,"done":3,"error":0}, "slurmJobs":["8812345"], "autonomous":true, "heartbeat":"…" }
 ```
+
+`autonomous` is present only from `/leavemealone` (the prompt template, seen as typed in the `input` event) until `/autonomous off`; a `pi-fleet:autonomous` session entry keeps it across a resume.
 
 | state | glyph | when |
 |---|---|---|
@@ -137,6 +139,7 @@ Results are cached by `(path, size, mtime)` in `~/.cache/pi-fleet/index.json`. *
 | `/resume` | pi's own picker. On `session_before_switch`: always `{cancel:true}` + `pi-fleet open --session <target>` (jump if live, else new window) |
 | `/fork`, `/clone` | If subagents are working, confirm that forking replaces this session and stops N subagents |
 | `/sessions` | §9 |
+| `/autonomous` | Shows whether the session is autonomous (§5, set by `/leavemealone`); `/autonomous off` ends it |
 | `/kill` | Dialog below, then stop subagents, `ctx.shutdown()`; `run-pi` closes the window. An empty session with no subagents is killed without a dialog |
 | `/view` | §11 |
 
@@ -164,7 +167,7 @@ Slurm job IDs come from the `tool_result` of `bash` calls that match `Submitted 
 `/sessions` renders the list only, through `ctx.ui.custom`. The **dashboard** adds a preview pane on the right (decided). It runs in the `fleet` window (`prefix g`) or as `display-popup -E -w 95% -h 90%` (`prefix G`).
 
 ```
- pi-fleet  login-eos02   4 live · 1 waiting                     / filter   ? help
+ pi-fleet  login-eos02   4 live · 1 waiting   ● working ● auto ◐ needs you ? question ✕ error ○ idle
  ▾ physicsnemo-runner (3)                       │ ── preview: physicsnemo sweep (%12) ─────────
    ● physicsnemo sweep  bash 4m   $3.41 2w 1◐ 3✓│ ● bash  squeue -u $USER
    ◐ ckpt restart       done 2m ago     $0.40   │   8812345 RUNNING 1:02:11 …
@@ -180,18 +183,21 @@ Slurm job IDs come from the `tool_result` of `bash` calls that match `Submitted 
   - `j`/`k`/arrows move.
   - `Space` expands or collapses a group or a main's subagents (subagents are hidden by default).
   - `Enter` on a main → `pi-fleet open`. `Enter` on a subagent → its main.
-  - `x` kill: sends `{"cmd":"kill"}` to that pi, then jumps there so the dialog appears in its own window.
-  - `n` new session in the row's repo. `/` filters on name, repo, cwd and last message, and while it is active `j`/`k` type letters; `Esc` leaves the filter.
+  - `d` kill: an inline confirm on the line above the key hints (`Kill sweep? 2 subagents working · Slurm 8812345 running`, then `y kill · s kill+scancel · n/Esc cancel`; `s` only when Slurm jobs are queued). `y`/`s` send `{"type":"kill","confirmed":true,"scancel":false|true}` to that pi's control socket, which then ends without its own dialog; the view stays open and the row disappears. Not running: a flash; remote: refused.
+  - `a` new session in the repo of the row or of the selected repo header. `/` filters on name, repo, cwd and last message, and while it is active `j`/`k`/`d`/`a` type letters; `Esc` leaves the filter.
   - `!` `@` `#` `&` filter running/waiting/idle/error, `0` clears (agent-deck's keys).
   - `q`/`Esc` close the popup or `/sessions`.
   - The view never binds Tab and never needs Alt or Ctrl+Shift.
+- **Colors** (glyph and state text only): working blue (pi's `mdLink`), autonomous working green `auto`, needs you (done, unseen) yellow, question magenta bold (pi's `accent`; an autonomous question too), error/crashed red, idle/closed/remote dim. The selected row gets a full-width background (pi's `selectedBg`; grey 237 in the dashboard) as well as the `›` marker. The header shows the legend; `?` repeats it.
+- **Status line** above the key hints: the selected session's full state, current tool, time in that state, cost, subagent counts, cwd and last message (a repo header: its path and counts).
+- While `/sessions` is open the fleet emits `pi.events` `pi-fleet:overlay` `{name, open}`; vim-mode then draws neither its transcript cursor nor the prompt's.
 
 ## 10. Notifications and control socket
 
 - **Bell**: `\a` written to pi's stdout on waiting/question/error. `tmux.conf`: `monitor-bell on`, `bell-action other`, `visual-bell off`.
-- **Notification bar**: `status-left` gets `#(pi-fleet bar)` with `status-interval 5`. Output looks like `π [3]? flare [5]◐ ckpt`. The numbers are real window indices, so the existing `prefix 3` jumps there.
+- **Notification bar**: `status-left` gets `#(pi-fleet bar)` with `status-interval 5`. Output looks like `π [3]? flare [5]◐ ckpt`, glyphs colored as in the dashboard (`#[fg=magenta,bold]`, `#[fg=yellow]`, `#[fg=red]`). The numbers are real window indices, so the existing `prefix 3` jumps there.
 - **Window glyphs** as in §7. OSC 7501/777 passthrough is not used.
-- **Control socket** `<id>.pi.sock` (0600 in the 0700 dir) dispatches each NDJSON line on its `type` (`cmd` is accepted as an alias) to the registered handlers: `ping`, `kill` and `user_edit`; anything else gets `{"ok":false,"error":"unknown type …"}` (64 KB cap, 2 s idle drop, private bind + rename).
+- **Control socket** `<id>.pi.sock` (0600 in the 0700 dir) dispatches each NDJSON line on its `type` (`cmd` is accepted as an alias) to the registered handlers: `ping`, `kill` (with `"confirmed":true` no dialog; `"scancel":true` also cancels its Slurm jobs) and `user_edit`; anything else gets `{"ok":false,"error":"unknown type …"}` (64 KB cap, 2 s idle drop, private bind + rename).
 
 ## 11. Paired nvim, `/view`, and saves
 
@@ -261,7 +267,7 @@ The message is a custom `pi-fleet:user-edit`: `The user edited src/foo.py in the
 | Where | Keys |
 |---|---|
 | tmux | `prefix g` dashboard window (from the dashboard: back to the last window), `prefix G` popup, `prefix e` jump between pi and nvim via `@pi_fleet_peer`, `prefix N` window from the notification bar (existing) |
-| pi | `/sessions` `/new` `/resume` `/kill` `/view`, and the leader maps in §12. No `keybindings.json` changes |
+| pi | `/sessions` `/new` `/resume` `/kill` `/view` `/autonomous`, and the leader maps in §12. No `keybindings.json` changes |
 | nvim | `:w!` `:w!!` `:PiHelp` `:PiDiff` `:PiFocus` |
 
 The fleet binds nothing at the pi editor level, so Tab (follow-up) and Up (dequeue) stay free. Inside its own pickers the arrows navigate as in every pi list, while the editor is not focused. Add the new keys to `docs/tmux.md` and `docs/nvim.md`.

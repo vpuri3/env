@@ -17,7 +17,8 @@
  *        pane whose nvim is gone it re-pairs first.
  *   bar [--pane PANE]
  *        tmux status-left: `π [3]? flare [5]◐ ckpt ` (waiting/question/error/crashed fleet
- *        sessions, newest first, real window indices). Also keeps the names of windows opened
+ *        sessions, newest first, real window indices; glyphs colored with #[fg=…]: waiting
+ *        yellow, question magenta bold, error/crashed red). Also keeps the names of windows opened
  *        by `open` as `<glyph> <name>`.
  *   seen [--window W | --pane P | ID...]
  *        Acknowledge waiting/question sessions (writes <id>.seen with the runId). The tmux
@@ -570,6 +571,9 @@ export async function openSession(
 // ---------------------------------------------------------------- bar and seen
 
 const BAR_STATES = new Set(["waiting", "question", "error"]);
+/** Glyph colors in the bar, as in the dashboard: needs you yellow, question magenta, error red. */
+const BAR_STYLES: Record<string, string> = { waiting: "#[fg=yellow]", question: "#[fg=magenta,bold]", error: "#[fg=red]", crashed: "#[fg=red]" };
+const barEscape = (text: string) => text.replace(/#/g, "##");
 const BAR_MAX = 5;
 const BAR_LABEL = 12;
 
@@ -606,19 +610,20 @@ export async function bar(opts: { pane?: string }, env: NodeJS.ProcessEnv = proc
 		}
 		if (live !== "crashed" && !BAR_STATES.has(status.state)) continue;
 		if (status.state !== "question" && status.acked && live !== "crashed") continue;
-		const glyph = live === "crashed" ? GLYPHS.crashed : GLYPHS[status.state];
+		const shown = live === "crashed" ? "crashed" : status.state;
+		const glyph = `${BAR_STYLES[shown] ?? ""}${GLYPHS[shown as keyof typeof GLYPHS]}${BAR_STYLES[shown] ? "#[default]" : ""}`;
 		let label = windowLabel(status);
 		if (label.length > BAR_LABEL) label = `${label.slice(0, BAR_LABEL - 1)}…`;
 		const where = mySession && pane.session !== mySession ? `${pane.sessionName}:${pane.windowIndex}` : `${pane.windowIndex}`;
 		const since = Date.parse(live === "crashed" ? status.heartbeat : status.since) || 0;
-		items.push({ since, text: `[${where}]${glyph} ${label}` });
+		items.push({ since, text: `[${barEscape(where)}]${glyph} ${barEscape(label)}` });
 	}
 	if (renames.length) await tmuxOk(renames, env);
 	if (!items.length) return "";
 	items.sort((a, b) => b.since - a.since);
 	const shown = items.slice(0, BAR_MAX).map((i) => i.text);
 	if (items.length > BAR_MAX) shown.push(`+${items.length - BAR_MAX}`);
-	return `π ${shown.join(" ")} `.replace(/#/g, "##");
+	return `π ${shown.join(" ")} `;
 }
 
 /** States `seen` acknowledges (never running/idle: a .seen file must not outlive its run). */
@@ -891,7 +896,7 @@ async function inDashboardWindow(env: NodeJS.ProcessEnv): Promise<boolean> {
 /**
  * The dashboard TUI. q/Esc: in the `fleet` window back to the last window (the dashboard keeps
  * running), elsewhere (the `prefix G` popup) quit. ctrl+c always quits. A popup also quits once
- * Enter/x/n moved focus to another window.
+ * Enter/a moved focus to another window (`d` kills without leaving the dashboard).
  */
 async function dashboardTui(env: NodeJS.ProcessEnv): Promise<number> {
 	const packages = locatePiPackages(env);
