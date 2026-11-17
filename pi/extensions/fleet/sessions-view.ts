@@ -416,8 +416,8 @@ export function rowDetail(row: SessionRow, now: number): string {
 export function countsText(c: SubagentCounts, style: ViewStyle): string {
 	const parts: string[] = [];
 	if (c.working) parts.push(style.fg("working", `${c.working}w`));
-	if (c.waiting) parts.push(style.fg("warning", `${c.waiting}◐`));
-	if (c.done) parts.push(style.fg("dim", `${c.done}✓`));
+	if (c.waiting) parts.push(style.fg("input", `${c.waiting}◐`));
+	if (c.done) parts.push(style.fg("done", `${c.done}✓`));
 	if (c.error) parts.push(style.fg("error", `${c.error}✕`));
 	if (c.interrupted) parts.push(style.fg("warning", `${c.interrupted} interrupted`));
 	if (c.unknown) parts.push(style.fg("dim", `${c.unknown}?`));
@@ -430,10 +430,10 @@ export function threadGlyph(thread: FoldedThread, live: boolean, style: ViewStyl
 		case "running":
 			return live ? { glyph: style.fg("working", "●"), word: thread.state } : { glyph: style.fg("warning", "◌"), word: "interrupted" };
 		case "paused":
-			return { glyph: style.fg("warning", "◐"), word: "paused" };
+			return { glyph: style.fg("input", "◐"), word: "paused" };
 		case "completed":
 		case "stopped":
-			return { glyph: style.fg("dim", "✓"), word: thread.state };
+			return { glyph: style.fg("done", "✓"), word: thread.state };
 		case "failed":
 			return { glyph: style.fg("error", "✕"), word: "failed" };
 		default:
