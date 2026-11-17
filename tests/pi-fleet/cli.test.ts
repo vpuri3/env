@@ -517,3 +517,56 @@ test("dashboard --window: creates the fleet window, then toggles back", { skip: 
 		f.close();
 	}
 });
+
+// ---------------------------------------------------------------- pf (aliases.sh)
+
+test("pf (aliases.sh): outside tmux opens in session `fleet` (created in DIR); inside tmux just opens; args after --", { skip: !haveTmux && "tmux not found", timeout: 60_000 }, async () => {
+	const f = new Fleet();
+	try {
+		const aliases = join(repo, "aliases.sh");
+		const pf = (args: string[], extra: NodeJS.ProcessEnv = {}, cwd = f.work) => {
+			const env: NodeJS.ProcessEnv = { ...f.env, PF_NO_ATTACH: "1", ...extra };
+			const r = spawnSync("bash", ["-c", '. "$0"; pf "$@"', aliases, ...args], { env, cwd, encoding: "utf8", timeout: 30_000 });
+			return { code: r.status ?? -1, err: r.stderr };
+		};
+		const dir = join(f.work, "proj");
+		mkdirSync(dir);
+		assert.deepEqual(f.tmux(["list-sessions", "-F", "#{session_name}"]).split("\n"), ["main"], "no fleet session yet");
+
+		// Outside tmux (no $TMUX): `fleet` is created in DIR, the pi window opens there and is current.
+		let r = pf(["proj", "--", "--model", "x"]);
+		assert.equal(r.code, 0, r.err);
+		const windows = () => f.tmux(["list-windows", "-t", "=fleet", "-F", "#{window_id}\t#{pane_id}\t#{window_active}"]).split("\n").map((l) => l.split("\t"));
+		assert.equal(windows().length, 2);
+		assert.equal(f.tmux(["display-message", "-p", "-t", "=fleet:^", "#{pane_current_path}"]), dir);
+		const piPane = f.tmux(["display-message", "-p", "-t", "=fleet:", "#{pane_id}"]);
+		assert.equal(f.opt(piPane, "@pi_fleet_role"), "pi");
+		assert.equal(f.opt(piPane, "pane_current_path"), dir);
+		const id = f.opt(piPane, "@pi_fleet_session");
+		await waitFor("stub pi to start", () => f.runs(id).length === 1);
+		assert.match(f.runs(id)[0]!, /--session-id \S+ --model x$/);
+
+		// The session exists now: `pf` (here) adds a window to it.
+		r = pf([], {}, dir);
+		assert.equal(r.code, 0, r.err);
+		assert.equal(windows().length, 3);
+		assert.equal(f.opt(f.tmux(["display-message", "-p", "-t", "=fleet:", "#{pane_id}"]), "pane_current_path"), dir);
+
+		// Inside tmux: just `pi-fleet open` in this tmux session.
+		const main = f.active();
+		r = pf([dir], { TMUX: `${f.socket},1,0`, TMUX_PANE: main });
+		assert.equal(r.code, 0, r.err);
+		assert.equal(f.tmux(["list-windows", "-t", "=main"]).split("\n").length, 2);
+		assert.equal(windows().length, 3);
+
+		// Errors.
+		r = pf([join(f.work, "nope")]);
+		assert.equal(r.code, 1);
+		assert.match(r.err, /pf: not a directory: /);
+		r = pf(["proj", "extra"]);
+		assert.equal(r.code, 2);
+		assert.match(r.err, /usage: pf \[DIR\] \[-- PI_ARGS\.\.\.\]/);
+	} finally {
+		f.close();
+	}
+});

@@ -103,6 +103,9 @@ CLI), `nvim/lua/nvconf/pi_fleet.lua` and the tmux keys in
 Start with `pi-fleet open` inside tmux (or `pi-fleet open --cwd DIR`,
 `pi-fleet open --session FILE|ID`). A session that is already live is jumped
 to and never started twice; one live on another login node is refused.
+From a shell, `pf [DIR] [-- PI_ARGS]` does the same for DIR (default: here);
+outside tmux it opens in the tmux session `fleet` (created if missing) and
+attaches to it.
 
 Status glyphs: ● running · ? question · ◐ waiting (unseen) · ○ idle · ✕ error or
 crashed · ⟳ starting. Colors, the same in the dashboard, `/sessions` and the

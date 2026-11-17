@@ -26,6 +26,51 @@ alias cl='claude --dangerously-skip-permissions'
 alias cx='codex -s danger-full-access'
 alias vact='. "$HOME/env/shellrc" && . "${PWD}/.venv/bin/activate"'
 
+# pf [DIR] [-- PI_ARGS...]: a new pi-fleet session (pi + paired nvim window) in DIR
+# (default: here). Outside tmux it opens in the tmux session "fleet" (created if
+# missing) and attaches to it; PF_NO_ATTACH=1 skips the attach. Uses the tmux
+# server in $PI_FLEET_TMUX_SOCKET when set (tests), else tmux's default.
+_pf_tmux() {
+    if [ -n "${PI_FLEET_TMUX_SOCKET:-}" ]; then
+        command tmux -S "$PI_FLEET_TMUX_SOCKET" "$@"
+    else
+        command tmux "$@"
+    fi
+}
+pf() {
+    local dir="." pane sock
+    if [ "$#" -gt 0 ] && [ "$1" != "--" ]; then
+        dir="$1"
+        shift
+    fi
+    if [ "$#" -gt 0 ]; then
+        if [ "$1" != "--" ]; then
+            echo "usage: pf [DIR] [-- PI_ARGS...]" >&2
+            return 2
+        fi
+        shift
+    fi
+    if [ ! -d "$dir" ]; then
+        echo "pf: not a directory: $dir" >&2
+        return 1
+    fi
+    dir=$(CDPATH='' cd -- "$dir" && pwd) || return 1
+    if [ -n "${TMUX:-}" ]; then
+        pi-fleet open --cwd "$dir" -- "$@" >/dev/null
+        return
+    fi
+    if ! _pf_tmux has-session -t "=fleet" 2>/dev/null; then
+        _pf_tmux new-session -d -s fleet -c "$dir" || return 1
+    fi
+    pane=$(_pf_tmux display-message -p -t "=fleet:" '#{pane_id}') || return 1
+    sock=$(_pf_tmux display-message -p -t "=fleet:" '#{socket_path}') || return 1
+    PI_FLEET_TMUX_SOCKET="$sock" pi-fleet open --cwd "$dir" --target "$pane" -- "$@" >/dev/null || return 1
+    if [ -n "${PF_NO_ATTACH:-}" ]; then
+        return 0
+    fi
+    _pf_tmux attach-session -t "=fleet"
+}
+
 # viewers
 alias hn='head -n'
 alias hn1='head -n 1'
