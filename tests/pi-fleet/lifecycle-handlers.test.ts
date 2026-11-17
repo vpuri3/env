@@ -2,7 +2,7 @@
 // context (RPC mode, no tmux), so the wiring is checked without spawning pi:
 //   - a confirmed kill on the control socket (the dashboard's / /sessions' `d`) asks nothing
 //     and scancels only when asked; an unconfirmed one still opens the dialog;
-//   - autonomous mode: set by /leavemealone (the input text), cleared by /autonomous off,
+//   - autonomous mode: set by /run-autonomously (or the old /leavemealone; the input text), cleared by /autonomous off,
 //     restored from its session entry on resume.
 // squeue/scancel are fakes on PATH; the status dir is temporary.
 import { test } from "node:test";
@@ -119,22 +119,24 @@ test("kill on the control socket: confirmed asks nothing and leaves Slurm jobs; 
 	}
 });
 
-test("autonomous: /leavemealone sets it in the status file and the session; /autonomous off clears it", async () => {
-	assert.equal(startsAutonomous("/leavemealone"), true);
+test("autonomous: /run-autonomously sets it in the status file and the session; /autonomous off clears it", async () => {
+	assert.equal(startsAutonomous("/run-autonomously"), true);
+	assert.equal(startsAutonomous("/leavemealone"), true, "the old name, for sessions started before the rename");
+	assert.equal(startsAutonomous("/run-autonomouslyx"), false);
 	assert.equal(startsAutonomous("  /leavemealone back at 5"), true);
 	assert.equal(startsAutonomous("/leavemealonex"), false);
 	assert.equal(startsAutonomous("please /leavemealone"), false);
 	const s = await start();
 	try {
 		assert.equal(s.current()?.autonomous, undefined);
-		await s.emit("input", { text: "what is /leavemealone?", source: "interactive" });
+		await s.emit("input", { text: "what is /run-autonomously?", source: "interactive" });
 		assert.equal(s.current()?.autonomous, undefined);
 		await s.command("autonomous");
 		assert.match(s.notes.at(-1)!, /not autonomous/);
-		await s.emit("input", { text: "/leavemealone back at 5", source: "interactive" });
+		await s.emit("input", { text: "/run-autonomously back at 5", source: "interactive" });
 		assert.equal(s.current()?.autonomous, true);
 		await s.command("autonomous");
-		assert.match(s.notes.at(-1)!, /autonomous \(since \/leavemealone\)/);
+		assert.match(s.notes.at(-1)!, /autonomous \(since \/run-autonomously\)/);
 		await s.command("autonomous", "off");
 		assert.equal(s.current()?.autonomous, undefined);
 		assert.ok(!JSON.stringify(s.current()).includes("autonomous"), "the field is gone from the file");

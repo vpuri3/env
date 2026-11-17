@@ -798,12 +798,24 @@ configure_codex() {
 
 # Agent skills in skills/<name>/SKILL.md, linked one by one so skills from
 # other sources in ~/.agents/skills stay. pi and Codex read this directory.
+# Links into skills/ whose skill is gone (renamed or removed) are deleted;
+# rm on the link itself never follows it.
 configure_skills() {
-    local dir
+    local dir link
     for dir in "$ENV_REPO_DIR"/skills/*/; do
         dir="${dir%/}"
         if [ -f "$dir/SKILL.md" ]; then
             link_file "$dir" "$HOME/.agents/skills/$(basename "$dir")"
+        fi
+    done
+    for link in "$HOME"/.agents/skills/*; do
+        if [ -L "$link" ] && [ ! -e "$link" ]; then
+            case "$(readlink "$link")" in
+                "$ENV_REPO_DIR"/skills/*)
+                    rm -f "$link"
+                    info "removed stale skill link $link"
+                    ;;
+            esac
         fi
     done
 }

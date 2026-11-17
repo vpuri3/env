@@ -84,7 +84,7 @@ export interface StatusFile {
 	contextPct?: number;
 	subagents: SubagentCounts;
 	slurmJobs?: string[];
-	/** Set from `/leavemealone` until `/autonomous off` (lifecycle.ts); absent otherwise. */
+	/** Set from `/run-autonomously` until `/autonomous off` (lifecycle.ts); absent otherwise. */
 	autonomous?: boolean;
 	heartbeat: string;
 }

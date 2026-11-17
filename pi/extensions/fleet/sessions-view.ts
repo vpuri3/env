@@ -26,7 +26,7 @@
  * closes; q closes.
  *
  * Colors (glyph and state text only, so the selected row's background stays readable): working
- * blue, autonomous (/leavemealone) working green "auto", needs you (done, unseen) yellow,
+ * blue, autonomous (/run-autonomously) working green "auto", needs you (done, unseen) yellow,
  * question magenta bold, error/crashed red, idle/closed/remote dim. The selected row gets a
  * full-width background (pi's selectedBg; a grey in the dashboard) besides the `›` marker. The
  * line above the key hints describes the selected session.

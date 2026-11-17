@@ -85,7 +85,7 @@ The fleet extension in each main pi writes its status file atomically (tmp + ren
   "subagents":{"working":2,"waiting":1,"done":3,"error":0}, "slurmJobs":["8812345"], "autonomous":true, "heartbeat":"…" }
 ```
 
-`autonomous` is present only from `/leavemealone` (the prompt template, seen as typed in the `input` event) until `/autonomous off`; a `pi-fleet:autonomous` session entry keeps it across a resume.
+`autonomous` is present only from `/run-autonomously` (the prompt template, seen as typed in the `input` event; the old name `/leavemealone` still counts) until `/autonomous off`; a `pi-fleet:autonomous` session entry keeps it across a resume.
 
 | state | glyph | when |
 |---|---|---|
@@ -139,7 +139,7 @@ Results are cached by `(path, size, mtime)` in `~/.cache/pi-fleet/index.json`. *
 | `/resume` | pi's own picker. On `session_before_switch`: always `{cancel:true}` + `pi-fleet open --session <target>` (jump if live, else new window) |
 | `/fork`, `/clone` | If subagents are working, confirm that forking replaces this session and stops N subagents |
 | `/sessions` | §9 |
-| `/autonomous` | Shows whether the session is autonomous (§5, set by `/leavemealone`); `/autonomous off` ends it |
+| `/autonomous` | Shows whether the session is autonomous (§5, set by `/run-autonomously`); `/autonomous off` ends it |
 | `/kill` | Dialog below, then stop subagents, `ctx.shutdown()`; `run-pi` closes the window. An empty session with no subagents is killed without a dialog |
 | `/view` | §11 |
 

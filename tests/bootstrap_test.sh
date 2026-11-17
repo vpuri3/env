@@ -114,6 +114,11 @@ printf '{}\n' > "$cursor_user/settings.json"
 mkdir -p "$home/.ssh"
 printf 'Host mybox\n    ForwardAgent yes\n' > "$home/.ssh/config"
 printf 'Host cl1\n    HostName cl-login-01.example.org\nHost cl*\n    ForwardAgent yes\n' > "$home/.ssh/config.local"
+# A skill link left by an older checkout (the skill was renamed); a foreign one stays.
+mkdir -p "$home/.agents/skills" "$home/other-skill"
+ln -s "$home/env/skills/leavemealone" "$home/.agents/skills/leavemealone"
+ln -s "$home/other-skill" "$home/.agents/skills/other"
+ln -s "$home/nowhere" "$home/.agents/skills/dangling-elsewhere"
 check "bootstrap succeeds" bootstrap "$home"
 first=$(snapshot "$home")
 check "re-run succeeds" bootstrap "$home"
@@ -143,7 +148,9 @@ fi
 check "env-deploy skill linked into repo" [ "$(readlink "$home/.agents/skills/env-deploy")" = "$home/env/skills/env-deploy" ]
 check "slurm-jobs skill linked into repo" [ "$(readlink "$home/.agents/skills/slurm-jobs")" = "$home/env/skills/slurm-jobs" ]
 check "env-add-cluster skill linked into repo" [ "$(readlink "$home/.agents/skills/env-add-cluster")" = "$home/env/skills/env-add-cluster" ]
-check "leavemealone skill linked into repo" [ "$(readlink "$home/.agents/skills/leavemealone")" = "$home/env/skills/leavemealone" ]
+check "run-autonomously skill linked into repo" [ "$(readlink "$home/.agents/skills/run-autonomously")" = "$home/env/skills/run-autonomously" ]
+check "stale leavemealone skill link removed" is_absent "$home/.agents/skills/leavemealone"
+check "foreign skill links kept" sh -c '[ -L "$1" ] && [ -L "$2" ]' _ "$home/.agents/skills/other" "$home/.agents/skills/dangling-elsewhere"
 check "no VS Code settings created when VS Code is absent" is_absent "$(dirname "$(dirname "$cursor_user")")/Code"
 check "~/.gitconfig is a real file" is_real_file "$home/.gitconfig"
 check "~/.ssh/config is a real file" is_real_file "$home/.ssh/config"

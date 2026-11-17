@@ -1,9 +1,9 @@
 ---
-name: leavemealone
-description: Hand-off protocol for when the user is stepping away (going to bed, a meeting, "proceed autonomously", "I won't be available"). Ask every question you need in one batch now, then work autonomously within the agreed scope without waiting on permissions or input, keep a decision log, and leave a detailed report for their return. Use when the user says they are leaving or unavailable and wants the work to continue, or invokes /leavemealone.
+name: run-autonomously
+description: Hand-off protocol for when the user is stepping away (going to bed, a meeting, "proceed autonomously", "I won't be available"). Ask every question you need in one batch now, then work autonomously within the agreed scope without waiting on permissions or input, keep a decision log, and leave a detailed report for their return. Use when the user says they are leaving or unavailable and wants the work to continue, or invokes /run-autonomously.
 ---
 
-# Leave me alone: hand-off, autonomous work, report
+# Run autonomously: hand-off, autonomous work, report
 
 The user is about to leave. Three phases: **hand-off** (they are still here,
 briefly), **autonomous work** (they are gone), **report** (for when they are
@@ -98,7 +98,7 @@ agreed scope. Do not stop to ask for confirmation of in-scope actions.
     send `agent_update` at milestones (started, first metrics, failure, done).
 - **Decision log.** Keep one markdown file updated as you go, so nothing is
   lost to compaction or a crash:
-  `~/.local/state/leavemealone/<YYYY-MM-DD-HHMM>-<slug>.md` (outside the
+  `~/.local/state/run-autonomously/<YYYY-MM-DD-HHMM>-<slug>.md` (outside the
   repo, never committed). One line per decision (see the table below),
   plus events: jobs launched (IDs), failures, workarounds, auto-selected
   answers, resumed children.

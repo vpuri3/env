@@ -21,7 +21,8 @@
  *                  The control socket's `kill` opens the same dialog, unless it says
  *                  `"confirmed":true` (the dashboard's / `/sessions`' `d` asked already): then
  *                  it kills at once, and scancels only with `"scancel":true`.
- *   Autonomous     `/leavemealone` (the prompt template, seen in the `input` event) marks the
+ *   Autonomous     `/run-autonomously` (the prompt template, seen in the `input` event; also its
+ *                  old name `/leavemealone`, for sessions started before the rename) marks the
  *                  session autonomous: `autonomous: true` in the status file (the views show a
  *                  working session as "auto") and a "pi-fleet:autonomous" entry, so a resumed
  *                  session keeps it. `/autonomous off` ends it; `/autonomous` shows it.
@@ -78,9 +79,9 @@ export function submittedJobs(text: string): string[] {
 	return ids;
 }
 
-/** The user input that starts autonomous mode: the `/leavemealone` prompt template. */
+/** The user input that starts autonomous mode: the `/run-autonomously` prompt template (or its old name). */
 export function startsAutonomous(text: string): boolean {
-	return /^\/leavemealone(?:\s|$)/.test(text.trimStart());
+	return /^\/(?:run-autonomously|leavemealone)(?:\s|$)/.test(text.trimStart());
 }
 
 function run(cmd: string, args: string[]): Promise<{ code: number; out: string; err: string }> {
@@ -450,7 +451,7 @@ export function register(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("autonomous", {
-		description: "pi-fleet: show autonomous mode (set by /leavemealone); /autonomous off ends it",
+		description: "pi-fleet: show autonomous mode (set by /run-autonomously); /autonomous off ends it",
 		getArgumentCompletions: (prefix: string) => ("off".startsWith(prefix.trim()) ? [{ value: "off", label: "off" }] : null),
 		handler: async (args, c) => {
 			if (!shared.main) {
@@ -462,7 +463,7 @@ export function register(pi: ExtensionAPI): void {
 				if (autonomous) setAutonomous(false);
 				notify(c, "pi-fleet: autonomous mode off");
 			} else if (!arg) {
-				notify(c, autonomous ? "pi-fleet: autonomous (since /leavemealone); /autonomous off ends it" : "pi-fleet: not autonomous (/leavemealone starts it)");
+				notify(c, autonomous ? "pi-fleet: autonomous (since /run-autonomously); /autonomous off ends it" : "pi-fleet: not autonomous (/run-autonomously starts it)");
 			} else {
 				notify(c, "pi-fleet: usage: /autonomous [off]", "warning");
 			}

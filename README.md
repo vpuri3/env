@@ -12,7 +12,7 @@ clusters (bash), with an idempotent bootstrap script.
 | [docs/nvim.md](docs/nvim.md) | Neovim keys, plugins, LSP, the pi-fleet paired nvim |
 | [docs/vscode.md](docs/vscode.md) | Cursor / VS Code with vscode-neovim |
 | [AGENTS.md](AGENTS.md) | rules for coding agents working in this repo (`CLAUDE.md` links to it) |
-| [skills/](skills/) | agent skills (`env-deploy`, `env-add-cluster`, `slurm-jobs`, `cluster-login`, `cluster-python-env`, `dataset-download`, `leavemealone`), linked into `~/.agents/skills/` |
+| [skills/](skills/) | agent skills (`env-deploy`, `env-add-cluster`, `slurm-jobs`, `cluster-login`, `cluster-python-env`, `dataset-download`, `run-autonomously`), linked into `~/.agents/skills/` |
 | [bin/sjob](bin/sjob) | Slurm helper: `sjob alloc/run/shell/batch/chain/q/info/wait/cancel`; site values from `SJOB_*` vars |
 | [pi/agents/](pi/agents/) | pi subagent types (e.g. `slurm-operator`), copied into `~/.pi/agent/subagent-manager/agents/` |
 
@@ -64,7 +64,7 @@ Bootstrap edits rc files, `~/.gitconfig` and `~/.ssh/config` only inside a
 `emacs.conf`, `nvim/` and `bin/` are symlinked, as are `vscode_settings.json`
 and `vscode_keybindings.json` into Cursor and VS Code, for whichever has been
 opened on the machine. For pi, `pi/keybindings.json`, `pi/extensions/` and `pi/prompts/` (`/` commands
-such as `/leavemealone`) are symlinked into `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`), and
+such as `/run-autonomously`) are symlinked into `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`), and
 `pi/settings.json` is copied there only if none exists, since pi writes to it.
 On Linux, bootstrap also adds `"theme": "dark"` to it when no theme is set.
 Subagent types in `pi/agents/*.md` are copied (the subagent manager refuses
@@ -106,7 +106,7 @@ to and never started twice; one live on another login node is refused.
 
 Status glyphs: ● running · ? question · ◐ waiting (unseen) · ○ idle · ✕ error or
 crashed · ⟳ starting. Colors, the same in the dashboard, `/sessions` and the
-tmux status bar: working blue, working autonomously (after `/leavemealone`)
+tmux status bar: working blue, working autonomously (after `/run-autonomously`)
 green "auto", needs you yellow, question magenta, error red, idle dim. A
 stopped pi rings the bell, and the tmux status bar lists the sessions that
 need you by window number.
@@ -117,7 +117,7 @@ need you by window number.
 | `/resume` | pi's picker; the chosen session opens in a new window, or is jumped to if live |
 | `/kill` | end this session: a dialog lists the subagents it stops and its Slurm jobs (left running by default) |
 | `/sessions` | the session list (the dashboard without the preview) |
-| `/autonomous [off]` | is this session autonomous (set by `/leavemealone`)? `off` ends it |
+| `/autonomous [off]` | is this session autonomous (set by `/run-autonomously`)? `off` ends it |
 | `/view FILE[:LINE]` | open a file in the paired nvim at LINE, then focus it; completes files this session touched first, then the repo |
 | `/view tool:N` | the Nth most recent tool call's full output, read-only in nvim (`tool:` completes) |
 | `/view` | picker: touched files, then the last 10 tool calls |

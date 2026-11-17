@@ -490,7 +490,7 @@ test("rpc pi: Slurm capture, no /fork guard, /kill dialog (control socket and co
 	}
 });
 
-test("rpc pi: /leavemealone marks the status autonomous until /autonomous off; a confirmed kill (dashboard `d`) asks nothing", { skip: skipRpc, timeout: 90_000 }, async () => {
+test("rpc pi: /run-autonomously marks the status autonomous until /autonomous off; a confirmed kill (dashboard `d`) asks nothing", { skip: skipRpc, timeout: 90_000 }, async () => {
 	const rig = new Rig();
 	const pi = new RpcPi(rig, rig.tmuxEnv());
 	try {
@@ -500,7 +500,7 @@ test("rpc pi: /leavemealone marks the status autonomous until /autonomous off; a
 		await waitFor("slurmJobs in status", () => rig.status(id)?.slurmJobs?.[0] === "8812345");
 		await waitFor("settle", () => pi.settled() >= 1);
 		// No prompt templates here (-np): the text reaches the input event as typed.
-		await pi.call({ type: "prompt", message: "/leavemealone back at 5" });
+		await pi.call({ type: "prompt", message: "/run-autonomously back at 5" });
 		await waitFor("autonomous in status", () => rig.status(id)?.autonomous === true);
 		await waitFor("settle", () => pi.settled() >= 2);
 		await pi.call({ type: "prompt", message: "/autonomous off" });
