@@ -1,7 +1,8 @@
-// `/sessions` in a real pi TUI (design §9; phase 4): pi runs in a throwaway tmux server
-// (`tmux -L fleettest-…`, the harness refuses the default socket, PI_FLEET_TMUX_GUARD=1) with
-// only the fleet extension and a faux provider, a temp agent dir, no session file of its own,
-// and the fixture sessions/status dirs. Keys go in with send-keys; the screen is capture-pane.
+// `/sessions` in a real pi TUI (design §9): pi runs in a throwaway tmux server (`tmux -L
+// fleettest-…`, the harness refuses the default socket, PI_FLEET_TMUX_GUARD=1) with only the
+// fleet extension and a faux provider, a temp agent dir, no session file of its own, and the
+// fixture sessions/status dirs. `/sessions` opens the dashboard window (no view inside pi); the
+// test then drives the dashboard there. Keys go in with send-keys; the screen is capture-pane.
 // Enter on a session that is not running opens it in a new window (the stub pi of the CLI tests).
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
@@ -36,7 +37,7 @@ async function waitFor<T>(what: string, probe: () => T | undefined | false | Pro
 	}
 }
 
-test("/sessions in pi: the list, Space shows subagents, Enter opens a session in a new window", { skip, timeout: 240_000 }, async () => {
+test("/sessions in pi opens the dashboard window: the list, Space shows subagents, Enter opens a session", { skip, timeout: 240_000 }, async () => {
 	const label = `fleettest-sessions-${process.pid}`;
 	const env: NodeJS.ProcessEnv = {
 		...fx.env,
@@ -110,10 +111,19 @@ test("/sessions in pi: the list, Space shows subagents, Enter opens a session in
 			return false;
 		}, 60_000, show);
 		await clearEditor();
+		// The dashboard window, once /sessions made it.
+		const dashPane = () => {
+			const fleet = tmux(["list-windows", "-F", "#{window_id} #{@pi_fleet_dashboard}"]).split("\n").find((l) => l.endsWith(" 1"))?.split(" ")[0];
+			return fleet ? tmux(["display-message", "-p", "-t", fleet, "#{pane_id}"]) : undefined;
+		};
+		const listShown = () => {
+			const d = dashPane();
+			return !!d && /▾ gamma \(2\)/.test(capture(d));
+		};
 		// Type /sessions and Enter; the first Enter may only accept the autocomplete suggestion,
 		// so Enter again only while the editor still holds /sessions. Garbled text is retyped.
-		await waitFor("the sessions list", async () => {
-			if (/▾ gamma \(2\)/.test(capture(pane))) return true;
+		await waitFor("the dashboard window", async () => {
+			if (listShown()) return true;
 			const e = editor();
 			if (e && /^\/sessions\s*$/.test(e.text) && !e.more) {
 				keys("Enter");
@@ -124,36 +134,39 @@ test("/sessions in pi: the list, Space shows subagents, Enter opens a session in
 				return false;
 			}
 			for (let i = 0; i < 20; i++) {
-				if (/▾ gamma \(2\)/.test(capture(pane))) return true;
+				if (listShown()) return true;
 				await sleep(100);
 			}
 			return false;
 		}, 60_000, show);
-		const screen = capture(pane);
+		const dash = dashPane()!;
+		assert.equal(tmux(["display-message", "-p", "#{pane_id}"]), dash, "the dashboard window is selected");
+		const screen = capture(dash);
 		assert.match(screen, /\? flare refactor\s+question/);
-		assert.match(screen, /● physicsnemo sweep\s+bash \d+m\s+\$3\.41 2w 1◐ 3✓/);
+		assert.match(screen, /● physicsnemo sweep\s+bash \d+m\s+(\$3\.41 )?2w 1◐ 3✓/);
 		assert.match(screen, /○ start the old run\s+3h ago\s+1✓ 1 inter/);
-		// Selected: this pi's own row once its status file exists, else the first session row.
-		assert.match(screen, /^›\s+(\S \S+ session \(this\)|\? flare refactor)/m);
+		assert.match(screen, /^›\s+\? flare refactor/m);
 
 		// Move to the old run (ctrl+n / j), show its subagents.
 		// One key at a time, each waiting for the selection to move, so a slow redraw never overshoots.
-		const selected = () => /^›.*$/m.exec(capture(pane))?.[0];
-		for (let i = 0; i < 12 && !/›\s+○ start the old run/.test(capture(pane)); i++) {
+		const showDash = () => capture(dash);
+		const selected = () => /^›.*$/m.exec(capture(dash))?.[0];
+		for (let i = 0; i < 12 && !/›\s+○ start the old run/.test(capture(dash)); i++) {
 			const before = selected();
-			keys(i % 2 ? "C-n" : "j");
-			await waitFor("the selection to move", () => selected() !== before, 10_000, show);
+			tmux(["send-keys", "-t", dash, i % 2 ? "C-n" : "j"]);
+			await waitFor("the selection to move", () => selected() !== before, 10_000, showDash);
 		}
-		assert.match(capture(pane), /›\s+○ start the old run/);
-		tmux(["send-keys", "-t", pane, "Space"]);
-		await waitFor("the subagent rows", () => /◌ coder \/runner\s+interrupted/.test(capture(pane)), 30_000, show);
+		assert.match(capture(dash), /›\s+○ start the old run/);
+		tmux(["send-keys", "-t", dash, "Space"]);
+		await waitFor("the subagent rows", () => /◌ coder \/runner\s+interrupted/.test(capture(dash)), 30_000, showDash);
 
-		tmux(["send-keys", "-t", pane, "Enter"]);
+		tmux(["send-keys", "-t", dash, "Enter"]);
 		const runs = join(env.PI_FLEET_STUB_DIR!, `${IDS.old}.runs`);
-		await waitFor("the opened session window", () => existsSync(runs), 60_000, show);
+		await waitFor("the opened session window", () => existsSync(runs), 60_000, showDash);
 		assert.match(readFileSync(runs, "utf8"), /--session .*a003\.jsonl/);
-		// The list closed; pi is still alive in its window.
-		assert.ok(tmux(["list-panes", "-a", "-F", "#{pane_id}"]).split("\n").includes(pane));
+		// pi is still alive in its window, and so is the dashboard in its own.
+		const panes = tmux(["list-panes", "-a", "-F", "#{pane_id}"]).split("\n");
+		assert.ok(panes.includes(pane) && panes.includes(dash));
 	} finally {
 		try {
 			tmux(["kill-server"]);

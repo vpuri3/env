@@ -94,7 +94,6 @@ function dashboard(height: number, preview: (row: { id: string }) => Promise<imp
 	const view = new sv.SessionsView({
 		source: sv.fleetSource(fx.env),
 		style: plainStyle,
-		mode: "dashboard",
 		height: () => height,
 		onAction: () => {},
 		requestRender: () => {},
@@ -323,7 +322,6 @@ test("dashboard: previews of rows that are gone are dropped on refresh", { skip 
 	const view = new sv.SessionsView({
 		source: { load: () => rows as never, threads: () => [] },
 		style: plainStyle,
-		mode: "dashboard",
 		height: () => 20,
 		onAction: () => {},
 		requestRender: () => {},
@@ -339,4 +337,155 @@ test("dashboard: previews of rows that are gone are dropped on refresh", { skip 
 	view.refresh();
 	assert.ok(!previews.has(first));
 	assert.equal(previews.size, 0);
+});
+
+// ---------------------------------------------------------------- ctrl+l: a session's pi in the dashboard window
+
+/** Two live sessions in their own windows: sweep (pi | nvim, paired) and ckpt (pi alone). */
+function liveSessions(server: Server) {
+	const opt = (pane: string, ...kv: string[]) => {
+		for (let i = 0; i < kv.length; i += 2) server.tmux(["set-option", "-p", "-t", pane, kv[i]!, kv[i + 1]!]);
+	};
+	const [sweepPi, sweepWin] = server.tmux(["new-window", "-d", "-n", "sweepwin", "-P", "-F", "#{pane_id} #{window_id}", "printf 'SWEEP PI\\n'; exec sleep 600"]).split(" ") as [string, string];
+	const nvim = server.tmux(["split-window", "-d", "-h", "-l", "50%", "-t", sweepPi, "-P", "-F", "#{pane_id}", "printf 'SWEEP NVIM\\n'; exec sleep 600"]);
+	opt(sweepPi, "@pi_fleet_role", "pi", "@pi_fleet_session", IDS.sweep, "@pi_fleet_peer", nvim);
+	opt(nvim, "@pi_fleet_role", "nvim", "@pi_fleet_session", IDS.sweep, "@pi_fleet_peer", sweepPi);
+	server.tmux(["set-option", "-w", "-t", sweepWin, "@pi_fleet_named", "1"]);
+	const [ckptPi, ckptWin] = server.tmux(["new-window", "-d", "-n", "ckptwin", "-P", "-F", "#{pane_id} #{window_id}", "printf 'CKPT PI\\n'; exec sleep 600"]).split(" ") as [string, string];
+	opt(ckptPi, "@pi_fleet_role", "pi", "@pi_fleet_session", IDS.ckpt);
+	const heartbeat = new Date().toISOString();
+	for (const [id, pane] of [[IDS.sweep, sweepPi], [IDS.ckpt, ckptPi]] as const) {
+		const status = JSON.parse(readFileSync(join(fx.statusDir, `${id}.json`), "utf8"));
+		fx.writeStatus(id, { ...status, tmux: { socket: server.socket, piPane: pane }, heartbeat });
+	}
+	return { sweepPi, sweepWin, nvim, ckptPi, ckptWin };
+}
+
+const fmt = (server: Server, target: string, format: string) => server.tmux(["display-message", "-p", "-t", target, format]);
+
+test("e2e: ctrl+l joins a live session's pi beside the dashboard; switching, q, ctrl+c, Enter and a killed dashboard send it home", { skip: skipTmux, timeout: 120_000 }, async () => {
+	const server = new Server({});
+	try {
+		const s = liveSessions(server);
+		const start = server.tmux(["display-message", "-p", "-t", "main", "#{window_id}"]);
+		const openDashboard = async () => {
+			const r = spawnSync(cliBin, ["dashboard", "--window", "--pane", fmt(server, "main:", "#{pane_id}")], { env: server.env, encoding: "utf8", timeout: 20_000 });
+			assert.equal(r.status, 0, r.stderr);
+			const fleet = server.tmux(["list-windows", "-F", "#{window_id} #{@pi_fleet_dashboard}"]).split("\n").find((l) => l.endsWith(" 1"))!.split(" ")[0]!;
+			const dash = fmt(server, fleet, "#{pane_id}");
+			await waitFor("the dashboard", () => server.capture(dash).includes("▾ alpha"));
+			return { fleet, dash };
+		};
+		const select = async (dash: string, name: string) => {
+			// `/`, ctrl+u (drops the last filter), the name, Escape (stop typing).
+			server.type(dash, "/");
+			await server.keys(dash, "C-u");
+			server.type(dash, name);
+			await server.keys(dash, "Escape");
+			await waitFor(`${name} selected`, () => new RegExp(`^›.*${name}`, "m").test(server.capture(dash)));
+		};
+		const windowOf = (pane: string) => fmt(server, pane, "#{window_id}");
+		const homeAgain = async (pane: string, window: string) => {
+			await waitFor(`${pane} home in ${window}`, () => server.alive(pane) && windowOf(pane) === window && !fmt(server, pane, "#{@pi_fleet_joined}"));
+			assert.equal(fmt(server, pane, "#{@pi_fleet_home}"), "");
+		};
+		let { fleet, dash } = await openDashboard();
+
+		// ctrl+l on sweep: its pi joins the fleet window on the right, ~60%, marked, focused.
+		await select(dash, "physicsnemo sweep");
+		await server.keys(dash, "C-l");
+		await waitFor("sweep joined", () => windowOf(s.sweepPi) === fleet);
+		assert.equal(fmt(server, s.sweepPi, "#{@pi_fleet_joined}"), fleet);
+		assert.equal(fmt(server, s.sweepPi, "#{@pi_fleet_home}"), s.sweepWin);
+		assert.equal(fmt(server, s.sweepPi, "#{pane_active}"), "1");
+		assert.ok(Number(fmt(server, s.sweepPi, "#{pane_left}")) > Number(fmt(server, dash, "#{pane_left}")), "on the right");
+		const width = Number(fmt(server, s.sweepPi, "#{pane_width}"));
+		assert.ok(width >= 90 && width <= 100, `~60% of 160: ${width}`);
+		// The dashboard re-lays out for its narrower pane: the list only, the joined row marked.
+		await waitFor("the joined layout", () => /⇥ ● physicsnemo sweep/.test(server.capture(dash)) && !server.capture(dash).includes("│"));
+		// nvim pairing still resolves from the joined pane; bar renames the home window, not the fleet window.
+		assert.equal(spawnSync(cliBin, ["peer", s.sweepPi], { env: server.env, encoding: "utf8" }).stdout.trim(), s.nvim);
+		spawnSync(cliBin, ["bar"], { env: server.env, encoding: "utf8", timeout: 20_000 });
+		assert.equal(fmt(server, fleet, "#{window_name}"), "fleet");
+		assert.equal(fmt(server, s.sweepWin, "#{window_name}"), "● physicsnemo sweep");
+
+		// Back in the list (what C-h does), ctrl+l on the same session only focuses it.
+		server.tmux(["select-pane", "-t", dash]);
+		await server.keys(dash, "C-l");
+		await waitFor("sweep focused", () => fmt(server, s.sweepPi, "#{pane_active}") === "1");
+		assert.equal(windowOf(s.sweepPi), fleet);
+
+		// ctrl+l on ckpt: sweep goes home left of its nvim (50/50), then ckpt joins.
+		server.tmux(["select-pane", "-t", dash]);
+		await select(dash, "ckpt restart");
+		await server.keys(dash, "C-l");
+		await waitFor("ckpt joined", () => windowOf(s.ckptPi) === fleet);
+		await homeAgain(s.sweepPi, s.sweepWin);
+		assert.ok(Number(fmt(server, s.sweepPi, "#{pane_left}")) < Number(fmt(server, s.nvim, "#{pane_left}")), "left of nvim");
+		const [w1, w2] = [s.sweepPi, s.nvim].map((p) => Number(fmt(server, p, "#{pane_width}")));
+		assert.ok(Math.abs(w1! - w2!) <= 1, `50/50: ${w1}/${w2}`);
+		assert.equal(spawnSync(cliBin, ["peer", s.sweepPi], { env: server.env, encoding: "utf8" }).stdout.trim(), s.nvim);
+		assert.equal(server.tmux(["list-panes", "-t", fleet, "-F", "#{pane_id}"]).split("\n").length, 2);
+
+		// q: ckpt (alone in its window, which closed when it left) goes home to a new window of its own.
+		server.tmux(["select-pane", "-t", dash]);
+		await server.keys(dash, "q");
+		await waitFor("ckpt home", () => windowOf(s.ckptPi) !== fleet && !fmt(server, s.ckptPi, "#{@pi_fleet_joined}"));
+		assert.equal(fmt(server, s.ckptPi, "#{window_name}"), "◐ ckpt restart");
+		assert.equal(fmt(server, s.ckptPi, "#{@pi_fleet_named}"), "1");
+		assert.equal(server.tmux(["list-panes", "-t", fleet, "-F", "#{pane_id}"]), dash);
+		assert.notEqual(fmt(server, "main", "#{window_id}"), fleet, "q left the fleet window");
+
+		// Enter on the joined session: home first, then the jump lands in its own window.
+		server.tmux(["select-window", "-t", fleet]);
+		await select(dash, "physicsnemo sweep");
+		await server.keys(dash, "C-l");
+		await waitFor("sweep joined again", () => windowOf(s.sweepPi) === fleet);
+		server.tmux(["select-pane", "-t", dash]);
+		await server.keys(dash, "Enter");
+		await homeAgain(s.sweepPi, s.sweepWin);
+		await waitFor("the jump", () => fmt(server, "main", "#{window_id}") === s.sweepWin);
+
+		// ctrl+c quits the dashboard and sends the joined pane home.
+		server.tmux(["select-window", "-t", fleet]);
+		await server.keys(dash, "C-l");
+		await waitFor("sweep joined (ctrl+c)", () => windowOf(s.sweepPi) === fleet);
+		server.tmux(["select-pane", "-t", dash]);
+		await server.keys(dash, "C-c");
+		await homeAgain(s.sweepPi, s.sweepWin);
+		await waitFor("the dashboard to quit", () => !server.alive(dash));
+
+		// The dashboard pane killed (SIGHUP) while a pane is joined: that pane goes home, alive.
+		({ fleet, dash } = await openDashboard());
+		assert.equal(start === fleet, false);
+		await select(dash, "physicsnemo sweep");
+		await server.keys(dash, "C-l");
+		await waitFor("sweep joined (kill)", () => windowOf(s.sweepPi) === fleet);
+		server.tmux(["kill-pane", "-t", dash]);
+		await homeAgain(s.sweepPi, s.sweepWin);
+		assert.ok(server.alive(s.nvim));
+	} finally {
+		server.kill();
+	}
+});
+
+test("e2e: in the popup (not the fleet window) ctrl+l jumps to the session's window; dead rows flash `not live`", { skip: skipTmux, timeout: 60_000 }, async () => {
+	const server = new Server({});
+	try {
+		const s = liveSessions(server);
+		const dash = server.tmux(["new-window", "-P", "-F", "#{pane_id}", "--", cliBin, "dashboard"]);
+		await waitFor("the dashboard", () => server.capture(dash).includes("▾ alpha"));
+		server.type(dash, "/old run");
+		await server.keys(dash, "Escape", "C-l");
+		await waitFor("not live", () => /start the old run is not live/.test(server.capture(dash)));
+		await server.keys(dash, "Escape");
+		server.type(dash, "/physicsnemo");
+		await server.keys(dash, "Escape", "C-l");
+		await waitFor("the jump", () => fmt(server, "main", "#{window_id}") === s.sweepWin);
+		assert.equal(fmt(server, s.sweepWin, "#{pane_id}"), s.sweepPi, "the pi pane is active");
+		assert.equal(fmt(server, s.sweepPi, "#{@pi_fleet_joined}"), "", "never joined");
+		await waitFor("the popup dashboard to quit", () => !server.alive(dash));
+	} finally {
+		server.kill();
+	}
 });

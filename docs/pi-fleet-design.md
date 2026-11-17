@@ -5,7 +5,7 @@ Status: **design, not implemented**, revision 2 with the user's decisions (2026-
 ## 1. Goals
 
 - Several main pi sessions run at once, one tmux window each. Switching never pauses, aborts or kills a session.
-- A dashboard (with a live preview) and a `/sessions` picker list every session on this login node, grouped by repo, with status and subagent counts.
+- A dashboard (with a live preview) lists every session on this login node, grouped by repo, with status and subagent counts. `/sessions`, `Space e` and `prefix g` open it as a window, `Space E` and `prefix G` as a popup.
 - `/new` and `/resume` always open a new window. `/kill` ends a session deliberately.
 - Each session window is pi (left) | nvim (right):
   - `/view` opens files or tool output in that nvim.
@@ -69,7 +69,7 @@ tmux server (per login node)
 | Leader keys | `pi/extensions/vim-mode.ts` (emits on `pi.events`) |
 | tmux glue | `tmux.conf` |
 
-The dashboard is a standalone node TUI (decided). It imports pi-tui from the pinned install through `realpath(which pi)`, and shares `SessionsView` with `/sessions`.
+The dashboard is a standalone node TUI (decided). It imports pi-tui from the pinned install through `realpath(which pi)`. It is the only sessions view: `/sessions` opens its window (revision 3, 2026-11-17; the in-pi overlay was removed).
 
 ## 5. Status file and state model
 
@@ -138,7 +138,7 @@ Results are cached by `(path, size, mtime)` in `~/.cache/pi-fleet/index.json`. *
 | `/new` | Always `{cancel:true}` + `pi-fleet open --cwd <cwd>` in a new focused window, even from an empty session (decided) |
 | `/resume` | pi's own picker. On `session_before_switch`: always `{cancel:true}` + `pi-fleet open --session <target>` (jump if live, else new window) |
 | `/fork`, `/clone` | If subagents are working, confirm that forking replaces this session and stops N subagents |
-| `/sessions` | §9 |
+| `/sessions` | Opens the dashboard window (§9), as `prefix g` does |
 | `/autonomous` | Shows whether the session is autonomous (§5, set by `/run-autonomously`); `/autonomous off` ends it |
 | `/kill` | Dialog below, then stop subagents, `ctx.shutdown()`; `run-pi` closes the window. An empty session with no subagents is killed without a dialog |
 | `/view` | §11 |
@@ -158,13 +158,13 @@ The `/new`, `/resume`, `/fork` interceptions and the duplicate guard apply only 
 
 Slurm job IDs come from the `tool_result` of `bash` calls that match `Submitted batch job (\d+)`. They are stored via `appendEntry("pi-fleet:slurm-job")` and in `slurmJobs`, and checked with `squeue -h -j … -o '%i %T %M'`; array tasks and het components (`123_4`, `123_[5-10]`, `456+0`) are listed once, as the base job.
 
-## 9. Dashboard and `/sessions` (one component)
+## 9. Dashboard (the one sessions view)
 
 `SessionsView` (pi-tui) polls the index and status files every 1 s; `fs.watch` is unreliable on NFS. It shows every main session on this node plus the 30 most recent non-running ones, **grouped by repo**:
 - Groups are ordered by their most urgent row.
 - Within a group: ? > ✕ > ◐ > ● > ○, then recency.
 
-`/sessions` renders the list only, through `ctx.ui.custom`. The **dashboard** adds a preview pane on the right (decided). It runs in the `fleet` window (`prefix g`) or as `display-popup -E -w 95% -h 90%` (`prefix G`).
+The dashboard shows the list with a preview pane on the right (decided; below the list on screens narrower than 100 columns). It runs in the `fleet` window (`prefix g`, `Space e`, `/sessions`: `pi-fleet dashboard --window --pane $TMUX_PANE`, a toggle) or as `display-popup -E -w 95% -h 90% pi-fleet dashboard` (`prefix G`, `Space E`). There is no view inside pi.
 
 ```
  pi-fleet  login-eos02   4 live · 1 waiting   ● working ● auto ◐ needs you ? question ✕ error ○ idle
@@ -179,6 +179,13 @@ Slurm job IDs come from the `tool_result` of `bash` calls that match `Submitted 
 ```
 
 - **Preview**: `capture-pane -p -e -t <piPane> -S -<rows>` of the selected live row, debounced 150 ms on cursor moves and refreshed every 1 s. Control characters are stripped and SGR kept. If the pane is gone the preview says so; on a timeout it keeps the last frame. Rows that are not running show the session's last assistant message instead.
+- **Subagent preview**: a selected subagent row shows that subagent's own transcript: the last 256 KB of its session JSONL (the registry view's `sessionFile`, else the scanned subagent file whose thread entry names this root and path), read asynchronously and parsed once per size/mtime, refreshed every 1 s while the thread runs. Assistant text, thinking (dimmed, its last 4 lines), and one line per tool call (`✓`/`✗` once its result is in the tail, `…` before), all through the same sanitizer as every other string (`oneLine`: escape sequences dropped, control characters spaced).
+- **Interact (`ctrl+l`)**, live sessions of this host in this tmux server only (other rows flash "not live"):
+  - In the `fleet` window: `join-pane -h -l 60% -s <piPane> -t <dashboard pane>` puts the session's pi on the right and focuses it, so you type into it directly. The pane gets `@pi_fleet_joined=<fleet window id>` and `@pi_fleet_home=<window it came from>`. `C-h` in it goes back to the list: tmux.conf's root binding `bind -n C-h if -F '#{@pi_fleet_joined}' 'select-pane -L' 'send-keys C-h'`, so `C-h` is unchanged in every other pane (the vim-tmux-navigator pattern; tested on tmux 3.2a). While a pane is joined the list takes the whole dashboard pane (pi-tui re-renders on SIGWINCH) and the joined row is marked `⇥`; `j`/`k` never join.
+  - `ctrl+l` on the joined session focuses it; on another session the joined pane first goes **home**: `join-pane -d -h -b -l 50%` left of its paired nvim (`@pi_fleet_peer`, which must point back), or, without a live nvim, `break-pane -d` into a new window named `<glyph> <name>` with `@pi_fleet_named=1`. The marks are unset. Pairing (`prefix e`, `pi-fleet peer`) is by pane id and survives the moves.
+  - `q`/`Esc`, `ctrl+c`, `Enter`, `a`, and SIGTERM/SIGHUP (the dashboard pane killed) send the joined pane home first. The joined pane is re-read from tmux every second, so one that exited or was moved by hand is forgotten. tmux has no hook that runs before a window is killed: `kill-window` on the `fleet` window kills a joined pi with it.
+  - In the popup panes cannot join: `ctrl+l` jumps to the session's window (like `Enter` on a live row) and the popup closes.
+  - `pi-fleet bar` renames a joined pane's home window, never the `fleet` window; its index in the bar is where the pi is now.
 - **Keys**:
   - `j`/`k`/arrows move.
   - `Space` expands or collapses a group or a main's subagents (subagents are hidden by default).
@@ -186,11 +193,10 @@ Slurm job IDs come from the `tool_result` of `bash` calls that match `Submitted 
   - `d` kill: an inline confirm on the line above the key hints (`Kill sweep? 2 subagents working · Slurm 8812345 running`, then `y kill · s kill+scancel · n/Esc cancel`; `s` only when Slurm jobs are queued). `y`/`s` send `{"type":"kill","confirmed":true,"scancel":false|true}` to that pi's control socket, which then ends without its own dialog; the view stays open and the row disappears. Not running: a flash; remote: refused.
   - `a` new session in the repo of the row or of the selected repo header. `/` filters on name, repo, cwd and last message, and while it is active `j`/`k`/`d`/`a` type letters; `Esc` leaves the filter.
   - `!` `@` `#` `&` filter running/waiting/idle/error, `0` clears (agent-deck's keys).
-  - `q`/`Esc` close the popup or `/sessions`.
+  - `q`/`Esc` close the popup, or in the `fleet` window go back to the last window (the dashboard keeps running); `ctrl+c` quits.
   - The view never binds Tab and never needs Alt or Ctrl+Shift.
-- **Colors** (glyph and state text only): working blue (pi's `mdLink`), autonomous working green `auto`, needs you (done, unseen) yellow, question magenta bold (pi's `accent`; an autonomous question too), error/crashed red, idle/closed/remote dim. The selected row gets a full-width background (pi's `selectedBg`; grey 237 in the dashboard) as well as the `›` marker. The header shows the legend; `?` repeats it.
+- **Colors** (glyph and state text only): working blue, autonomous working green `auto`, needs you (done, unseen) yellow, question magenta bold (an autonomous question too), error/crashed red, idle/closed/remote dim. The selected row gets a full-width background (grey 237) as well as the `›` marker. The header shows the legend; `?` repeats it.
 - **Status line** above the key hints: the selected session's full state, current tool, time in that state, cost, subagent counts, cwd and last message (a repo header: its path and counts).
-- While `/sessions` is open the fleet emits `pi.events` `pi-fleet:overlay` `{name, open}`; vim-mode then draws neither its transcript cursor nor the prompt's.
 
 ## 10. Notifications and control socket
 
@@ -249,7 +255,8 @@ The message is a custom `pi-fleet:user-edit`: `The user edited src/foo.py in the
 
 | Keys | Action | nvim analogue | Status |
 |---|---|---|---|
-| `Space e` | `/sessions` | `<leader>e` nvim-tree | decided |
+| `Space e` | the dashboard window (`/sessions`, `prefix g`) | `<leader>e` nvim-tree | decided |
+| `Space E` | the dashboard popup (`prefix G`) | none | decided |
 | `Space f f` | file picker (the `/view` backend: touched files first, then the repo), opening in the paired nvim | `<leader>ff` | decided |
 | `Space f g` | git files only | `<leader>fg` | decided |
 | `Space f b` | files touched in this session only | `<leader>fb` buffers | decided |
@@ -266,7 +273,8 @@ The message is a custom `pi-fleet:user-edit`: `The user edited src/foo.py in the
 
 | Where | Keys |
 |---|---|
-| tmux | `prefix g` dashboard window (from the dashboard: back to the last window), `prefix G` popup, `prefix e` jump between pi and nvim via `@pi_fleet_peer`, `prefix N` window from the notification bar (existing) |
+| tmux | `prefix g` dashboard window (from the dashboard: back to the last window), `prefix G` popup, `prefix e` jump between pi and nvim via `@pi_fleet_peer`, `prefix N` window from the notification bar (existing), root `C-h` only in a joined pi pane (§9) |
+| dashboard | §9; `ctrl+l` interact |
 | pi | `/sessions` `/new` `/resume` `/kill` `/view` `/autonomous`, and the leader maps in §12. No `keybindings.json` changes |
 | nvim | `:w!` `:w!!` `:PiHelp` `:PiDiff` `:PiFocus` |
 
@@ -322,12 +330,12 @@ The fleet binds nothing at the pi editor level, so Tab (follow-up) and Up (deque
 
 | Topic | Decision |
 |---|---|
-| Dashboard | Our own standalone node TUI (window `prefix g` and popup `prefix G`) with a live capture-pane preview, all sessions on the node grouped by repo, `/` filter. Borrow agent-deck's logic with attribution (§3); not adopted as a tool |
+| Dashboard | Our own standalone node TUI (window `prefix g` and popup `prefix G`) with a live capture-pane preview, all sessions on the node grouped by repo, `/` filter. Borrow agent-deck's logic with attribution (§3); not adopted as a tool. Revision 3: the only sessions view (`/sessions` opens it); `ctrl+l` joins a session's pi into its window, `C-h` goes back; subagent rows preview their transcript |
 | `/new`, `/resume` | Always a new window, never in place |
 | `/kill` | Confirm dialog listing subagents and Slurm jobs; the default leaves Slurm jobs running |
 | Login nodes | Pin ssh to one login node; sessions on other nodes shown dimmed, never duplicated |
 | nvim pane | Always created at session start |
 | `/view` | One command: `/view FILE` (session-touched files first, then the repo) and `/view tool:N`. No `/output`. Focus moves to nvim |
 | nvim saves | Read-only buffers. `:w!` = save + note (next message, or steer if the agent is working on that file; blind `write` blocked). `:w!!` = save + interrupt (steer now). Explained by winbar and `:PiHelp` |
-| Leader keys | Space leader in vim-mode NORMAL: `Space e` `/sessions`, `Space f f` file picker into nvim, plus `f g` `f b` `f s` `f h` `g s` `t`; selection on `v`/`V` (§12) |
+| Leader keys | Space leader in vim-mode NORMAL: `Space e` dashboard window, `Space E` popup, `Space f f` file picker into nvim, plus `f g` `f b` `f s` `f h` `g s` `t`; selection on `v`/`V` (§12) |
 | Keys | No Alt, no Ctrl+Shift; the fleet uses neither Tab nor Up |

@@ -5,7 +5,8 @@
  * module sets `handled = true` synchronously when it takes the action (vim-mode shows
  * "pi-fleet not loaded" otherwise) and runs it with the UI context saved at session_start.
  *
- *   sessions        Space e     /sessions (sessions-view.ts openSessions)
+ *   sessions        Space e     the dashboard window, like /sessions and prefix g
+ *   sessions-popup  Space E     the dashboard popup, like prefix G (sessions-view.ts openDashboard)
  *   files           Space f f   file picker: session files, then the repo
  *   git-files       Space f g   repo (git) files only
  *   session-files   Space f b   files touched in this session only
@@ -22,7 +23,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { focusPane, inTmux } from "./cli.ts";
 import { NvimUnreachable, nvimRequest, resolveNvim, type NvimPeer } from "./nvim.ts";
 import { fleetOf, ownPrompt } from "./shared.ts";
-import { openSessions } from "./sessions-view.ts";
+import { openDashboard } from "./sessions-view.ts";
 import { openFilePicker, openGrepPicker, openToolPicker, pairNew } from "./view.ts";
 
 export const ACTION_EVENT = "pi-fleet:action";
@@ -138,8 +139,10 @@ export async function pickCommand(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 export type Action = (pi: ExtensionAPI, ctx: ExtensionContext) => unknown;
 
 export const ACTIONS: Readonly<Record<string, Action>> = {
-	// Space e: the /sessions view, opened directly (even while the agent works; never a prompt).
-	sessions: openSessions,
+	// Space e / Space E: the dashboard window / popup, opened directly (even while the agent
+	// works; never a prompt).
+	sessions: (pi, ctx) => openDashboard(pi, ctx, "window"),
+	"sessions-popup": (pi, ctx) => openDashboard(pi, ctx, "popup"),
 	files: (pi, ctx) => openFilePicker(pi, ctx, { scope: "all" }),
 	"git-files": (pi, ctx) => openFilePicker(pi, ctx, { scope: "git" }),
 	"session-files": (pi, ctx) => openFilePicker(pi, ctx, { scope: "session" }),

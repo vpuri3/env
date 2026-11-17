@@ -108,8 +108,8 @@ outside tmux it opens in the tmux session `fleet` (created if missing) and
 attaches to it.
 
 Status glyphs: ● running · ? question · ◐ waiting (unseen) · ○ idle · ✕ error or
-crashed · ⟳ starting. Colors, the same in the dashboard, `/sessions` and the
-tmux status bar: working blue, working autonomously (after `/run-autonomously`)
+crashed · ⟳ starting. Colors, the same in the dashboard and the tmux status
+bar: working blue, working autonomously (after `/run-autonomously`)
 green "auto", needs you yellow, question magenta, error red, idle dim. A
 stopped pi rings the bell, and the tmux status bar lists the sessions that
 need you by window number.
@@ -119,7 +119,7 @@ need you by window number.
 | `/new` | a new session in a new window (the current one keeps running) |
 | `/resume` | pi's picker; the chosen session opens in a new window, or is jumped to if live |
 | `/kill` | end this session: a dialog lists the subagents it stops and its Slurm jobs (left running by default) |
-| `/sessions` | the session list (the dashboard without the preview) |
+| `/sessions` | the dashboard window (same as `prefix g` and `Space e`) |
 | `/autonomous [off]` | is this session autonomous (set by `/run-autonomously`)? `off` ends it |
 | `/view FILE[:LINE]` | open a file in the paired nvim at LINE, then focus it; completes files this session touched first, then the repo |
 | `/view tool:N` | the Nth most recent tool call's full output, read-only in nvim (`tool:` completes) |
@@ -131,11 +131,12 @@ Outside tmux, pi keeps its own `/new` and `/resume`, and `/view` falls back to
 extension, including the subagent manager that runs them, so wait until they
 finish.
 
-| Dashboard (`prefix g`, popup `prefix G`) | Does |
+| Dashboard (`prefix g` / `Space e`, popup `prefix G` / `Space E`) | Does |
 | --- | --- |
 | `j` / `k` (or arrows) | move |
-| `Space` | show a session's subagents; collapse a repo |
+| `Space` | show a session's subagents (select one to preview its transcript); collapse a repo |
 | `Enter` | jump to the session, or open it in a new window (on a subagent: its main) |
+| `ctrl+l` | type into a live session: its pi pane joins the dashboard window on the right; `ctrl+h` in it goes back to the list. Another `ctrl+l` switches sessions, closing the dashboard sends the pane home. In the popup: jump to the session's window |
 | `d` | kill the session: confirm with `y`, or `s` to also scancel its Slurm jobs (`n`/`Esc` cancel); you stay in the list |
 | `a` | new session in the repo of the row or repo header |
 | `/` | filter by name, repo, cwd or last message (`Esc` stops typing) |
@@ -145,6 +146,11 @@ finish.
 
 The selected row is highlighted across the list, and the line above the key
 hints shows that session's state, current tool, time, cost, subagents and cwd.
+The preview shows the selected session's pi pane, or for a subagent row the
+end of that subagent's transcript (text, dimmed thinking, one line per tool
+call). A pane joined with `ctrl+l` goes back next to its nvim (or into a
+window of its own) when you switch, press `q`, `ctrl+c` or `Enter`. Killing the
+whole `fleet` window (`prefix &`) while a pane is joined kills that pi too.
 
 **vim-mode** (`pi/extensions/vim-mode.ts`, `Esc` enters NORMAL mode). Leader
 keys work in NORMAL mode only and mirror nvim's `<leader>` keys. The mode
@@ -153,7 +159,7 @@ cancels it.
 
 | NORMAL mode | Does |
 | --- | --- |
-| `Space e` | `/sessions` |
+| `Space e` / `Space E` | the dashboard window (like `prefix g`) / popup (like `prefix G`) |
 | `Space f f` | file picker (session files, then the repo), opening in the paired nvim |
 | `Space f g` | git files only |
 | `Space f b` | files touched in this session |

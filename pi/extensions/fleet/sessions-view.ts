@@ -1,6 +1,5 @@
 /**
- * fleet/sessions-view: SessionsView, the one component behind `/sessions` and the dashboard
- * (design §6, §9).
+ * fleet/sessions-view: SessionsView, the dashboard (`pi-fleet dashboard`, cli.ts; design §6, §9).
  *
  * Rows: every fleet session with a status file (live on this host, crashed, or live on another
  * host, dimmed) plus the 30 most recent main sessions that are not running, grouped by repo.
@@ -9,18 +8,24 @@
  * Space on a repo header collapses the group. Rows of sessions that are not running fold their
  * JSONL with countSubagents(…, false), so dead-but-working threads show as "interrupted".
  *
- * `/sessions` (this module's register) renders the list through ctx.ui.custom; the dashboard
- * (`pi-fleet dashboard`, cli.ts) renders it full-screen with a live preview of the selected
- * session's pi pane: `capture-pane -p -e`, debounced 150 ms on cursor moves and refreshed every
- * second; control characters stripped, SGR kept. "can't find pane"/"no server" means gone (the
- * preview says so); anything else, including a timeout, keeps the last frame.
+ * There is one view: the dashboard renders the list full-screen with a live preview of the
+ * selected session's pi pane: `capture-pane -p -e`, debounced 150 ms on cursor moves and
+ * refreshed every second; control characters stripped, SGR kept. "can't find pane"/"no server"
+ * means gone (the preview says so); anything else, including a timeout, keeps the last frame.
+ * A selected subagent row previews that subagent's own transcript instead: the tail of its
+ * session JSONL (registry.ts TranscriptTails: bounded, async, cached by size/mtime), refreshed
+ * every second while it runs. While a session's pi pane is joined into the dashboard window
+ * (ctrl+l, cli.ts) the list takes the whole pane and the joined pane is the preview.
+ * `/sessions` (this module's register) and `Space e` open the dashboard window; `Space E` the
+ * popup (openDashboard).
  *
  * Keys (no Alt, no Ctrl+Shift, no Tab): j/k, ↑/↓, ctrl+n/ctrl+p move; PgUp/PgDn page; Space
  * expands/collapses; Enter opens (jumps to a live window, else `pi-fleet open` in a new window;
- * on a subagent: its main); d kill: an inline confirm (y kill, s kill + scancel its Slurm jobs,
- * n/Esc cancel), then {"type":"kill","confirmed":true,"scancel":…} to that pi's control socket
- * (no dialog there; the view stays open and the row disappears); a new session in the repo of
- * the row or repo header; / filter (every word a case-insensitive substring of name, repo, cwd
+ * on a subagent: its main); ctrl+l interacts with a live session ("interact": cli.ts joins its
+ * pi pane beside the dashboard, or in the popup jumps to it); d kill: an inline confirm (y kill,
+ * s kill + scancel its Slurm jobs, n/Esc cancel), then {"type":"kill","confirmed":true,
+ * "scancel":…} to that pi's control socket (no dialog there; the view stays open and the row
+ * disappears); a new session in the repo of the row or repo header; / filter (every word a case-insensitive substring of name, repo, cwd
  * or last message; while typing, letters go to the filter, Enter opens, Esc stops typing);
  * ! @ # & only running/waiting/idle/error, 0 clears; ? help; Esc clears the filters, then
  * closes; q closes.
@@ -28,8 +33,8 @@
  * Colors (glyph and state text only, so the selected row's background stays readable): working
  * blue, autonomous (/run-autonomously) working green "auto", needs you (done, unseen) yellow,
  * question magenta bold, error/crashed red, idle/closed/remote dim. The selected row gets a
- * full-width background (pi's selectedBg; a grey in the dashboard) besides the `›` marker. The
- * line above the key hints describes the selected session.
+ * full-width background (grey 237) besides the `›` marker. The line above the key hints
+ * describes the selected session.
  *
  * Portions adapted from agent-deck (github.com/asheshgoplani/agent-deck, MIT, commit 80494e5):
  * the preview capture and control-character stripping (internal/ui/home_preview_fetch.go,
@@ -37,8 +42,9 @@
  * (internal/tmux/tmux_capture.go captureGoneMarkers), status filter keys and humanizeSince
  * (docs/guide/sessions.md, ui/humanize_since.go). See THIRD_PARTY_LICENSES.
  *
- * pi-tui is imported normally: inside pi through pi's loader, in the dashboard through the
- * module resolve hook cli.ts registers for `@earendil-works/*` (see usePiPackages there).
+ * pi-tui is imported normally: in the dashboard through the module resolve hook cli.ts
+ * registers for `@earendil-works/*` (see usePiPackages there), inside pi (the /sessions command)
+ * through pi's loader.
  * No module-level mutable state: the extension also loads inside subagent sessions.
  */
 
@@ -49,10 +55,10 @@ import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { decodeKittyPrintable, isKeyRelease, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
-import { ctlSockPath, inTmux, isDefaultSocket, openSession, readStatuses, tmuxBaseArgs } from "./cli.ts";
+import { ctlSockPath, dashboardPopup, dashboardWindow, inTmux, isDefaultSocket, openSession, readStatuses, tmuxBaseArgs } from "./cli.ts";
 import { queuedJobs, type SlurmJob } from "./lifecycle.ts";
-import { SessionIndex, countSubagents, type FoldedThread, type IndexEntry, type SubagentCounts } from "./registry.ts";
-import { fleetOf, ownPrompt } from "./shared.ts";
+import { SessionIndex, TranscriptTails, countSubagents, type FoldedThread, type IndexEntry, type SubagentCounts, type TranscriptItem } from "./registry.ts";
+import { fleetOf } from "./shared.ts";
 import { GLYPHS, STALE_MS, type FleetState, type Liveness, type StatusFile } from "./status.ts";
 
 // ---------------------------------------------------------------- rows
@@ -82,6 +88,8 @@ export interface SessionsSource {
 	load(): SessionRow[];
 	/** The subagent threads of a main (folded from its JSONL), or undefined if unknown. */
 	threads(row: SessionRow): FoldedThread[] | undefined;
+	/** The session file of one of those threads, if known. */
+	subagentFile?(row: SessionRow, thread: FoldedThread): string | undefined;
 }
 
 export const RECENT_CLOSED = 30;
@@ -170,6 +178,9 @@ export function fleetSource(env: NodeJS.ProcessEnv = process.env, opts: { recent
 			index.save();
 			return threads;
 		},
+		subagentFile(row, thread) {
+			return thread.sessionFile || index.subagentFile(row.id, thread.path);
+		},
 	};
 }
 
@@ -237,7 +248,7 @@ function category(row: SessionRow): StatusFilter {
 /** `working` is blue and `question` magenta: semantic colors the pi adapter maps to theme tokens. */
 export type ViewColor = "accent" | "muted" | "dim" | "success" | "warning" | "error" | "border" | "working" | "question";
 
-/** The styling the view needs: pi's theme inside pi, plain ANSI in the dashboard. */
+/** The styling the view needs (ansiStyle; tests use a plain one). */
 export interface ViewStyle {
 	fg(color: ViewColor, text: string): string;
 	bold(text: string): string;
@@ -268,34 +279,6 @@ export const ansiStyle: ViewStyle = {
 	bold: (text) => `\x1b[1m${text}\x1b[22m`,
 	selected: (line) => withBackground(line, ANSI_SELECTED_BG),
 };
-
-/** pi theme tokens for the view's colors (pi's `accent` is violet, its blue is `mdLink`). */
-const PI_COLORS: Record<ViewColor, string> = {
-	accent: "accent",
-	muted: "muted",
-	dim: "dim",
-	success: "success",
-	warning: "warning",
-	error: "error",
-	border: "border",
-	working: "mdLink",
-	question: "accent",
-};
-
-/** ViewStyle over pi's theme: selection background `selectedBg` when the theme has it. */
-export function themeStyle(theme: { fg(color: any, text: string): string; bold(text: string): string; getBgAnsi?(color: any): string }): ViewStyle {
-	let bg: string | undefined;
-	try {
-		bg = typeof theme.getBgAnsi === "function" ? theme.getBgAnsi("selectedBg") : undefined;
-	} catch {
-		bg = undefined;
-	}
-	return {
-		fg: (color, text) => theme.fg(PI_COLORS[color] ?? color, text),
-		bold: (text) => theme.bold(text),
-		selected: bg ? (line) => withBackground(line, bg!) : undefined,
-	};
-}
 
 /** How a row is colored: what it means for the user (§9). */
 export type Tone = "working" | "auto" | "attention" | "question" | "error" | "off";
@@ -531,21 +514,21 @@ export type SessionsAction =
 	| { type: "open"; row: SessionRow }
 	| { type: "new"; cwd: string }
 	| { type: "kill"; row: SessionRow; scancel: boolean }
+	/** ctrl+l on a live session of this host: join its pi pane (window) or jump to it (popup). */
+	| { type: "interact"; row: SessionRow }
 	| { type: "close" };
 
 export interface SessionsViewOptions {
 	source: SessionsSource;
 	style: ViewStyle;
-	/** "list" for /sessions, "dashboard" for the full-screen TUI with a preview. */
-	mode: "list" | "dashboard";
-	/** Lines available: the most the picker may use, or exactly the screen (dashboard). */
+	/** The screen height: the view renders exactly this many lines. */
 	height: () => number;
 	onAction: (action: SessionsAction) => void;
 	requestRender: () => void;
-	/** Dashboard: fetch a preview of a row (undefined: the row has no pane). */
+	/** Fetch a preview of a row (undefined: the row has no pane). */
 	preview?: (row: SessionRow, rows: number) => Promise<PreviewResult> | undefined;
-	/** The session this view runs in (/sessions): preselected and marked. */
-	currentId?: string;
+	/** A subagent's recent transcript from its session file (default: a TranscriptTails). */
+	transcript?: (file: string) => Promise<TranscriptItem[] | undefined>;
 	host?: string;
 	now?: () => number;
 	/** Slurm jobs among `ids` still queued (lifecycle.ts queuedJobs); for the `d` confirm. */
@@ -570,6 +553,13 @@ interface PreviewState {
 	slow?: string;
 }
 
+/** A subagent preview: the file and its items once read (undefined items: unreadable). */
+interface TranscriptState {
+	file?: string;
+	items?: TranscriptItem[];
+	failed?: boolean;
+}
+
 export const REFRESH_MS = 1000;
 export const PREVIEW_DEBOUNCE_MS = 150;
 const MESSAGE_MS = 4000;
@@ -578,6 +568,8 @@ const HELP_LINES = [
 	"j/k ↑/↓ ctrl+n/ctrl+p   move            PgUp/PgDn   page",
 	"Space                   show subagents of a session / collapse a repo",
 	"Enter                   jump to the session (or open it in a new window)",
+	"ctrl+l                  type into a live session: its pi joins this window (popup: jump there)",
+	"ctrl+h                  (in the joined pi) back to this list; ctrl+l again: focus it",
 	"d                       kill the session: y kill · s kill + scancel its Slurm jobs · n/Esc no",
 	"a                       new session in the repo of the row (or repo header)",
 	"/                       filter by name, repo, cwd, last message",
@@ -601,7 +593,11 @@ export class SessionsView implements Component {
 	private message: { text: string; until: number } | undefined;
 	private confirm: KillConfirm | undefined;
 	private previews = new Map<string, PreviewState>();
+	private transcripts = new Map<string, TranscriptState>();
 	private previewBusy = false;
+	/** The session whose pi pane is joined into the dashboard window (cli.ts), if any. */
+	private joinedId: string | undefined;
+	private transcriptOf: (file: string) => Promise<TranscriptItem[] | undefined>;
 	private timers: ReturnType<typeof setInterval>[] = [];
 	private debounce: ReturnType<typeof setTimeout> | undefined;
 	private disposed = false;
@@ -612,7 +608,22 @@ export class SessionsView implements Component {
 	constructor(opts: SessionsViewOptions) {
 		this.opts = opts;
 		this.host = opts.host ?? hostname().split(".")[0]!;
-		if (opts.currentId) this.selectedKey = `m:${opts.currentId}`;
+		if (opts.transcript) this.transcriptOf = opts.transcript;
+		else {
+			const tails = new TranscriptTails();
+			this.transcriptOf = (file) => tails.get(file);
+		}
+	}
+
+	/** The joined session (cli.ts tells the view; undefined: none). */
+	setJoined(id: string | undefined): void {
+		if (this.joinedId === id) return;
+		this.joinedId = id;
+		if (!id) this.schedulePreview();
+	}
+
+	joined(): string | undefined {
+		return this.joinedId;
 	}
 
 	private now(): number {
@@ -628,10 +639,8 @@ export class SessionsView implements Component {
 				this.opts.requestRender();
 			}, REFRESH_MS),
 		);
-		if (this.opts.preview) {
-			void this.updatePreview();
-			this.timers.push(setInterval(() => void this.updatePreview(), REFRESH_MS));
-		}
+		void this.updatePreview();
+		this.timers.push(setInterval(() => void this.updatePreview(), REFRESH_MS));
 	}
 
 	dispose(): void {
@@ -703,7 +712,7 @@ export class SessionsView implements Component {
 		this.items = items;
 		let index = this.selectedKey ? items.findIndex((i) => i.key === this.selectedKey) : -1;
 		if (index < 0) {
-			// First load (or the current session is not listed): the first session row.
+			// First load: the first session row.
 			if (!this.loaded) index = items.findIndex((i) => i.kind === "main");
 			else index = Math.min(this.selected, items.length - 1);
 		}
@@ -799,6 +808,7 @@ export class SessionsView implements Component {
 			return;
 		}
 		if (matchesKey(data, "ctrl+c")) return this.opts.onAction({ type: "close" });
+		if (matchesKey(data, "ctrl+l")) return this.interact();
 		const ch = printable(data);
 		switch (ch) {
 			case "j":
@@ -888,6 +898,20 @@ export class SessionsView implements Component {
 		}
 	}
 
+	/** ctrl+l: a live session of this host (with a tmux pane), else say why not. */
+	private interact(): void {
+		const row = this.selectedRow();
+		if (!row) {
+			this.flash("ctrl+l: select a session");
+			return;
+		}
+		if (row.live !== "live" || !row.status?.tmux?.piPane) {
+			this.flash(`${row.name} is not live${row.state === "remote" ? ` here (on ${row.status?.host ?? "another node"})` : row.live === "live" ? " in tmux" : ""}`);
+			return;
+		}
+		this.opts.onAction({ type: "interact", row });
+	}
+
 	private activate(): void {
 		const item = this.items[this.selected];
 		if (!item || item.kind === "note") return;
@@ -915,15 +939,17 @@ export class SessionsView implements Component {
 	// ------------------------------------------------------------ preview
 
 	private schedulePreview(): void {
-		if (!this.opts.preview || this.disposed) return;
+		if (this.disposed) return;
 		if (this.debounce) clearTimeout(this.debounce);
 		this.debounce = setTimeout(() => void this.updatePreview(), PREVIEW_DEBOUNCE_MS);
 	}
 
-	/** Fetch the selected row's preview once (the timers call this). */
+	/** Fetch the selected row's preview once (the timers call this). Nothing while joined. */
 	async updatePreview(): Promise<void> {
+		const item = this.items[this.selected];
+		if (item?.kind === "sub") return this.updateTranscript(item.row, item.thread, item.key);
 		const row = this.selectedRow();
-		if (!row || !this.opts.preview || this.previewBusy || this.disposed) return;
+		if (!row || !this.opts.preview || this.previewBusy || this.disposed || this.joinedId) return;
 		const pending = this.opts.preview(row, this.previewBodyHeight());
 		if (!pending) return;
 		this.previewBusy = true;
@@ -933,6 +959,28 @@ export class SessionsView implements Component {
 			if (result.kind === "frame") this.previews.set(row.id, { lines: result.lines });
 			else if (result.kind === "gone") this.previews.set(row.id, { lines: state.lines, gone: result.reason });
 			else this.previews.set(row.id, { ...state, slow: result.reason });
+		} finally {
+			this.previewBusy = false;
+		}
+		if (!this.disposed) this.opts.requestRender();
+	}
+
+	/** A subagent's transcript: read once, then every second while it runs (cached by size/mtime). */
+	private async updateTranscript(row: SessionRow, thread: FoldedThread, key: string): Promise<void> {
+		if (this.previewBusy || this.disposed || this.joinedId) return;
+		const state = this.transcripts.get(key);
+		const file = this.opts.source.subagentFile?.(row, thread);
+		if (!file) {
+			this.transcripts.set(key, {});
+			return;
+		}
+		// Read once; again every second only while the thread runs (or once it names another file).
+		const running = thread.state === "running" || thread.state === "starting";
+		if (state?.file === file && (state.items || state.failed) && !running) return;
+		this.previewBusy = true;
+		try {
+			const items = await this.transcriptOf(file);
+			this.transcripts.set(key, items ? { file, items } : { file, failed: true, items: state?.items });
 		} finally {
 			this.previewBusy = false;
 		}
@@ -952,7 +1000,7 @@ export class SessionsView implements Component {
 
 	private listHeight(): number {
 		const bodyH = Math.max(1, this.opts.height() - SessionsView.CHROME);
-		return this.opts.mode === "dashboard" && this.stackedLast ? Math.max(3, Math.floor(bodyH / 2)) : bodyH;
+		return this.stackedLast && !this.joinedId ? Math.max(3, Math.floor(bodyH / 2)) : bodyH;
 	}
 	private previewBodyHeight(): number {
 		const bodyH = Math.max(1, this.opts.height() - SessionsView.CHROME);
@@ -966,14 +1014,13 @@ export class SessionsView implements Component {
 		const header = this.headerLine(width);
 		const footer = [this.statusLine(width), this.footerLine(width)];
 		const help = (w: number) => [...HELP_LINES.map((l) => fit(style.fg("muted", ` ${l}`), w)), fit(` ${legend(style)}`, w)];
-		if (this.opts.mode === "list") {
-			const body = this.help ? help(width) : this.listLines(width, height - SessionsView.CHROME);
-			return [header, ...body, ...footer];
-		}
 		const bodyH = height - SessionsView.CHROME;
 		this.stackedLast = width < SessionsView.SIDE_BY_SIDE_MIN;
 		let body: string[];
-		if (!this.stackedLast) {
+		if (this.joinedId) {
+			// The joined pi pane beside this one is the preview: the list takes the whole pane.
+			body = this.help ? help(width) : this.listLines(width, bodyH);
+		} else if (!this.stackedLast) {
 			const listW = Math.max(50, Math.min(80, Math.floor(width * 0.5)));
 			const prevW = width - listW - 1;
 			const list = this.help ? help(listW) : this.listLines(listW, bodyH);
@@ -1014,7 +1061,9 @@ export class SessionsView implements Component {
 		if (this.message) return fit(` ${style.fg("warning", this.message.text)}`, width);
 		const hint = this.typing
 			? "type to filter · enter open · esc stop typing · ↑/↓ move"
-			: "enter open · space subagents · d kill · a new · / filter · !@#& status · ? help · q close";
+			: this.joinedId
+				? "ctrl+l focus/switch · C-h back · enter open · space subagents · d kill · / filter · ? help · q close"
+				: "enter open · ctrl+l interact · space subagents · d kill · a new · / filter · !@#& status · ? help · q close";
 		return fit(style.fg("dim", ` ${hint}`), width);
 	}
 
@@ -1125,8 +1174,7 @@ export class SessionsView implements Component {
 		const wide = avail >= 64;
 		const detailW = wide ? 18 : 15;
 		const nameW = Math.min(wide ? 30 : 22, Math.max(8, avail - detailW - 1 - (wide ? 8 : 0) - 1 - 10));
-		let name = oneLine(row.name);
-		if (row.id === this.opts.currentId) name += " (this)";
+		const name = oneLine(row.name);
 		let nameText = row.unnamed ? style.fg("muted", name) : name;
 		if (selected) nameText = style.bold(nameText);
 		else if (dimRow) nameText = style.fg("dim", name);
@@ -1134,7 +1182,8 @@ export class SessionsView implements Component {
 		const cost = row.costUsd ? `$${row.costUsd.toFixed(2)}` : "";
 		const counts = countsText(row.counts, style);
 		const costText = wide ? ` ${padRight(style.fg("dim", cost), 7)}` : "";
-		const line = `${marker}  ${glyph(row, style)} ${pad(nameText, nameW)} ${pad(detailText, detailW)}${costText} ${counts}`;
+		const joined = row.id === this.joinedId ? style.fg("accent", "⇥") : " ";
+		const line = `${marker}${joined} ${glyph(row, style)} ${pad(nameText, nameW)} ${pad(detailText, detailW)}${costText} ${counts}`;
 		return fit(line, width);
 	}
 
@@ -1154,6 +1203,7 @@ export class SessionsView implements Component {
 			for (const r of g.rows) lines.push(` ${glyph(r, style)} ${oneLine(r.name)}  ${style.fg("dim", rowDetail(r, this.now()))}`);
 			return lines.slice(0, height);
 		}
+		if (item.kind === "sub") return this.transcriptPane(item, width, height, rule);
 		const row = item.row;
 		const pane = row.status?.tmux?.piPane;
 		const state = this.previews.get(row.id);
@@ -1186,6 +1236,51 @@ export class SessionsView implements Component {
 		}
 		return lines.slice(0, height);
 	}
+
+	/** A subagent row: the tail of its own transcript (text, dimmed thinking, one line per tool call). */
+	private transcriptPane(item: Extract<Item, { kind: "sub" }>, width: number, height: number, rule: (title: string) => string): string[] {
+		const style = this.opts.style;
+		const { row, thread } = item;
+		const live = row.live === "live" || row.live === "remote";
+		const { word } = threadGlyph(thread, live, style);
+		const head = [rule(oneLine(`${thread.type ?? "?"} ${thread.path} · ${word}`))];
+		if (thread.task) head.push(fit(style.fg("dim", ` task: ${oneLine(thread.task)}`), width));
+		const state = this.transcripts.get(item.key);
+		const note = (text: string) => [...head, style.fg("dim", ` ${text}`)].slice(0, height);
+		if (!state) return note("reading…");
+		if (!state.file) return note("no transcript file for this subagent yet");
+		if (!state.items) return note(`cannot read ${oneLine(tilde(state.file))}`);
+		if (!state.items.length) return note("no assistant output yet");
+		const body: string[] = [];
+		const w = Math.max(10, width - 1);
+		for (const it of state.items) {
+			if (it.kind === "tool") {
+				const mark = it.result === "error" ? style.fg("error", "✗") : it.result === "ok" ? style.fg("success", "✓") : style.fg("dim", "…");
+				body.push(fit(` ${mark} ${style.fg("muted", oneLine(it.text))}`, width));
+			} else if (it.kind === "thinking") {
+				const lines = wrapped(it.text, w, " ").slice(-THINKING_LINES);
+				body.push(...lines.map((l) => style.fg("dim", l)));
+			} else {
+				body.push(...wrapped(it.text, w, " "));
+			}
+		}
+		const room = Math.max(0, height - head.length);
+		return [...head, ...body.slice(-room).map((l) => fit(l, width))].slice(0, height);
+	}
+}
+
+/** Lines a thinking block may take in a subagent preview (its end). */
+const THINKING_LINES = 4;
+
+/** Wrap `text` (untrusted, any line breaks) into sanitized lines of at most `width` columns. */
+function wrapped(text: string, width: number, indent: string): string[] {
+	const out: string[] = [];
+	for (const l of text.split("\n")) {
+		const clean = oneLine(l).trimEnd();
+		if (!clean.trim()) continue;
+		out.push(...wrapTextWithAnsi(`${indent}${clean}`, Math.max(10, width)));
+	}
+	return out;
 }
 
 /** The state in words, for the status line. */
@@ -1257,9 +1352,6 @@ export function sendControl(sock: string, message: Record<string, unknown>, time
 	});
 }
 
-/** pi.events channel: `{ name, open }` when a fleet view that takes the screen opens/closes. */
-export const OVERLAY_EVENT = "pi-fleet:overlay";
-
 export type Notify = (message: string, level: "info" | "warning" | "error") => void;
 
 /**
@@ -1292,10 +1384,10 @@ export async function killSession(row: SessionRow, scancel: boolean, notify: Not
 export async function runAction(
 	action: SessionsAction,
 	notify: Notify,
-	opts: { env?: NodeJS.ProcessEnv; currentId?: string; target?: string } = {},
+	opts: { env?: NodeJS.ProcessEnv; target?: string } = {},
 ): Promise<boolean> {
 	const env = opts.env ?? process.env;
-	if (action.type === "close") return false;
+	if (action.type === "close" || action.type === "interact") return false;
 	if (action.type === "kill") {
 		await killSession(action.row, action.scancel, notify, env);
 		return false;
@@ -1312,7 +1404,6 @@ export async function runAction(
 			return true;
 		}
 		const row = action.row;
-		if (row.id === opts.currentId && action.type === "open") return false;
 		if (row.state === "remote") {
 			notify(`pi-fleet: ${row.name} is running on ${row.status?.host}`, "warning");
 			return false;
@@ -1329,62 +1420,36 @@ export async function runAction(
 	}
 }
 
-// ---------------------------------------------------------------- /sessions
+// ---------------------------------------------------------------- /sessions, Space e, Space E
 
 /**
- * `/sessions`: the list through ctx.ui.custom, then jump to or open the chosen session.
- * Also run directly by leader.ts for `Space e` (never as a prompt to the model).
+ * Open the dashboard from pi: the `fleet` window (`/sessions`, `Space e`; like `prefix g`, it
+ * toggles back from the dashboard window) or the popup (`Space E`, like `prefix G`).
+ * `run` replaces the tmux side (tests).
  */
-export async function openSessions(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+export async function openDashboard(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	how: "window" | "popup",
+	run: { window?: typeof dashboardWindow; popup?: typeof dashboardPopup } = {},
+): Promise<void> {
 	if (!fleetOf(pi).main) return;
-	if (ctx.mode !== "tui") {
-		ctx.ui.notify("/sessions needs the interactive TUI (try `pi-fleet ls`)", "warning");
+	const env = process.env;
+	if (!inTmux(env) || !env.TMUX_PANE) {
+		ctx.ui.notify("pi-fleet: the dashboard needs tmux (try `pi-fleet ls`)", "warning");
 		return;
 	}
-	const currentId = ctx.sessionManager.getSessionId();
-	// vim-mode hides its transcript cursor (and the prompt's) while this is open.
-	pi.events.emit(OVERLAY_EVENT, { name: "sessions", open: true });
-	let action: SessionsAction | undefined;
 	try {
-		action = await ownPrompt(pi, () =>
-			ctx.ui.custom<SessionsAction | undefined>((tui, theme, _keybindings, done) => {
-				const view: SessionsView = new SessionsView({
-					source: fleetSource(process.env),
-					style: themeStyle(theme as any),
-					mode: "list",
-					height: () => Math.max(8, Math.floor(tui.terminal.rows * 0.7)),
-					onAction: (a) => {
-						if (a.type === "kill") {
-							// The picker stays open; the row disappears once that pi has ended.
-							const flash: Notify = (message) => {
-								view.flash(message);
-								tui.requestRender();
-							};
-							void runAction(a, flash, { currentId }).then(() => {
-								view.refresh();
-								tui.requestRender();
-							});
-							return;
-						}
-						view.dispose();
-						done(a);
-					},
-					requestRender: () => tui.requestRender(),
-					currentId,
-				});
-				view.start();
-				return view;
-			}),
-		);
-	} finally {
-		pi.events.emit(OVERLAY_EVENT, { name: "sessions", open: false });
+		if (how === "popup") await (run.popup ?? dashboardPopup)(env.TMUX_PANE, env);
+		else await (run.window ?? dashboardWindow)(env.TMUX_PANE, env);
+	} catch (error) {
+		ctx.ui.notify(`pi-fleet: dashboard: ${(error as Error).message}`, "error");
 	}
-	if (action) await runAction(action, (message, level) => ctx.ui.notify(message, level), { currentId });
 }
 
 export function register(pi: ExtensionAPI): void {
 	pi.registerCommand("sessions", {
-		description: "pi-fleet: sessions on this node (Enter jumps or opens, Space shows subagents)",
-		handler: (_args, ctx) => openSessions(pi, ctx),
+		description: "pi-fleet: open the sessions dashboard window (like prefix g / Space e)",
+		handler: (_args, ctx) => openDashboard(pi, ctx, "window"),
 	});
 }

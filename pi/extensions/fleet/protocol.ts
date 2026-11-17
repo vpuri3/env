@@ -7,7 +7,7 @@
  *
  * Senders:
  *   - nvim/lua/nvconf/pi_fleet.lua: `user_edit` after `:w!` (mode "note") or `:w!!` (mode "steer").
- *   - the dashboard and /sessions: `ping`, `kill` (`d`: `confirmed`, optional `scancel`).
+ *   - the dashboard: `ping`, `kill` (`d`: `confirmed`, optional `scancel`).
  *
  * Pure types and validators only: no state, no imports with side effects.
  */

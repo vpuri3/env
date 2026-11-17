@@ -6,9 +6,8 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
-import { hostname, tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fleetOf } from "../../pi/extensions/fleet/shared.ts";
@@ -18,7 +17,7 @@ delete process.env.TMUX;
 delete process.env.TMUX_PANE;
 const root = realpathSync(mkdtempSync(join(tmpdir(), "pfl-")));
 process.env.PI_FLEET_RUNTIME_DIR = join(root, "run");
-// The /sessions view (Space e) scans these: never the real ones.
+// Never the real state, cache or sessions dirs.
 process.env.PI_FLEET_STATE_DIR = join(root, "state");
 process.env.PI_FLEET_CACHE_DIR = join(root, "cache");
 process.env.PI_CODING_AGENT_SESSION_DIR = join(root, "sessions");
@@ -29,6 +28,7 @@ const skip = packages ? false : "pi's packages not found (pi not on PATH)";
 let leader: typeof import("../../pi/extensions/fleet/leader.ts");
 let vim: typeof import("../../pi/extensions/vim-mode.ts");
 let sv: typeof import("../../pi/extensions/fleet/sessions-view.ts");
+let cli: typeof import("../../pi/extensions/fleet/cli.ts");
 let createEventBus: () => { emit(c: string, d: unknown): void; on(c: string, h: (d: unknown) => void): () => void };
 let builtins: { name: string; description: string }[] = [];
 
@@ -38,6 +38,7 @@ before(async () => {
 	leader = await import("../../pi/extensions/fleet/leader.ts");
 	vim = await import("../../pi/extensions/vim-mode.ts");
 	sv = await import("../../pi/extensions/fleet/sessions-view.ts");
+	cli = await import("../../pi/extensions/fleet/cli.ts");
 	const dist = join(packages, "@earendil-works", "pi-coding-agent", "dist");
 	({ createEventBus } = await import(pathToFileURL(join(dist, "core", "event-bus.js")).href));
 	builtins = (await import(pathToFileURL(join(dist, "core", "slash-commands.js")).href)).BUILTIN_SLASH_COMMANDS;
@@ -177,34 +178,52 @@ test("files / git-files list their scope (non-TUI select path of the picker)", {
 	assert.deepEqual(f.calls, ["select:Open repo file", "select:Open file (session, then repo)"]);
 });
 
-test("Space e opens the /sessions view directly, never as a prompt", { skip }, async () => {
-	const rpc = fakePi();
-	rpc.ctx.mode = "rpc";
-	leader.registerLeader(rpc.pi);
-	await rpc.start();
-	assert.equal(rpc.emit("sessions"), true);
-	await sleep(10);
-	assert.deepEqual(rpc.sent, []);
-	assert.deepEqual(rpc.notes, [["/sessions needs the interactive TUI (try `pi-fleet ls`)", "warning"]]);
+test("Space e / Space E open the dashboard window / popup directly (never a prompt); /sessions is Space e", { skip }, async () => {
+	// Outside tmux: say so.
+	const out = fakePi();
+	leader.registerLeader(out.pi);
+	await out.start();
+	assert.equal(out.emit("sessions"), true);
+	for (let i = 0; i < 100 && !out.notes.length; i++) await sleep(10);
+	assert.deepEqual(out.notes, [["pi-fleet: the dashboard needs tmux (try `pi-fleet ls`)", "warning"]]);
+	assert.deepEqual(out.sent, []);
 
+	// In tmux: the window (= `pi-fleet dashboard --window --pane $TMUX_PANE`) or the popup, for this pane.
 	const f = fakePi();
-	f.ctx.mode = "tui";
-	let view: any;
-	f.ctx.ui.custom = async (factory: any) => {
-		f.calls.push("custom");
-		let result: unknown;
-		view = factory({ terminal: { rows: 40 }, requestRender: () => {} }, { fg: (_c: string, t: string) => t, bold: (t: string) => t }, {}, (r: unknown) => (result = r));
-		view.dispose();
-		return result;
+	const calls: string[] = [];
+	const run = {
+		window: async (pane: string | undefined) => void calls.push(`window ${pane}`),
+		popup: async (pane: string) => void calls.push(`popup ${pane}`),
 	};
-	leader.registerLeader(f.pi);
-	await f.start();
-	assert.equal(f.emit("sessions"), true);
-	for (let i = 0; i < 100 && !f.calls.length; i++) await sleep(10);
-	assert.deepEqual(f.calls, ["custom"]);
-	assert.equal(view?.constructor?.name, "SessionsView");
-	assert.deepEqual(f.sent, []);
-	assert.deepEqual(f.notes, []);
+	process.env.TMUX = "/tmp/fleettest-none,1,0";
+	process.env.TMUX_PANE = "%7";
+	try {
+		leader.registerLeader(f.pi, {
+			sessions: (pi, ctx) => sv.openDashboard(pi, ctx, "window", run),
+			"sessions-popup": (pi, ctx) => sv.openDashboard(pi, ctx, "popup", run),
+		});
+		await f.start();
+		assert.equal(f.emit("sessions"), true);
+		assert.equal(f.emit("sessions-popup"), true);
+		for (let i = 0; i < 100 && calls.length < 2; i++) await sleep(10);
+		assert.deepEqual(calls, ["window %7", "popup %7"]);
+		assert.deepEqual(f.notes, []);
+		assert.deepEqual(f.sent, []);
+		// A failing tmux call is reported, not thrown.
+		await sv.openDashboard(f.pi, f.ctx, "popup", { popup: async () => Promise.reject(new Error("no client")) });
+		assert.deepEqual(f.notes.at(-1), ["pi-fleet: dashboard: no client", "error"]);
+	} finally {
+		delete process.env.TMUX;
+		delete process.env.TMUX_PANE;
+	}
+	// /sessions is a command now (no view of its own).
+	const commands: Record<string, { description: string }> = {};
+	sv.register({ registerCommand: (name: string, c: { description: string }) => (commands[name] = c) } as never);
+	assert.match(commands.sessions!.description, /dashboard window/);
+	// Space E is prefix G: display-popup -E -w 95% -h 90% pi-fleet dashboard, with the fleet env.
+	const args = cli.dashboardPopupArgs("%7", { PI_FLEET_BIN: "/x/pi-fleet", PI_FLEET_STATE_DIR: "/s it's" });
+	assert.deepEqual(args.slice(0, -1), ["display-popup", "-E", "-w", "95%", "-h", "90%", "-t", "%7"]);
+	assert.equal(args.at(-1), `env 'PI_FLEET_BIN=/x/pi-fleet' 'PI_FLEET_STATE_DIR=/s it'\\''s' '/x/pi-fleet' dashboard`);
 });
 
 test("Space f h: commands then built-ins; the choice goes into the prompt", { skip }, async () => {
@@ -288,66 +307,5 @@ test("Space g s: :Git runs in the paired nvim (args as data); a missing :Git is 
 		assert.deepEqual(f.notes, [["pi-fleet: :Git is not available in nvim (vim-fugitive missing?)", "warning"]]);
 	} finally {
 		nvim.kill();
-	}
-});
-
-test("/sessions hides vim-mode's cursors while open (pi-fleet:overlay); d y kills without closing it", { skip }, async () => {
-	assert.equal(sv.OVERLAY_EVENT, vim.FLEET_OVERLAY_EVENT);
-	const f = fakePi();
-	f.ctx.mode = "tui";
-	// vim-mode on the same event bus (its own fake pi: one handler map per pi).
-	vim.default({ on: () => {}, events: f.pi.events } as any);
-	const events: unknown[] = [];
-	f.pi.events.on(sv.OVERLAY_EVENT, (d: any) => events.push({ ...d }));
-	// A live session of this host with a control socket.
-	const ctlSock = join(root, "victim.sock");
-	const got: unknown[] = [];
-	const server = createServer((c) =>
-		c.on("data", (d) => {
-			got.push(JSON.parse(d.toString("utf8")));
-			c.end('{"ok":true}\n');
-		}),
-	);
-	await new Promise<void>((r) => server.listen(ctlSock, r));
-	const id = "00000000-0000-7000-8000-0000000f0001";
-	const now = new Date().toISOString();
-	mkdirSync(join(root, "state", "status"), { recursive: true });
-	writeFileSync(
-		join(root, "state", "status", `${id}.json`),
-		JSON.stringify({ v: 1, sessionId: id, name: "victim", cwd: root, host: hostname(), pid: process.pid, ctlSock, state: "idle", acked: true, since: now, heartbeat: now, subagents: { working: 0, waiting: 0, done: 0, error: 0 } }),
-	);
-	let view: any;
-	let closed = false;
-	f.ctx.ui.custom = (factory: any) =>
-		new Promise((res) => {
-			view = factory({ terminal: { rows: 40 }, requestRender: () => {} }, { fg: (_c: string, t: string) => t, bold: (t: string) => t }, {}, (r: unknown) => {
-				closed = true;
-				res(r);
-			});
-		});
-	try {
-		const opened = sv.openSessions(f.pi, f.ctx);
-		for (let i = 0; i < 100 && !view; i++) await sleep(10);
-		assert.deepEqual(events, [{ name: "sessions", open: true }]);
-		assert.equal(vim.overlayOpen(), true);
-		// The view never asks for the hardware cursor (pi-tui shows it only at CURSOR_MARKER).
-		assert.ok(!view.render(100).join("").includes("\x1b_pi:c\x07"));
-		assert.equal(view.selectedRow()?.id, id);
-		view.handleInput("d");
-		view.handleInput("y");
-		for (let i = 0; i < 100 && !got.length; i++) await sleep(10);
-		assert.deepEqual(got, [{ type: "kill", confirmed: true, scancel: false }]);
-		await sleep(20);
-		assert.equal(closed, false, "the picker stays open");
-		assert.equal(vim.overlayOpen(), true);
-		view.handleInput("q");
-		await opened;
-		assert.equal(closed, true);
-		assert.deepEqual(events, [{ name: "sessions", open: true }, { name: "sessions", open: false }]);
-		assert.equal(vim.overlayOpen(), false);
-	} finally {
-		view?.dispose();
-		server.close();
-		rmSync(join(root, "state", "status", `${id}.json`), { force: true });
 	}
 });

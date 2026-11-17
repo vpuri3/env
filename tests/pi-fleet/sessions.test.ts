@@ -1,4 +1,4 @@
-// Session index (registry.ts scan) and SessionsView / `/sessions` (design §6, §9; phase 4).
+// Session index (registry.ts scan) and SessionsView, the dashboard (design §6, §9; phase 4).
 // Headless: rows come from a fixture sessions dir + status dir (support/sessions-fixture.ts),
 // keys are fed to handleInput and render(width) is compared. pi-tui comes from pi's install
 // through cli.ts's resolve hook, as in the dashboard; skipped without a pi install.
@@ -28,24 +28,33 @@ after(() => fx.cleanup());
 
 type Action = import("../../pi/extensions/fleet/sessions-view.ts").SessionsAction;
 
-function makeView(opts: { height?: number; currentId?: string; recent?: number } = {}) {
+function makeView(opts: { height?: number; recent?: number } = {}) {
 	const actions: Action[] = [];
 	const view = new sv.SessionsView({
 		source: sv.fleetSource(fx.env, { recent: opts.recent }),
 		style: plainStyle,
-		mode: "list",
 		height: () => opts.height ?? 30,
 		onAction: (a) => actions.push(a),
 		requestRender: () => {},
 		now: () => fx.now,
 		host: "node1",
-		currentId: opts.currentId,
 	});
 	view.refresh();
 	return { view, actions };
 }
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
-const screen = (view: { render(w: number): string[] }, width = 100) => view.render(width).map(strip);
+/** At this width the list column is 80 wide (the preview right of `│`). */
+const WIDE = 170;
+/** The screen without the preview column and blank lines, lines right-trimmed. */
+const screen = (view: { render(w: number): string[] }, width = WIDE) =>
+	view
+		.render(width)
+		.map((l) => {
+			const plain = strip(l);
+			const bar = plain.indexOf("│");
+			return (bar >= 0 ? plain.slice(0, bar) : plain).trimEnd();
+		})
+		.filter((l) => l !== "");
 const selectedLine = (view: { render(w: number): string[] }) => screen(view).find((l) => l.startsWith("›")) ?? "";
 const press = (view: { handleInput(d: string): void }, ...keys: string[]) => {
 	for (const k of keys) view.handleInput(k);
@@ -146,22 +155,23 @@ test("source: a stale status of another host is not a remote row", { skip }, () 
 // ---------------------------------------------------------------- render and keys
 
 test("render: groups by repo, ordered by urgency (? > ✕ > ◐ > ● > ○), counts per main", { skip }, () => {
-	const { view } = makeView({ currentId: IDS.ckpt });
-	assert.deepEqual(screen(view), [
-		" pi-fleet  node1   3 live · 2 waiting        ● working ● auto ◐ needs you ? question ✕ error ○ idle ",
+	const { view } = makeView();
+	const lines = screen(view);
+	assert.match(lines[0]!, /^ pi-fleet {2}node1 {3}3 live · 2 waiting +● working ● auto ◐ needs you \? question ✕ error ○ idle$/);
+	assert.deepEqual(lines.slice(1), [
 		" ▾ gamma (2)",
-		"   ? flare refactor                 question 12m         $0.80 1◐",
-		"   ○ what does gamma do?            2d ago                     ",
+		"›  ? flare refactor                 question 12m         $0.80 1◐",
+		"   ○ what does gamma do?            2d ago",
 		" ▾ beta (3)",
 		"   ✕ crashy                         crashed just now           1 interrupted",
-		"   ⇢ notes                          live on other-node         ",
-		"   ○ forked idea                    1d ago                     ",
+		"   ⇢ notes                          live on other-node",
+		"   ○ forked idea                    1d ago",
 		" ▾ alpha (3)",
-		"›  ◐ ckpt restart (this)            done 2m ago          $0.40 ",
+		"   ◐ ckpt restart                   done 2m ago          $0.40",
 		"   ● physicsnemo sweep              bash 4m              $3.41 2w 1◐ 3✓",
 		"   ○ start the old run              3h ago                     1✓ 1 interrupted",
-		` ◐ done, needs you · for 2m · $0.40 · ${fx.repos.alpha}`,
-		" enter open · space subagents · d kill · a new · / filter · !@#& status · ? help · q close",
+		` ? question: needs your answer · a dialog · for 12m · $0.80 · subagents 1◐ · ${fx.repos.gamma}`,
+		" enter open · ctrl+l interact · space subagents · d kill · a new · / filter · !@#& status · ? help · q close",
 	]);
 });
 
@@ -217,8 +227,8 @@ test("keys: / filters (j and k type), Enter opens the match, Esc stops typing, c
 	const { view, actions } = makeView();
 	press(view, "/", "c", "k", "p", "t");
 	assert.equal(view.filter, "ckpt");
-	assert.deepEqual(screen(view).slice(1, -2), [" ▾ alpha (1)", "›  ◐ ckpt restart                   done 2m ago          $0.40 "]);
-	assert.match(screen(view)[0]!, /\/ckpt▏ $/);
+	assert.deepEqual(screen(view).slice(1, -2), [" ▾ alpha (1)", "›  ◐ ckpt restart                   done 2m ago          $0.40"]);
+	assert.match(screen(view)[0]!, /\/ckpt▏$/);
 	press(view, "\x7f", "\x7f", "\x7f", "\x7f", "j", "k", "d", "a"); // backspace to empty, then j k d a are typed
 	assert.equal(view.filter, "jkda");
 	assert.equal(view.confirming(), undefined);
@@ -248,7 +258,7 @@ test("keys: ! @ # & status filters, 0 clears; d on a dead row, a new, q close, ?
 	assert.deepEqual(names(), ["notes", "forked idea", "start the old run", "what does gamma do?"]);
 	press(view, "&");
 	assert.deepEqual(names(), ["crashy"]);
-	assert.match(screen(view)[0]!, /\[error\] $/);
+	assert.match(screen(view)[0]!, /\[error\]$/);
 	press(view, "d"); // crashed: nothing to kill
 	assert.equal(view.confirming(), undefined);
 	assert.equal(actions.length, 0);
@@ -500,17 +510,16 @@ test("escape sequences in names, cwds, hosts, thread paths and messages never re
 // ---------------------------------------------------------------- highlight, colors, status line, d / a
 
 /** A view over its own fixture (statuses may be rewritten), with ANSI colors unless `style` says. */
-function polishView(f: Fixture, opts: { style?: unknown; squeue?: (ids: string[]) => Promise<unknown>; mode?: "list" | "dashboard" } = {}) {
+function polishView(f: Fixture, opts: { style?: unknown; squeue?: (ids: string[]) => Promise<unknown> } = {}) {
 	const actions: Action[] = [];
 	let renders = 0;
 	const view = new sv.SessionsView({
 		source: sv.fleetSource(f.env),
 		style: (opts.style ?? sv.ansiStyle) as never,
-		mode: opts.mode ?? "list",
 		height: () => 30,
 		onAction: (a) => actions.push(a),
 		requestRender: () => renders++,
-		preview: opts.mode === "dashboard" ? () => undefined : undefined,
+		preview: () => undefined,
 		now: () => f.now,
 		host: "node1",
 		squeue: opts.squeue as never,
@@ -518,44 +527,40 @@ function polishView(f: Fixture, opts: { style?: unknown; squeue?: (ids: string[]
 	view.refresh();
 	const select = (name: string) => {
 		for (let i = 0; i < 40; i++) press(view, "k");
-		for (let i = 0; i < 40 && !strip(view.render(120).find((l) => strip(l).startsWith("›")) ?? "").includes(name); i++) press(view, "j");
-		const line = view.render(120).find((l) => strip(l).startsWith("›")) ?? "";
+		for (let i = 0; i < 40 && !strip(listPart(view.render(120).find((l) => strip(l).startsWith("›")) ?? "")).includes(name); i++) press(view, "j");
+		const line = listPart(view.render(120).find((l) => strip(l).startsWith("›")) ?? "");
 		assert.ok(strip(line).includes(name), `selected ${name}`);
 		return line;
 	};
 	return { view, actions, select, renders: () => renders };
 }
-const rowOf = (lines: string[], name: string) => lines.find((l) => strip(l).includes(` ${name}`)) ?? "";
+/** A dashboard line without its preview column (left of the `│`). */
+const listPart = (line: string) => (line.includes("│") ? line.slice(0, line.indexOf("│")) : line);
+const rowOf = (lines: string[], name: string) => lines.map(listPart).find((l) => strip(l).includes(` ${name}`)) ?? "";
 
-test("highlight: the selected row (only it) gets a full-width background, in the list and the dashboard", { skip }, () => {
+test("highlight: the selected row (only it) gets a full-width background", { skip }, () => {
 	const f = buildFixture();
 	try {
-		for (const mode of ["list", "dashboard"] as const) {
-			const { view, select } = polishView(f, { mode });
+		for (const [width, listW] of [[120, 60], [80, 80]] as const) {
+			// Side by side (the list is half the screen) and stacked (the list is the full width).
+			const { view, select } = polishView(f);
 			select("physicsnemo sweep");
-			const lines = view.render(120);
+			const lines = view.render(width);
 			const hit = lines.filter((l) => l.includes(sv.ANSI_SELECTED_BG));
-			assert.equal(hit.length, 1, mode);
+			assert.equal(hit.length, 1, `${width}`);
 			assert.match(strip(hit[0]!), /^›\s+● physicsnemo sweep/);
 			// Padded to the list width; every reset inside re-opens the background.
-			const listW = mode === "list" ? 120 : Math.max(50, Math.min(80, 60));
 			const sel = hit[0]!.slice(0, hit[0]!.lastIndexOf("\x1b[49m") + 5);
-			assert.equal(tui.visibleWidth(sel), listW, mode);
+			assert.equal(tui.visibleWidth(sel), listW, `${width}`);
 			for (const m of sel.matchAll(/\x1b\[(?:0|49)?m/g)) {
 				if (m.index! + m[0].length === sel.length) continue;
-				assert.ok(sel.startsWith(sv.ANSI_SELECTED_BG, m.index! + m[0].length), `${mode}: bg re-opened after ${JSON.stringify(m[0])}`);
+				assert.ok(sel.startsWith(sv.ANSI_SELECTED_BG, m.index! + m[0].length), `${width}: bg re-opened after ${JSON.stringify(m[0])}`);
 			}
 			// A group header highlights too.
 			press(view, "k", "k");
-			assert.ok(view.render(120).filter((l) => l.includes(sv.ANSI_SELECTED_BG)).some((l) => strip(l).includes("▾ alpha")), mode);
+			assert.ok(view.render(width).filter((l) => l.includes(sv.ANSI_SELECTED_BG)).some((l) => strip(l).includes("▾ alpha")), `${width}`);
 			view.dispose();
 		}
-		// Inside pi: the theme's selectedBg (when the theme has one); none, only the › marker, without.
-		const theme = { fg: (_c: string, t: string) => t, bold: (t: string) => t, getBgAnsi: (c: string) => (c === "selectedBg" ? "\x1b[48;5;17m" : "") };
-		const { view } = polishView(f, { style: sv.themeStyle(theme) });
-		assert.equal(view.render(100).filter((l) => l.includes("\x1b[48;5;17m")).length, 1);
-		const bare = polishView(f, { style: sv.themeStyle({ fg: (_c: string, t: string) => t, bold: (t: string) => t }) }).view;
-		assert.ok(!bare.render(100).some((l) => l.includes("\x1b[48")));
 	} finally {
 		f.cleanup();
 	}
@@ -589,12 +594,6 @@ test("colors: glyph + state text by tone; autonomous working is green `auto`, an
 		assert.ok(rowOf(auto, "physicsnemo sweep").includes(fg("32", "auto bash 4m")));
 		assert.ok(rowOf(auto, "flare refactor").includes(`\x1b[1m${fg("35", "?")}\x1b[22m`));
 		assert.ok(rowOf(auto, "flare refactor").includes("question 12m"));
-		// Inside pi: working is the theme's blue (mdLink), question its accent (violet).
-		const used: string[] = [];
-		const theme = { fg: (c: string, t: string) => (used.push(c), t), bold: (t: string) => t };
-		polishView(f, { style: sv.themeStyle(theme) }).view.render(120);
-		for (const token of ["mdLink", "accent", "success", "warning", "error", "dim"]) assert.ok(used.includes(token), token);
-		assert.ok(!used.includes("working") && !used.includes("question"), "only real theme tokens");
 	} finally {
 		f.cleanup();
 	}
@@ -720,6 +719,128 @@ test("a: a new session in the repo of the row, or of the repo header", { skip },
 		assert.match(strip(view.render(120).find((l) => strip(l).startsWith("›"))!), /^›▾ gamma/);
 		press(view, "a");
 		assert.deepEqual(actions.at(-1), { type: "new", cwd: f.repos.gamma });
+	} finally {
+		f.cleanup();
+	}
+});
+
+// ---------------------------------------------------------------- one view: ctrl+l, joined, subagent previews
+
+test("ctrl+l: interact with a live session of this host; other rows flash `not live`", { skip }, () => {
+	const f = buildFixture();
+	try {
+		const { view, actions, select } = polishView(f, { style: plainStyle });
+		const statusBar = () => strip(view.render(120).at(-1)!);
+		select("physicsnemo sweep");
+		press(view, "\x0c");
+		assert.equal(actions.at(-1)?.type, "interact");
+		assert.equal((actions.at(-1) as { row: { id: string } }).row.id, IDS.sweep);
+		// ckpt is live but has no tmux pane in its status file.
+		for (const [name, why] of [["start the old run", /start the old run is not live$/], ["crashy", /crashy is not live$/], ["notes", /notes is not live here \(on other-node\)$/], ["ckpt restart", /ckpt restart is not live in tmux$/]] as const) {
+			const n = actions.length;
+			select(name);
+			press(view, "\x0c");
+			assert.equal(actions.length, n, name);
+			assert.match(statusBar(), why);
+		}
+		// On a subagent row: its main.
+		select("physicsnemo sweep");
+		press(view, " ", "j", "\x0c");
+		assert.equal((actions.at(-1) as { row: { id: string } }).row.id, IDS.sweep);
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("joined: the list takes the whole pane, the joined row is marked, no capture runs", { skip }, async () => {
+	const f = buildFixture();
+	try {
+		let captures = 0;
+		const view = new sv.SessionsView({
+			source: sv.fleetSource(f.env),
+			style: plainStyle,
+			height: () => 20,
+			onAction: () => {},
+			requestRender: () => {},
+			preview: () => (captures++, Promise.resolve({ kind: "frame", lines: ["CAPTURED"] })),
+			now: () => f.now,
+			host: "node1",
+		});
+		view.refresh();
+		view.setJoined(IDS.sweep);
+		await view.updatePreview();
+		assert.equal(captures, 0);
+		// 64 columns: the dashboard pane once a pane took 60% of a 160-column window.
+		const lines = view.render(64).map(strip);
+		assert.equal(lines.length, 20);
+		assert.ok(!lines.some((l) => l.includes("│") || l.startsWith("──")), "no preview column or rule");
+		assert.ok(lines.some((l) => /^ ⇥ ● physicsnemo sweep/.test(l)), lines.join("\n"));
+		assert.match(lines.at(-1)!, /ctrl\+l focus\/switch · C-h back/);
+		view.setJoined(undefined);
+		await view.updatePreview();
+		assert.equal(captures, 1);
+		assert.ok(view.render(64).map(strip).some((l) => l.startsWith("── ")), "the preview is back (stacked)");
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("subagent preview: the tail of its transcript (text, dim thinking, one line per tool call), sanitized", { skip }, async () => {
+	const f = buildFixture();
+	try {
+		const style = { fg: (c: string, t: string) => (c === "dim" ? `<dim>${t}</dim>` : t), bold: (t: string) => t };
+		const { view, select } = polishView(f, { style });
+		const preview = () =>
+			view
+				.render(170)
+				.map((l) => (l.includes("│") ? l.slice(l.indexOf("│") + 1).trimEnd() : ""))
+				.filter(Boolean);
+		select("start the old run");
+		press(view, " ", "j");
+		// /runner has no sessionFile in the registry: the index finds its subagent file (thread entry).
+		await view.updatePreview();
+		let p = preview();
+		assert.match(p[0]!, /^── coder \/runner · interrupted /);
+		assert.equal(p[1], "<dim> task: task of /runner</dim>");
+		assert.equal(p[2], "<dim> no assistant output yet</dim>");
+
+		// Now the registry names a session file (pi-subagent-manager's view.sessionFile).
+		const file = join(f.root, "runner.jsonl");
+		writeFileSync(file, readFileSync(new URL("./fixtures/subagent-transcript.jsonl", import.meta.url)));
+		appendChained(f.files.old, { type: "custom", customType: "pi-subagent:registry-delta:v1", data: { version: 1, rootSessionId: IDS.old, changes: [{ path: "/runner", view: { sessionFile: file } }] } });
+		const old = (f.now - 3 * 3600_000) / 1000;
+		utimesSync(f.files.old, old, old); // settled: refolded
+		view.refresh();
+		await view.updatePreview();
+		p = preview();
+		assert.deepEqual(p.slice(2), [
+			"<dim> I should look at</dim>",
+			"<dim> the logs first</dim>",
+			" Checking the logs.",
+			" ✓ bash tail -n 5 run.log",
+			" ✗ read /w/missing.py",
+			" <dim>…</dim> grep loss",
+			" The run finished:",
+			" loss 0.12",
+		]);
+		for (const l of view.render(170)) assert.ok(!/\x1b(?!\[[0-9;]*m)|\x07/.test(l), JSON.stringify(l));
+		// A short preview keeps the end.
+		const short = new sv.SessionsView({
+			source: sv.fleetSource(f.env),
+			style: plainStyle,
+			height: () => 8,
+			onAction: () => {},
+			requestRender: () => {},
+			now: () => f.now,
+		});
+		short.refresh();
+		for (let i = 0; i < 40 && !strip(listPart(short.render(170).find((l) => l.startsWith("›")) ?? "")).includes("start the old run"); i++) press(short, "j");
+		press(short, " ", "j");
+		await short.updatePreview();
+		const body = short.render(170).slice(1, -2).map((l) => strip(l.slice(l.indexOf("│") + 1)).trimEnd());
+		assert.deepEqual(body.slice(2), [" … grep loss", " The run finished:", " loss 0.12"]);
+		view.dispose();
+		short.dispose();
 	} finally {
 		f.cleanup();
 	}

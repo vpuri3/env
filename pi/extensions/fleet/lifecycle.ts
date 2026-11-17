@@ -19,7 +19,7 @@
  *                  empty session with nothing running. Then abort + ctx.shutdown(): exit 0, so
  *                  `pi-fleet run-pi` closes nvim (unless modified) and the window.
  *                  The control socket's `kill` opens the same dialog, unless it says
- *                  `"confirmed":true` (the dashboard's / `/sessions`' `d` asked already): then
+ *                  `"confirmed":true` (the dashboard's `d` asked already): then
  *                  it kills at once, and scancels only with `"scancel":true`.
  *   Autonomous     `/run-autonomously` (the prompt template, seen in the `input` event; also its
  *                  old name `/leavemealone`, for sessions started before the rename) marks the
@@ -236,7 +236,7 @@ export function register(pi: ExtensionAPI): void {
 		publishAutonomous();
 	};
 
-	/** `confirmed`: the user already chose in the dashboard / `/sessions` (no dialog here). */
+	/** `confirmed`: the user already chose in the dashboard (no dialog here). */
 	const kill = async (c: ExtensionContext, confirmed?: { scancel: boolean }): Promise<boolean> => {
 		if (killing) return false;
 		killing = true;

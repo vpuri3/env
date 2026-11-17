@@ -31,11 +31,17 @@
  *   dashboard [--window [--pane P]]
  *        The sessions dashboard (sessions-view.ts, full-screen with a live preview; pi-tui
  *        from pi's install, see locatePiPackages). --window: toggle/create the `fleet` window.
+ *        In the `fleet` window ctrl+l on a live session joins its pi pane on the right
+ *        (joinPane) so you type into it; tmux.conf's root C-h goes back (select-pane -L) while
+ *        a pane is joined. Another ctrl+l, q, ctrl+c, Enter, SIGTERM/SIGHUP send it home
+ *        (sendHome). Elsewhere (the `prefix G` popup) ctrl+l jumps to the session's window.
  *
  * Pairing is by pane id, stored in pane options (they move with the pane on swap/move):
  *   pi pane:   @pi_fleet_role=pi   @pi_fleet_session=ID @pi_fleet_peer=%nvim
  *   nvim pane: @pi_fleet_role=nvim @pi_fleet_session=ID @pi_fleet_peer=%pi @pi_fleet_nvim_sock=SOCK
  *   window:    @pi_fleet_named=1 (opened by `open`: `bar` keeps its name) / @pi_fleet_dashboard=1
+ *   joined pi pane (in the `fleet` window): @pi_fleet_joined=<fleet window id>
+ *              @pi_fleet_home=<window it came from> (both unset once it is home again)
  *
  * Environment:
  *   PI_FLEET_PI_CMD      pi command for run-pi (words split on spaces; tests use a stub)
@@ -199,11 +205,17 @@ const PANE_FORMAT = [
 	"#{socket_path}",
 	"#{window_name}",
 	"#{@pi_fleet_named}",
+	"#{@pi_fleet_joined}",
+	"#{@pi_fleet_home}",
 ].join("\t");
 
 interface PaneRow extends PaneInfo {
 	windowName: string;
 	named: boolean;
+	/** The `fleet` window this pi pane is joined into (ctrl+l in the dashboard), else "". */
+	joined: string;
+	/** The window a joined pane came from. */
+	home: string;
 }
 
 function parsePaneRow(line: string): PaneRow {
@@ -222,6 +234,8 @@ function parsePaneRow(line: string): PaneRow {
 		socket: f[10],
 		windowName: f[11],
 		named: f[12] === "1",
+		joined: f[13] ?? "",
+		home: f[14] ?? "",
 	};
 }
 
@@ -578,17 +592,19 @@ const BAR_MAX = 5;
 const BAR_LABEL = 12;
 
 /** Fleet sessions on this host whose pi pane is in this tmux server. */
-async function sessionsInServer(env: NodeJS.ProcessEnv): Promise<{ entry: StatusEntry; pane: PaneRow }[]> {
+async function sessionsInServer(env: NodeJS.ProcessEnv): Promise<{ entry: StatusEntry; pane: PaneRow; home?: PaneRow }[]> {
 	const panes = await allPanes(env);
 	const byId = new Map(panes.map((p) => [p.pane, p]));
-	const out: { entry: StatusEntry; pane: PaneRow }[] = [];
+	const out: { entry: StatusEntry; pane: PaneRow; home?: PaneRow }[] = [];
 	for (const entry of readStatuses(env)) {
 		const { status, live } = entry;
 		if (live !== "live" && live !== "crashed") continue;
 		const pane = status.tmux?.piPane ? byId.get(status.tmux.piPane) : undefined;
 		if (!pane) continue;
 		if (status.tmux?.socket && status.tmux.socket !== pane.socket) continue;
-		out.push({ entry, pane });
+		// Joined into the dashboard: its own window (if still there) is what keeps its name.
+		const home = pane.joined ? panes.find((p) => p.window === pane.home) : undefined;
+		out.push({ entry, pane, home });
 	}
 	return out;
 }
@@ -600,13 +616,15 @@ export async function bar(opts: { pane?: string }, env: NodeJS.ProcessEnv = proc
 	const mySession = panes?.session;
 	const renames: string[] = [];
 	const items: { since: number; text: string }[] = [];
-	for (const { entry, pane } of sessions) {
+	for (const { entry, pane, home } of sessions) {
 		const { status, live } = entry;
 		const name = windowName(status, live);
-		// window_name is the literal name; rename-window format-expands its argument.
-		if (pane.named && pane.windowName !== name) {
+		// window_name is the literal name; rename-window format-expands its argument. A pane
+		// joined into the dashboard renames its home window (never the `fleet` window).
+		const win = pane.joined ? home : pane;
+		if (win?.named && win.windowName !== name) {
 			if (renames.length) renames.push(";");
-			renames.push("rename-window", "-t", pane.window, fmtLiteral(name));
+			renames.push("rename-window", "-t", win.window, fmtLiteral(name));
 		}
 		if (live !== "crashed" && !BAR_STATES.has(status.state)) continue;
 		if (status.state !== "question" && status.acked && live !== "crashed") continue;
@@ -809,7 +827,8 @@ async function peerCmd(pane: string, select: boolean, env: NodeJS.ProcessEnv): P
 	return 0;
 }
 
-async function dashboardWindow(pane: string | undefined, env: NodeJS.ProcessEnv): Promise<void> {
+/** `prefix g` / `Space e` / `/sessions`: toggle to (or create) the `fleet` dashboard window. */
+export async function dashboardWindow(pane: string | undefined, env: NodeJS.ProcessEnv = process.env): Promise<void> {
 	const me = pane ? await paneInfo(pane, env) : undefined;
 	const panes = await allPanes(env);
 	const mine = panes.filter((p) => !me || p.session === me.session);
@@ -834,6 +853,116 @@ async function dashboardWindow(pane: string | undefined, env: NodeJS.ProcessEnv)
 		env,
 	);
 	await tmux(["set-option", "-w", "-t", window, "@pi_fleet_dashboard", "1"], env);
+}
+
+/** Quote a word for sh. */
+function shQuote(s: string): string {
+	return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/** The display-popup argv of `Space E` (= `prefix G`); the popup inherits the pi-fleet env. */
+export function dashboardPopupArgs(pane: string, env: NodeJS.ProcessEnv = process.env): string[] {
+	const self = env.PI_FLEET_BIN || "pi-fleet";
+	const vars: string[] = [];
+	for (const name of PASS_ENV) if (env[name] !== undefined) vars.push(shQuote(`${name}=${env[name]}`));
+	const cmd = `${vars.length ? `env ${vars.join(" ")} ` : ""}${shQuote(self)} dashboard`;
+	return ["display-popup", "-E", "-w", "95%", "-h", "90%", "-t", pane, cmd];
+}
+
+/** `Space E`: the dashboard in a popup over the client showing `pane`. */
+export async function dashboardPopup(pane: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+	// display-popup -E waits for the popup to close: do not hold pi's action up meanwhile.
+	await new Promise<void>((res, rej) => {
+		let base: string[];
+		try {
+			base = tmuxBaseArgs(env);
+		} catch (error) {
+			rej(error);
+			return;
+		}
+		const child = spawn("tmux", [...base, ...dashboardPopupArgs(pane, env)], { env, stdio: ["ignore", "ignore", "pipe"], detached: true });
+		let err = "";
+		child.stderr?.on("data", (d) => (err += d.toString("utf8")));
+		// An immediate failure (no client, old tmux) is reported; a popup that opened is left alone.
+		const timer = setTimeout(() => {
+			child.stderr?.destroy();
+			child.unref();
+			res();
+		}, 300);
+		child.once("error", (e) => {
+			clearTimeout(timer);
+			rej(e);
+		});
+		child.once("exit", (code) => {
+			clearTimeout(timer);
+			if (code) rej(new Error(err.trim() || `display-popup exited ${code}`));
+			else res();
+		});
+	});
+}
+
+// ---------------------------------------------------------------- joined panes (ctrl+l / C-h)
+
+/** Width of a joined pi pane, of the dashboard pane it splits. */
+export const JOIN_SIZE = "60%";
+
+/** The pi pane joined into a dashboard window (`target`: the window, or a pane in it), if any. */
+export async function joinedPane(target: string, env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
+	let out: string;
+	try {
+		out = await tmux(["list-panes", "-t", target, "-F", "#{pane_id}\t#{@pi_fleet_joined}\t#{window_id}"], env);
+	} catch {
+		return undefined;
+	}
+	for (const line of out.split("\n")) {
+		const [pane, joined, window] = line.split("\t");
+		if (pane && joined && joined === window) return pane;
+	}
+	return undefined;
+}
+
+/**
+ * Move `piPane` into the dashboard window, right of `dashPane` (JOIN_SIZE wide), mark it
+ * (@pi_fleet_joined, @pi_fleet_home) and focus it. Already there: just focus it.
+ */
+export async function joinPane(dashPane: string, piPane: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+	const dash = await paneInfo(dashPane, env);
+	const pi = await paneInfo(piPane, env);
+	if (!dash) throw new Error(`no dashboard pane ${dashPane}`);
+	if (!pi) throw new Error(`pane ${piPane} is gone`);
+	if (pi.window === dash.window) {
+		await tmux(["select-pane", "-t", piPane], env);
+		return;
+	}
+	await tmux(
+		[
+			"join-pane", "-h", "-l", JOIN_SIZE, "-s", piPane, "-t", dashPane, ";",
+			"set-option", "-p", "-t", piPane, "@pi_fleet_joined", dash.window, ";",
+			"set-option", "-p", "-t", piPane, "@pi_fleet_home", pi.window, ";",
+			"select-pane", "-t", piPane,
+		],
+		env,
+	);
+}
+
+/**
+ * Send a joined pi pane home: left of its paired nvim (@pi_fleet_peer, which points back),
+ * 50/50, without moving focus; without a live nvim peer into a new window of its own named for
+ * the session (`<glyph> <name>`, @pi_fleet_named so `bar` keeps it). Unsets the marks.
+ */
+export async function sendHome(piPane: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+	const pi = await paneInfo(piPane, env);
+	if (!pi || !pi.joined) return;
+	const peer = await livePeer(piPane, env);
+	const unmark = ["set-option", "-pu", "-t", piPane, "@pi_fleet_joined", ";", "set-option", "-pu", "-t", piPane, "@pi_fleet_home"];
+	if (peer && peer.role === "nvim" && peer.window !== pi.window) {
+		await tmux(["join-pane", "-d", "-h", "-b", "-l", "50%", "-s", piPane, "-t", peer.pane, ";", ...unmark], env);
+		return;
+	}
+	const entry = pi.fleetSession ? readStatus(pi.fleetSession, env) : undefined;
+	const name = entry ? windowName(entry.status, entry.live) : `${GLYPHS.idle} pi`;
+	const window = await tmux(["break-pane", "-d", "-P", "-F", "#{window_id}", "-s", piPane, "-n", fmtLiteral(name)], env);
+	await tmux(["set-option", "-w", "-t", window, "@pi_fleet_named", "1", ";", ...unmark], env);
 }
 
 /*
@@ -888,15 +1017,35 @@ export async function usePiPackages(packages: string): Promise<void> {
 	});
 }
 
+/** This process's terminal (`tty`), or undefined. */
+function ownTty(): string | undefined {
+	try {
+		return execFileSync("tty", { encoding: "utf8", stdio: [0, "pipe", "ignore"], timeout: 2000 }).trim() || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Running in the `fleet` window's pane, not a popup. tmux 3.2a gives popups no $TMUX_PANE;
+ * newer ones may pass the pane they were opened over, so the pane's tty must be ours too.
+ */
 async function inDashboardWindow(env: NodeJS.ProcessEnv): Promise<boolean> {
 	if (!env.TMUX_PANE) return false;
-	return (await tmux(["show-options", "-wqv", "-t", env.TMUX_PANE, "@pi_fleet_dashboard"], env).catch(() => "")) === "1";
+	const out = await tmux(["display-message", "-p", "-t", env.TMUX_PANE, "#{@pi_fleet_dashboard}\t#{pane_tty}"], env).catch(() => "");
+	const [dashboard, paneTty] = out.split("\t");
+	if (dashboard !== "1") return false;
+	const tty = ownTty();
+	return !tty || !paneTty || tty === paneTty;
 }
 
 /**
  * The dashboard TUI. q/Esc: in the `fleet` window back to the last window (the dashboard keeps
  * running), elsewhere (the `prefix G` popup) quit. ctrl+c always quits. A popup also quits once
- * Enter/a moved focus to another window (`d` kills without leaving the dashboard).
+ * Enter/a/ctrl+l moved focus to another window (`d` kills without leaving the dashboard).
+ * In the `fleet` window ctrl+l joins the session's pi pane (joinPane); the joined pane is
+ * re-read from tmux every second (it may have exited or been moved by hand) and sent home
+ * before q, ctrl+c, Enter, a, SIGTERM/SIGHUP and before another session is joined.
  */
 async function dashboardTui(env: NodeJS.ProcessEnv): Promise<number> {
 	const packages = locatePiPackages(env);
@@ -921,25 +1070,66 @@ async function dashboardTui(env: NodeJS.ProcessEnv): Promise<number> {
 	let finish: (code: number) => void = () => {};
 	const finished = new Promise<number>((res) => (finish = res));
 	let view: InstanceType<typeof sv.SessionsView>;
-	const onAction = async (action: import("./sessions-view.ts").SessionsAction) => {
-		const popup = !(await inDashboardWindow(env));
-		if (action.type === "close") {
-			if (popup) finish(0);
-			else {
-				const me = await paneInfo(env.TMUX_PANE ?? "", env);
-				await tmuxOk(["last-window", ...(me ? ["-t", me.session] : [])], env);
-			}
+	const me = env.TMUX_PANE;
+	const popup = !(await inDashboardWindow(env));
+	const mine = me ? await paneInfo(me, env) : undefined;
+	const mySocket = mine?.socket;
+	// The window, not the pane: once this pane is killed (SIGHUP) a joined pane is still found.
+	const myWindow = popup ? undefined : mine?.window;
+
+	/** The joined pi pane, as tmux has it now; tells the view which session that is. */
+	const syncJoined = async (): Promise<string | undefined> => {
+		const pane = myWindow ? await joinedPane(myWindow, env) : undefined;
+		view.setJoined(pane ? (view.rows.find((r) => r.status?.tmux?.piPane === pane)?.id ?? "?") : undefined);
+		return pane;
+	};
+	const goHome = async () => {
+		const pane = myWindow ? await joinedPane(myWindow, env) : undefined;
+		if (pane) await sendHome(pane, env).catch((error) => view.flash(`pi-fleet: ${(error as Error).message}`));
+		view.setJoined(undefined);
+	};
+	const interact = async (row: import("./sessions-view.ts").SessionRow) => {
+		const pane = row.status?.tmux?.piPane;
+		if (!pane) return;
+		if (row.status?.tmux?.socket && mySocket && row.status.tmux.socket !== mySocket) {
+			view.flash(`${row.name} runs in another tmux server`);
 			return;
 		}
-		const moved = await sv.runAction(action, (message) => view.flash(message), { env, target: env.TMUX_PANE });
-		if (moved && popup) finish(0);
-		view.refresh();
-		tui.requestRender();
+		if (popup || !me || !myWindow) {
+			// Panes cannot join a popup: go to the session's window instead.
+			if (await sv.runAction({ type: "open", row }, (message) => view.flash(message), { env, target: me })) finish(0);
+			return;
+		}
+		const joined = await joinedPane(myWindow, env);
+		if (joined && joined !== pane) await sendHome(joined, env);
+		await joinPane(me, pane, env);
+		view.setJoined(row.id);
+	};
+	const onAction = async (action: import("./sessions-view.ts").SessionsAction) => {
+		try {
+			if (action.type === "close") {
+				await goHome();
+				if (popup) finish(0);
+				else {
+					const info = await paneInfo(me ?? "", env);
+					await tmuxOk(["last-window", ...(info ? ["-t", info.session] : [])], env);
+				}
+				return;
+			}
+			if (action.type === "interact") return await interact(action.row);
+			if (action.type !== "kill") await goHome();
+			const moved = await sv.runAction(action, (message) => view.flash(message), { env, target: me });
+			if (moved && popup) finish(0);
+		} catch (error) {
+			view.flash(`pi-fleet: ${(error as Error).message}`);
+		} finally {
+			view.refresh();
+			tui.requestRender();
+		}
 	};
 	view = new sv.SessionsView({
 		source: sv.fleetSource(env),
 		style: sv.ansiStyle,
-		mode: "dashboard",
 		height: () => terminal.rows,
 		preview: sv.panePreview(env),
 		requestRender: () => tui.requestRender(),
@@ -947,10 +1137,10 @@ async function dashboardTui(env: NodeJS.ProcessEnv): Promise<number> {
 	});
 	tui.addInputListener((data: string) => {
 		if (data !== "\x03") return undefined;
-		finish(0);
+		void goHome().finally(() => finish(0));
 		return { consume: true };
 	});
-	const quit = () => finish(0);
+	const quit = () => void goHome().finally(() => finish(0));
 	process.once("SIGTERM", quit);
 	process.once("SIGHUP", quit);
 	process.stdout.write("\x1b[?1049h\x1b[H");
@@ -958,7 +1148,19 @@ async function dashboardTui(env: NodeJS.ProcessEnv): Promise<number> {
 	tui.setFocus(view);
 	tui.start();
 	view.start();
+	let syncing = false;
+	const sync = async () => {
+		if (syncing) return;
+		syncing = true;
+		const before = view.joined();
+		await syncJoined().catch(() => undefined);
+		syncing = false;
+		if (view.joined() !== before) tui.requestRender();
+	};
+	void sync();
+	const syncTimer = popup ? undefined : setInterval(() => void sync(), 1000);
 	const code = await finished;
+	if (syncTimer) clearInterval(syncTimer);
 	view.dispose();
 	tui.stop();
 	process.stdout.write("\x1b[?1049l");
