@@ -44,7 +44,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import { ctlSockPath, focusPane, inTmux, isDefaultSocket, openSession, paneInfo, readStatuses, tmuxBaseArgs } from "./cli.ts";
 import { SessionIndex, countSubagents, type FoldedThread, type IndexEntry, type SubagentCounts } from "./registry.ts";
 import { fleetOf, ownPrompt } from "./shared.ts";
-import { GLYPHS, type FleetState, type Liveness, type StatusFile } from "./status.ts";
+import { GLYPHS, STALE_MS, type FleetState, type Liveness, type StatusFile } from "./status.ts";
 
 // ---------------------------------------------------------------- rows
 
@@ -134,7 +134,9 @@ export function fleetSource(env: NodeJS.ProcessEnv = process.env, opts: { recent
 			}
 			const closed = [...mains.values()].filter((e) => !shown.has(e.id!)).sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, recent);
 			for (const entry of closed) {
-				const detail = index.detail(entry);
+				// No status file: a file still being written (pi outside the fleet) keeps its last fold
+				// until it settles rather than being re-folded every second.
+				const detail = index.detail(entry, { settleMs: STALE_MS });
 				const name = detail?.name || entry.name;
 				const cwd = entry.cwd ?? "";
 				rows.push({
@@ -155,7 +157,7 @@ export function fleetSource(env: NodeJS.ProcessEnv = process.env, opts: { recent
 		},
 		threads(row) {
 			const entry = row.file ? index.get(row.file) : undefined;
-			const threads = entry ? index.detail(entry)?.threads : undefined;
+			const threads = entry ? index.detail(entry, row.status ? {} : { settleMs: STALE_MS })?.threads : undefined;
 			index.save();
 			return threads;
 		},
@@ -180,14 +182,14 @@ export function groupRows(rows: SessionRow[]): Group[] {
 		list.push(row);
 		byRepo.set(row.repo, list);
 	}
-	const groups = [...byRepo.entries()].map(([repo, list]) => ({ repo, label: basename(repo) || repo || "?", rows: list.sort(rowOrder) }));
+	const groups = [...byRepo.entries()].map(([repo, list]) => ({ repo, label: oneLine(basename(repo) || repo || "?"), rows: list.sort(rowOrder) }));
 	groups.sort((a, b) => rowOrder(a.rows[0]!, b.rows[0]!) || a.label.localeCompare(b.label));
 	// Two repos with the same basename: show their paths.
 	const labels = new Map<string, number>();
 	for (const g of groups) labels.set(g.label, (labels.get(g.label) ?? 0) + 1);
 	const home = homedir();
 	for (const g of groups) {
-		if ((labels.get(g.label) ?? 0) > 1) g.label = g.repo.startsWith(`${home}/`) ? `~${g.repo.slice(home.length)}` : g.repo;
+		if ((labels.get(g.label) ?? 0) > 1) g.label = oneLine(g.repo.startsWith(`${home}/`) ? `~${g.repo.slice(home.length)}` : g.repo);
 	}
 	return groups;
 }
@@ -264,7 +266,7 @@ export function rowDetail(row: SessionRow, now: number): string {
 	switch (row.state) {
 		case "running": {
 			const sub = s?.sub ?? "";
-			const what = sub.startsWith("tool:") ? sub.slice(5) : sub || "working";
+			const what = oneLine(sub.startsWith("tool:") ? sub.slice(5) : sub || "working");
 			return `${what} ${duration(now - since)}`;
 		}
 		case "starting":
@@ -280,7 +282,7 @@ export function rowDetail(row: SessionRow, now: number): string {
 		case "crashed":
 			return `crashed ${humanizeSince(row.at, now)}`;
 		case "remote":
-			return `live on ${s?.host ?? "?"}`;
+			return `live on ${oneLine(s?.host ?? "?")}`;
 		default:
 			return humanizeSince(row.at, now);
 	}
@@ -325,8 +327,16 @@ function fit(text: string, width: number): string {
 function padRight(text: string, width: number): string {
 	return " ".repeat(Math.max(0, width - visibleWidth(text))) + text;
 }
-function oneLine(text: string): string {
-	return text.replace(/[\x00-\x1f\x7f]+/g, " ");
+/**
+ * One line of untrusted text (names, paths, hosts, messages): escape sequences dropped, other
+ * C0/C1 control characters (line breaks, tabs, a lone ESC) each run turned into one space.
+ */
+export function oneLine(text: string): string {
+	return text
+		.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "") // CSI (SGR included)
+		.replace(/\x1b[\]P_^][^\x07\x1b]*(?:\x07|\x1b\\)?/g, "") // OSC/DCS/APC/PM up to BEL or ST
+		.replace(/\x1b[ -/]*[0-~]/g, "") // other ESC sequences (`ESC ( B`, `ESC =`)
+		.replace(/[\x00-\x1f\x7f-\x9f]+/g, " ");
 }
 
 // ---------------------------------------------------------------- preview
@@ -542,11 +552,13 @@ export class SessionsView implements Component {
 			this.flash(`pi-fleet: ${(error as Error).message}`);
 		}
 		this.threadCache.clear();
+		const ids = new Set(this.rows.map((r) => r.id));
+		for (const id of [...this.previews.keys()]) if (!ids.has(id)) this.previews.delete(id);
 		this.rebuild();
 	}
 
 	flash(text: string): void {
-		this.message = { text, until: this.now() + MESSAGE_MS };
+		this.message = { text: oneLine(text), until: this.now() + MESSAGE_MS };
 	}
 
 	private threadsOf(row: SessionRow): FoldedThread[] | undefined {
@@ -825,7 +837,7 @@ export class SessionsView implements Component {
 		const style = this.opts.style;
 		const live = this.rows.filter((r) => r.live === "live").length;
 		const waiting = this.rows.filter((r) => r.live === "live" && (r.state === "waiting" || r.state === "question")).length;
-		let left = ` ${style.bold(style.fg("accent", "pi-fleet"))}  ${this.host}   ${live} live`;
+		let left = ` ${style.bold(style.fg("accent", "pi-fleet"))}  ${oneLine(this.host)}   ${live} live`;
 		if (waiting) left += ` · ${style.fg("warning", `${waiting} waiting`)}`;
 		const filters: string[] = [];
 		if (this.statusFilter) filters.push(style.fg("accent", `[${this.statusFilter}]`));
@@ -881,7 +893,7 @@ export class SessionsView implements Component {
 		if (item.kind === "sub") {
 			const live = row.live === "live" || row.live === "remote";
 			const { glyph: g, word } = threadGlyph(item.thread, live, style);
-			const label = `${item.thread.type ?? "?"} ${item.thread.path}`;
+			const label = oneLine(`${item.thread.type ?? "?"} ${item.thread.path}`);
 			const avail = width - 7;
 			const labelW = Math.min(36, Math.max(10, avail - 14));
 			let text = `${pad(selected ? style.bold(label) : label, labelW)} ${pad(style.fg("muted", word), 12)}`;
@@ -920,7 +932,7 @@ export class SessionsView implements Component {
 		if (!item || item.kind === "note") return [rule("preview"), style.fg("dim", " nothing selected")];
 		if (item.kind === "group") {
 			const g = item.group;
-			const lines = [rule(g.label), ` ${style.fg("dim", g.repo)}`, ""];
+			const lines = [rule(oneLine(g.label)), ` ${style.fg("dim", oneLine(g.repo))}`, ""];
 			for (const r of g.rows) lines.push(` ${glyph(r, style)} ${oneLine(r.name)}  ${style.fg("dim", rowDetail(r, this.now()))}`);
 			return lines.slice(0, height);
 		}
@@ -934,7 +946,8 @@ export class SessionsView implements Component {
 			for (const l of text.split("\n")) lines.push(...wrapTextWithAnsi(` ${oneLine(l)}`, Math.max(10, width - 1)));
 		};
 		if (row.state === "remote") {
-			lines.push(rule(`${oneLine(row.name)} · ${row.status?.host ?? "?"}`), style.fg("dim", ` running on ${row.status?.host}: no preview from this node`));
+			const host = oneLine(row.status?.host ?? "?");
+			lines.push(rule(`${oneLine(row.name)} · ${host}`), style.fg("dim", ` running on ${host}: no preview from this node`));
 			tail(row.lastAssistant, "last message:");
 		} else if (!pane && row.state !== "closed") {
 			lines.push(rule(oneLine(row.name)), style.fg("dim", ` running outside tmux (pid ${row.status?.pid}): no preview`));
@@ -943,7 +956,7 @@ export class SessionsView implements Component {
 			lines.push(rule(oneLine(row.name)), style.fg("dim", ` not running · last active ${humanizeSince(row.at, this.now())}`));
 			const counts = countsText(row.counts, style);
 			if (counts) lines.push(` subagents: ${counts}`);
-			lines.push(style.fg("dim", ` ${row.cwd}`));
+			lines.push(style.fg("dim", ` ${oneLine(row.cwd)}`));
 			tail(row.lastAssistant, "last message:");
 		} else if (state?.gone) {
 			lines.push(rule(`${oneLine(row.name)} · ${pane}`), style.fg("error", ` pane ${pane} is gone (${oneLine(state.gone)})`));
@@ -1038,8 +1051,11 @@ export async function runAction(
 			} catch (error) {
 				notify(`pi-fleet: cannot reach ${row.name} (${(error as Error).message}); use /kill there`, "warning");
 			}
+			// Jump there only if the pane is on the server the status names (as openSession does).
 			const pane = row.status?.tmux?.piPane;
-			if (pane && (await paneInfo(pane, env))) {
+			const info = pane ? await paneInfo(pane, env) : undefined;
+			const socket = row.status?.tmux?.socket;
+			if (pane && info && (!socket || socket === info.socket)) {
 				await focusPane(pane, env);
 				return true;
 			}

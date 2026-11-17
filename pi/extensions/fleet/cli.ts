@@ -899,9 +899,18 @@ async function dashboardTui(env: NodeJS.ProcessEnv): Promise<number> {
 		process.stderr.write("pi-fleet: pi's pi-tui not found (set PI_FLEET_PI_PACKAGES); showing `ls`\n");
 		return dashboardPlain(env);
 	}
-	await usePiPackages(packages);
-	const piTui = await import("@earendil-works/pi-tui");
-	const sv = await import("./sessions-view.ts");
+	let piTui: typeof import("@earendil-works/pi-tui");
+	let sv: typeof import("./sessions-view.ts");
+	try {
+		await usePiPackages(packages);
+		piTui = await import("@earendil-works/pi-tui");
+		sv = await import("./sessions-view.ts");
+	} catch (error) {
+		// A broken or incompatible pi install: the plain list still works.
+		const message = String((error as Error)?.message ?? error).split("\n")[0];
+		process.stderr.write(`pi-fleet: pi-tui unusable (${message}); showing ls\n`);
+		return dashboardPlain(env);
+	}
 	const terminal = new piTui.ProcessTerminal();
 	const tui = new piTui.TuiMainScreen(terminal);
 	let finish: (code: number) => void = () => {};

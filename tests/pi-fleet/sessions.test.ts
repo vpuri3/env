@@ -4,10 +4,11 @@
 // through cli.ts's resolve hook, as in the dashboard; skipped without a pi install.
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { appendFileSync, existsSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { locatePiPackages, usePiPackages } from "../../pi/extensions/fleet/cli.ts";
-import { SessionIndex, classifyHead, sessionDetail } from "../../pi/extensions/fleet/registry.ts";
+import { SAVE_INTERVAL_MS, SessionIndex, classifyHead, sessionDetail } from "../../pi/extensions/fleet/registry.ts";
 import { IDS, buildFixture, plainStyle, type Fixture } from "./support/sessions-fixture.ts";
 
 const packages = locatePiPackages();
@@ -281,4 +282,206 @@ test("runAction outside tmux tells the user instead of throwing", { skip }, asyn
 	assert.equal(moved, false);
 	assert.match(messages[0]!, /not inside tmux \(pi --session .*\.jsonl\)/);
 	assert.ok(existsSync(fx.files.old));
+});
+
+// ---------------------------------------------------------------- phase 4 review fixes
+
+/** A JSONL line chained to the file's last entry (so it lands on the active branch). */
+function appendChained(file: string, entry: Record<string, unknown>): void {
+	const last = readFileSync(file, "utf8").trim().split("\n").at(-1)!;
+	const parentId = JSON.parse(last).id ?? null;
+	appendFileSync(file, `${JSON.stringify({ ...entry, id: `x${Math.random().toString(16).slice(2, 10)}`, parentId, timestamp: new Date().toISOString() })}\n`);
+}
+const assistantEntry = (text: string) => ({ type: "message", message: { role: "assistant", content: [{ type: "text", text }] } });
+
+test("source: a closed session whose file keeps growing is not re-folded every tick, only once it settles", { skip }, () => {
+	const f = buildFixture();
+	try {
+		const src = sv.fleetSource(f.env);
+		const last = () => src.load().find((r) => r.id === IDS.old)!.lastAssistant;
+		assert.equal(last(), "the old run finished");
+		appendChained(f.files.old, assistantEntry("still going"));
+		assert.equal(last(), "the old run finished", "a young file keeps its fold");
+		appendChained(f.files.old, assistantEntry("still going 2"));
+		assert.equal(last(), "the old run finished");
+		const t = (Date.now() - 2 * 60_000) / 1000;
+		utimesSync(f.files.old, t, t);
+		assert.equal(last(), "still going 2", "refolded once it settled");
+		// A file without a fold yet (no cache) is folded at once, young or not.
+		const fresh = sv.fleetSource({ ...f.env, PI_FLEET_CACHE_DIR: join(f.root, "cache2") });
+		appendChained(f.files.fork, assistantEntry("fork reply 2"));
+		assert.equal(fresh.load().find((r) => r.id === IDS.fork)!.lastAssistant, "fork reply 2");
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("index: growth alone does not dirty the cache; save() is rate-limited unless a detail changed", () => {
+	const f = buildFixture();
+	try {
+		const index = new SessionIndex(f.env);
+		const t0 = Date.now();
+		index.scan();
+		index.save(t0);
+		const cachePath = join(f.env.PI_FLEET_CACHE_DIR!, "index.json");
+		const first = readFileSync(cachePath, "utf8");
+		// Grows, same head: nothing to write even after the interval.
+		appendChained(f.files.flare, assistantEntry("more"));
+		index.scan();
+		index.save(t0 + SAVE_INTERVAL_MS + 1);
+		assert.equal(readFileSync(cachePath, "utf8"), first);
+		// A head change (new name) is written, but not before the interval.
+		appendChained(f.files.flare, { type: "session_info", name: "flare renamed" });
+		index.scan();
+		index.save(t0 + 1000);
+		assert.equal(readFileSync(cachePath, "utf8"), first, "rate-limited");
+		index.save(t0 + SAVE_INTERVAL_MS);
+		const second = readFileSync(cachePath, "utf8");
+		assert.equal(JSON.parse(second).files[f.files.flare].name, "flare renamed");
+		// A new detail is written at once.
+		const entry = index.scan().find((e) => e.id === IDS.flare)!;
+		index.detail(entry);
+		index.save(t0 + SAVE_INTERVAL_MS + 1);
+		assert.ok(JSON.parse(readFileSync(cachePath, "utf8")).files[f.files.flare].detail, "detail written immediately");
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("index: repoOf caches the cwd fallback only when git exits non-zero, not on a signal", () => {
+	const f = buildFixture();
+	try {
+		const bin = join(f.root, "fakegit");
+		mkdirSync(bin, { recursive: true });
+		const git = (script: string) => {
+			writeFileSync(join(bin, "git"), `#!/bin/sh\n${script}\n`);
+			chmodSync(join(bin, "git"), 0o755);
+		};
+		const index = new SessionIndex({ ...f.env, PATH: `${bin}:${process.env.PATH}` });
+		git("kill -TERM $$");
+		assert.equal(index.repoOf(f.repos.beta), f.repos.beta);
+		git("echo /some/repo");
+		assert.equal(index.repoOf(f.repos.beta), "/some/repo", "a killed git was not cached");
+		git("exit 128");
+		assert.equal(index.repoOf(f.repos.gamma), f.repos.gamma);
+		git("echo /other/repo");
+		assert.equal(index.repoOf(f.repos.gamma), f.repos.gamma, "not a repo is cached");
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("runAction kill: sends kill to the control socket, then focuses the pane only on the status's tmux server", { skip }, async () => {
+	const f = buildFixture();
+	const server = createServer();
+	try {
+		const bin = join(f.root, "faketmux");
+		mkdirSync(bin, { recursive: true });
+		const log = join(f.root, "tmux.log");
+		writeFileSync(
+			join(bin, "tmux"),
+			`#!/bin/sh\necho "$*" >> "${log}"\ncase "$*" in *display-message*) printf '%%12\\t@1\\t1\\t$1\\tmain\\tpi\\tx\\t\\t\\t/tmp\\t%s\\tw\\t0\\n' /srv/a.sock ;; esac\n`,
+		);
+		chmodSync(join(bin, "tmux"), 0o755);
+		const env = { ...f.env, PATH: `${bin}:${process.env.PATH}`, PI_FLEET_TMUX_SOCKET: join(f.root, "fake.sock") };
+		const ctlSock = join(f.root, "ctl.sock");
+		const got: string[] = [];
+		server.on("connection", (c) =>
+			c.on("data", (d) => {
+				got.push(d.toString("utf8").trim());
+				c.end('{"ok":true}\n');
+			}),
+		);
+		await new Promise<void>((r) => server.listen(ctlSock, r));
+		const row = (socket?: string) =>
+			({
+				id: "kill-me",
+				name: "victim",
+				cwd: "/",
+				repo: "/",
+				state: "running",
+				live: "live",
+				at: 0,
+				counts: { working: 0, waiting: 0, done: 0, error: 0 },
+				status: { ctlSock, tmux: { piPane: "%12", socket } },
+			}) as unknown as import("../../pi/extensions/fleet/sessions-view.ts").SessionRow;
+		const focused = () => (existsSync(log) ? readFileSync(log, "utf8") : "").split("\n").filter((l) => l.startsWith("-S") && l.includes("select-window")).length;
+		const messages: string[] = [];
+		const notify = (m: string) => messages.push(m);
+
+		assert.equal(await sv.runAction({ type: "kill", row: row("/srv/a.sock") }, notify, { env }), true);
+		assert.deepEqual(got, ['{"type":"kill"}']);
+		assert.equal(focused(), 1);
+
+		// The pane id exists on this server, but the session runs on another one: no jump.
+		assert.equal(await sv.runAction({ type: "kill", row: row("/srv/b.sock") }, notify, { env }), false);
+		assert.equal(got.length, 2, "the kill is still sent");
+		assert.equal(focused(), 1);
+
+		// No socket in the status: as openSession, the pane on this server is it.
+		assert.equal(await sv.runAction({ type: "kill", row: row(undefined) }, notify, { env }), true);
+		assert.equal(focused(), 2);
+		assert.deepEqual(messages, []);
+	} finally {
+		server.close();
+		f.cleanup();
+	}
+});
+
+test("escape sequences in names, cwds, hosts, thread paths and messages never reach the screen", { skip }, () => {
+	const f = buildFixture();
+	try {
+		const id = "00000000-0000-7000-8000-00000000e001";
+		const cwd = "/nonexistent/ev\x1b]0;pwn\x07il\x1b[2Jdir";
+		const dir = join(f.sessionsDir, "--evil--");
+		mkdirSync(dir, { recursive: true });
+		const entries = [
+			{ type: "session", version: 3, id, timestamp: "2026-11-17T10:00:00.000Z", cwd },
+			{ type: "session_info", id: "e1", parentId: null, name: "bad\x1b[31mname\x07\x9b2J" },
+			{
+				type: "custom",
+				id: "e2",
+				parentId: "e1",
+				customType: "pi-subagent:registry:v1",
+				data: { version: 1, rootSessionId: id, threads: [{ view: { path: "/t\x1b[2Jx", parent: null, owner: "/root", type: "co\x07der", state: "running", task: "t\x1bask" } }] },
+			},
+			{ type: "message", id: "e3", parentId: "e2", message: { role: "assistant", content: [{ type: "text", text: "last\x1b[2J\x1b]52;c;Zm9v\x07 word" }] } },
+		];
+		const file = join(dir, `2026-11-17T10-00-00-000Z_${id}.jsonl`);
+		writeFileSync(file, entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
+		const t = (Date.now() - 5 * 60_000) / 1000;
+		utimesSync(file, t, t);
+		const notes = JSON.parse(readFileSync(join(f.statusDir, `${IDS.notes}.json`), "utf8"));
+		f.writeStatus(IDS.notes, { ...notes, host: "evil\x1b[2Jhost", name: "no\x1b]2;title\x07tes" });
+
+		const lines: string[] = [];
+		for (const mode of ["list", "dashboard"] as const) {
+			const view = new sv.SessionsView({
+				source: sv.fleetSource(f.env),
+				style: plainStyle,
+				mode,
+				height: () => 40,
+				onAction: () => {},
+				requestRender: () => {},
+				preview: mode === "dashboard" ? () => undefined : undefined,
+				now: () => f.now,
+				host: "node\x1b[2J1",
+			});
+			view.refresh();
+			view.flash("oops\x1b[2J\x1b]0;x\x07 flash");
+			lines.push(...view.render(130));
+			for (let i = 0; i < 20; i++) {
+				press(view, "j");
+				if (selectedLine(view).includes("badname")) press(view, " ");
+				lines.push(...view.render(130));
+			}
+		}
+		const text = lines.map(strip).join("\n");
+		for (const want of ["badname", "evildir", "co der /tx", "evilhost", "notes", "node1", "last word", "/nonexistent/evildir", "oops flash"]) {
+			assert.ok(text.includes(want), `${JSON.stringify(want)} not shown`);
+		}
+		for (const l of lines.map(strip)) assert.doesNotMatch(l, /[\x00-\x1f\x7f-\x9f]/, JSON.stringify(l));
+	} finally {
+		f.cleanup();
+	}
 });

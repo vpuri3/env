@@ -295,3 +295,48 @@ test("e2e: `dashboard --window` makes the fleet window; q goes back, the dashboa
 		server.kill();
 	}
 });
+
+// ---------------------------------------------------------------- phase 4 review fixes
+
+test("dashboard: a pi-tui that fails to import falls back to the plain list", { timeout: 30_000 }, () => {
+	const broken = join(fx.root, "broken", "node_modules");
+	mkdirSync(join(broken, "@earendil-works", "pi-tui"), { recursive: true });
+	writeFileSync(join(broken, "@earendil-works", "pi-tui", "package.json"), JSON.stringify({ name: "@earendil-works/pi-tui", type: "module", exports: "./index.js" }));
+	writeFileSync(join(broken, "@earendil-works", "pi-tui", "index.js"), 'throw new Error("broken pi-tui");\n');
+	// No tmux server is contacted: tmux is a stub that fails, the socket a path in the fixture.
+	const bin = join(fx.root, "nobin");
+	mkdirSync(bin, { recursive: true });
+	writeFileSync(join(bin, "tmux"), "#!/bin/sh\necho 'no server running' >&2\nexit 1\n");
+	chmodSync(join(bin, "tmux"), 0o755);
+	const env = { ...fx.env, PATH: `${bin}:${process.env.PATH}`, PI_FLEET_PI_PACKAGES: broken, PI_FLEET_TMUX_SOCKET: join(fx.root, "nosuch.sock") };
+	// stdin is not a TTY: the plain list draws once and quits.
+	const r = spawnSync(cliBin, ["dashboard"], { env, encoding: "utf8", input: "", timeout: 20_000 });
+	assert.equal(r.status, 0, r.stderr);
+	assert.match(r.stderr, /^pi-fleet: pi-tui unusable \(.*broken pi-tui.*\); showing ls$/m);
+	assert.match(r.stdout, /no pi-tui: plain list/);
+	assert.match(r.stdout, /flare refactor/);
+});
+
+test("dashboard: previews of rows that are gone are dropped on refresh", { skip }, async () => {
+	const row = (id: string) => ({ id, name: id, cwd: "/", repo: "/r", state: "idle", live: "live", at: 0, counts: { working: 0, waiting: 0, done: 0, error: 0 }, status: { tmux: { piPane: "%1" } } });
+	let rows = [row("a"), row("b")];
+	const view = new sv.SessionsView({
+		source: { load: () => rows as never, threads: () => [] },
+		style: plainStyle,
+		mode: "dashboard",
+		height: () => 20,
+		onAction: () => {},
+		requestRender: () => {},
+		preview: () => Promise.resolve({ kind: "frame", lines: ["x"] }),
+		now: () => fx.now,
+	});
+	view.refresh();
+	const previews = (view as unknown as { previews: Map<string, unknown> }).previews;
+	const first = view.selectedRow()!.id;
+	await view.updatePreview();
+	assert.ok(previews.has(first));
+	rows = rows.filter((r) => r.id !== first);
+	view.refresh();
+	assert.ok(!previews.has(first));
+	assert.equal(previews.size, 0);
+});

@@ -354,7 +354,8 @@ function textOf(content: unknown): string | undefined {
 }
 
 function oneLine(text: string, max: number): string {
-	const s = text.replace(/\s+/g, " ").trim();
+	// Whitespace and C0/C1 control characters (ESC included) become one space.
+	const s = text.replace(/[\s\x00-\x1f\x7f-\x9f]+/g, " ").trim();
 	return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
@@ -451,6 +452,15 @@ interface IndexFile {
 	repos: Record<string, string>;
 }
 
+/** save() writes at most this often unless a detail changed. */
+export const SAVE_INTERVAL_MS = 30_000;
+
+const HEAD_FIELDS = ["id", "cwd", "parentSession", "created", "name", "firstMessage", "subagent", "rootId", "threadPath"] as const;
+
+function sameHead(a: SessionHead, b: SessionHead): boolean {
+	return HEAD_FIELDS.every((k) => a[k] === b[k]);
+}
+
 /**
  * The session index of one process (the dashboard, or one /sessions picker). scan() is cheap
  * when nothing changed: one readdir per project dir and one stat per file.
@@ -460,7 +470,11 @@ export class SessionIndex {
 	readonly cachePath: string;
 	private files = new Map<string, IndexEntry>();
 	private repos = new Map<string, string>();
+	/** Something worth writing changed (new or vanished files, head fields, repos). */
 	private dirty = false;
+	/** A detail changed: written by the next save() regardless of the interval. */
+	private detailDirty = false;
+	private lastSave = 0;
 	private env: NodeJS.ProcessEnv;
 
 	constructor(env: NodeJS.ProcessEnv = process.env) {
@@ -518,7 +532,8 @@ export class SessionIndex {
 				if (!head.firstMessage) head.firstMessage = cached?.firstMessage ?? (st.size > HEAD_BYTES ? firstUserMessage(path) : undefined);
 				// Keep the old detail: detail() refreshes it when asked, by its own size/mtime.
 				this.files.set(path, { ...head, path, size: st.size, mtimeMs: st.mtimeMs, detail: cached?.detail });
-				this.dirty = true;
+				// A file that only grew is not worth a write: the next scan re-reads its head anyway.
+				if (!cached || !sameHead(cached, head)) this.dirty = true;
 			}
 		}
 		for (const path of [...this.files.keys()]) {
@@ -534,11 +549,16 @@ export class SessionIndex {
 		return this.files.get(path);
 	}
 
-	/** The folded detail of a scanned file, recomputed only when its size or mtime changed. */
-	detail(entry: IndexEntry): SessionDetail | undefined {
+	/**
+	 * The folded detail of a scanned file, recomputed only when its size or mtime changed.
+	 * `settleMs`: a file written to within that long keeps its existing detail (a session being
+	 * written without a status file is not re-folded on every scan); refolded once it settles.
+	 */
+	detail(entry: IndexEntry, opts: { settleMs?: number; now?: number } = {}): SessionDetail | undefined {
 		const current = this.files.get(entry.path) ?? entry;
 		const d = current.detail;
 		if (d && d.size === current.size && d.mtimeMs === current.mtimeMs) return d;
+		if (d && opts.settleMs && (opts.now ?? Date.now()) - current.mtimeMs < opts.settleMs) return d;
 		let text: string;
 		try {
 			text = readFileSync(current.path, "utf8");
@@ -547,36 +567,43 @@ export class SessionIndex {
 		}
 		current.detail = { ...sessionDetail(text), size: current.size, mtimeMs: current.mtimeMs };
 		this.files.set(current.path, current);
-		this.dirty = true;
+		this.detailDirty = true;
 		return current.detail;
 	}
 
-	/** `git rev-parse --show-toplevel` of cwd, else cwd. Cached per cwd. */
+	/**
+	 * `git rev-parse --show-toplevel` of cwd, else cwd. Cached per cwd; the cwd fallback only
+	 * when git said "not a repo" (exited non-zero), not on a timeout, signal or missing git/cwd.
+	 */
 	repoOf(cwd: string): string {
 		const cached = this.repos.get(cwd);
 		if (cached !== undefined) return cached;
-		let repo = cwd;
-		if (existsSync(cwd)) {
-			try {
-				repo =
-					execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
-						encoding: "utf8",
-						timeout: 3000,
-						stdio: ["ignore", "pipe", "ignore"],
-						env: this.env,
-					}).trim() || cwd;
-			} catch {
-				// not a repo
-			}
+		if (!existsSync(cwd)) return cwd;
+		let repo: string;
+		try {
+			repo =
+				execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+					encoding: "utf8",
+					timeout: 3000,
+					stdio: ["ignore", "pipe", "ignore"],
+					env: this.env,
+				}).trim() || cwd;
+		} catch (error) {
+			// Not a repo: cache that. Timed out, killed, or no git: try again next time.
+			if (typeof (error as { status?: unknown }).status !== "number") return cwd;
+			repo = cwd;
 		}
 		this.repos.set(cwd, repo);
 		this.dirty = true;
 		return repo;
 	}
 
-	/** Write the cache (atomically, 0600 in a 0700 dir) if anything changed. Never throws. */
-	save(): void {
-		if (!this.dirty) return;
+	/**
+	 * Write the cache (atomically, 0600 in a 0700 dir) if anything changed: at once if a detail
+	 * changed, else at most every SAVE_INTERVAL_MS. Never throws.
+	 */
+	save(now: number = Date.now()): void {
+		if (!this.detailDirty && (!this.dirty || now - this.lastSave < SAVE_INTERVAL_MS)) return;
 		try {
 			mkdirSync(cacheDir(this.env), { recursive: true, mode: 0o700 });
 			const data: IndexFile = { v: INDEX_VERSION, files: Object.fromEntries(this.files), repos: Object.fromEntries(this.repos) };
@@ -584,6 +611,8 @@ export class SessionIndex {
 			writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
 			renameSync(tmp, this.cachePath);
 			this.dirty = false;
+			this.detailDirty = false;
+			this.lastSave = now;
 		} catch {
 			// a cache only
 		}
