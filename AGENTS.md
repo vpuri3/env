@@ -30,7 +30,7 @@ docs and skills use placeholders (`mycluster`, `/project/me`).
 | `nvim/` | Neovim config; `nvconf` (terminal) vs `nvconf_vscode` (vscode-neovim) |
 | `vimrc`, `tmux.conf`, `emacs.conf` | symlinked dotfiles |
 | `vscode_settings.json`, `vscode_keybindings.json` | linked into Cursor and VS Code |
-| `pi/` | pi agent: extensions, keybindings, settings, pinned packages, subagent types (`pi/agents/`) |
+| `pi/` | pi agent: extensions, prompt templates (`pi/prompts/`), keybindings, settings, pinned packages, subagent types (`pi/agents/`) |
 | `skills/` | agent skills, linked into `~/.agents/skills/` |
 | `docs/` | cheat sheets: `tmux.md`, `nvim.md`, `vscode.md` |
 | `tests/bootstrap_test.sh` | bootstraps throwaway homes and checks the result |

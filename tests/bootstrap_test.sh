@@ -128,6 +128,7 @@ check "Cursor settings linked into repo" [ "$(readlink "$cursor_user/settings.js
 check "Cursor keybindings linked into repo" [ "$(readlink "$cursor_user/keybindings.json")" = "$home/env/vscode_keybindings.json" ]
 check "pi keybindings linked into repo" [ "$(readlink "$home/.pi/agent/keybindings.json")" = "$home/env/pi/keybindings.json" ]
 check "pi extensions linked into repo" [ "$(readlink "$home/.pi/agent/extensions")" = "$home/env/pi/extensions" ]
+check "pi prompts linked into repo" [ "$(readlink "$home/.pi/agent/prompts")" = "$home/env/pi/prompts" ]
 check "slurm-operator agent is a real file" is_real_file "$home/.pi/agent/subagent-manager/agents/slurm-operator.md"
 check "slurm-operator agent matches repo" cmp -s "$home/env/pi/agents/slurm-operator.md" "$home/.pi/agent/subagent-manager/agents/slurm-operator.md"
 check "pi settings.json is a real file" is_real_file "$home/.pi/agent/settings.json"
@@ -139,6 +140,7 @@ fi
 check "env-deploy skill linked into repo" [ "$(readlink "$home/.agents/skills/env-deploy")" = "$home/env/skills/env-deploy" ]
 check "slurm-jobs skill linked into repo" [ "$(readlink "$home/.agents/skills/slurm-jobs")" = "$home/env/skills/slurm-jobs" ]
 check "env-add-cluster skill linked into repo" [ "$(readlink "$home/.agents/skills/env-add-cluster")" = "$home/env/skills/env-add-cluster" ]
+check "leavemealone skill linked into repo" [ "$(readlink "$home/.agents/skills/leavemealone")" = "$home/env/skills/leavemealone" ]
 check "no VS Code settings created when VS Code is absent" is_absent "$(dirname "$(dirname "$cursor_user")")/Code"
 check "~/.gitconfig is a real file" is_real_file "$home/.gitconfig"
 check "~/.ssh/config is a real file" is_real_file "$home/.ssh/config"
