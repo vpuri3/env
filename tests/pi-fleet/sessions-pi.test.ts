@@ -129,19 +129,19 @@ test("the dashboard window beside a real pi: the list, Space shows subagents, En
 		const screen = capture(dash);
 		assert.match(screen, /\? flare refactor\s+question/);
 		assert.match(screen, /● physicsnemo sweep\s+bash \d+m\s+(\$3\.41 )?2w 1◐ 3✓/);
-		assert.match(screen, /○ start the old run\s+3h ago\s+1✓ 1 inter/);
+		assert.match(screen, /◌ start the old run\s+3h ago\s+1✓ 1 inter/);
 		assert.match(screen, /^›\s+\? flare refactor/m);
 
 		// Move to the old run (ctrl+n / j), show its subagents.
 		// One key at a time, each waiting for the selection to move, so a slow redraw never overshoots.
 		const showDash = () => capture(dash);
 		const selected = () => /^›.*$/m.exec(capture(dash))?.[0];
-		for (let i = 0; i < 12 && !/›\s+○ start the old run/.test(capture(dash)); i++) {
+		for (let i = 0; i < 12 && !/›\s+◌ start the old run/.test(capture(dash)); i++) {
 			const before = selected();
 			tmux(["send-keys", "-t", dash, i % 2 ? "C-n" : "j"]);
 			await waitFor("the selection to move", () => selected() !== before, 10_000, showDash);
 		}
-		assert.match(capture(dash), /›\s+○ start the old run/);
+		assert.match(capture(dash), /›\s+◌ start the old run/);
 		tmux(["send-keys", "-t", dash, "Space"]);
 		await waitFor("the subagent rows", () => /◌ coder \/runner\s+interrupted/.test(capture(dash)), 30_000, showDash);
 

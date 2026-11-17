@@ -137,10 +137,10 @@ function fakeOps(panes: DeckPane[] = PANES) {
 const style = { ...plainStyle, selected: (line: string) => `\x1b[7m${line}\x1b[27m` };
 const strip = (s: string) => s.replace(/^\x1b\[7m/, "▌").replace(/\x1b\[[0-9;]*m/g, "");
 
-function makeView(opts: { panes?: DeckPane[]; height?: number } = {}) {
+function makeView(opts: { panes?: DeckPane[]; height?: number; source?: InstanceType<DV["DeckSource"]> } = {}) {
 	const clock = new Clock();
 	const fake = fakeOps(opts.panes);
-	const source = new dv.DeckSource(fx.env);
+	const source = opts.source ?? new dv.DeckSource(fx.env);
 	source.readAllStatuses();
 	source.rescan();
 	const view = new dv.DeckView({
@@ -175,56 +175,67 @@ function selectLine(view: InstanceType<DV["DeckView"]>, text: string): void {
 
 // ---------------------------------------------------------------- layout
 
-test("layout: repo groups, outside, closed (folded); full-width selection; status line, search bar, hints", { skip }, () => {
+test("layout: repo groups with their closed sessions after the live ones, then outside; full-width selection; status line, search bar, hints", { skip }, () => {
 	const { view } = makeView();
 	view.selectSession(IDS.sweep);
 	const lines = screen(view);
 	assert.equal(lines.length, 20);
-	assert.deepEqual(lines.slice(0, 11), [
-		" ▾ gamma (1)",
+	assert.deepEqual(lines.slice(0, 13), [
+		" ▾ gamma (1, 1 closed)",
 		"  ? flare refactor                 question 12m       $0.80 1◐",
-		" ▾ beta (2)",
+		"  ◌ what does gamma do?            2d ago",
+		" ▾ beta (2, 1 closed)",
 		"  ✕ crashy                         crashed just now         1 interrupt…",
 		"  ⇢ notes                          live on other-n…",
-		" ▾ alpha (2)",
+		"  ◌ forked idea                    1d ago",
+		" ▾ alpha (2, 1 closed)",
 		"  ◐ ckpt restart                   done 2m ago        $0.40",
 		"▌› ● physicsnemo sweep              bash 4m            $3.41 2w 1◐ 3✓",
+		"  ◌ start the old run              3h ago                   1✓ 1 interr…",
 		" ▾ outside (your tmux) (1)",
 		"  ◐ notes outside ⇱ win 3          done 5m ago",
-		" ▸ closed (3)",
 	]);
 	// The selection is padded to the full width.
 	const sel = view.render(72).find((l) => l.startsWith("\x1b[7m"))!;
 	assert.equal(strip(sel).length, 1 + 72);
-	assert.deepEqual(lines.slice(11, 17), ["", "", "", "", "", ""]);
+	assert.deepEqual(lines.slice(13, 17), ["", "", "", ""]);
 	assert.deepEqual(lines.slice(18), [` NORMAL  ⌕${" ".repeat(58)}9/9`, " j/k move  ⏎/C-l open  a new  d kill  i / search  ? help  q detach"]);
 	assert.equal(lines[17], " physicsnemo sweep · ● working · tool bash · for 4m · $3.41 · subagents…");
 	assert.match(screen(view, 140)[17]!, /^ physicsnemo sweep · ● working · tool bash · for 4m · \$3\.41 · subagents 2w 1◐ 3✓ · \/.*\/work\/alpha$/);
 });
 
-test("status colors follow sessions-view: working blue, waiting yellow, question magenta, auto green, error red, idle dim", { skip }, async () => {
+test("ANSI colors: names in their state's color (working bright blue, waiting yellow, question magenta bold, error red), idle bright, closed grey 250; 90 only for chrome", { skip }, async () => {
 	const sv = await import("../../pi/extensions/fleet/sessions-view.ts");
 	const clock = new Clock();
-	const view = new dv.DeckView({
-		source: Object.assign(new dv.DeckSource(fx.env), {}),
-		ops: fakeOps().ops,
-		style: sv.ansiStyle,
-		height: () => 20,
-		requestRender: () => {},
-		deckSocket: "/tmp/fake-deck-sock",
-		now: () => fx.now,
-		timers: clock,
-	});
-	(view as unknown as { opts: { source: InstanceType<DV["DeckSource"]> } }).opts.source.readAllStatuses();
-	(view as unknown as { opts: { source: InstanceType<DV["DeckSource"]> } }).opts.source.rescan();
+	// The outside session idles (no idle row in the fixture otherwise).
+	class Source extends dv.DeckSource {
+		override rows() {
+			return super.rows().map((r) => (r.id === OUT ? { ...r, state: "idle" as const } : r));
+		}
+	}
+	const source = new Source(fx.env);
+	source.readAllStatuses();
+	source.rescan();
+	const view = new dv.DeckView({ source, ops: fakeOps().ops, style: sv.ansiStyle, height: () => 20, requestRender: () => {}, deckSocket: "/tmp/fake-deck-sock", now: () => fx.now, timers: clock });
 	view.setPanes(PANES);
 	view.refresh();
-	const raw = view.render(90).join("\n");
-	assert.match(raw, /\x1b\[34m●\x1b\[39m physicsnemo sweep/); // working blue
-	assert.match(raw, /\x1b\[33m◐\x1b\[39m ckpt restart/); // waiting yellow
-	assert.match(raw, /\x1b\[1m\x1b\[35m\?\x1b\[39m\x1b\[22m (\x1b\[1m)?flare refactor/); // question magenta bold
-	assert.match(raw, /\x1b\[31m✕\x1b\[39m crashy/); // crashed red
-	assert.match(raw, /\x1b\[48;5;237m/); // the selection background
+	view.selectSession(IDS.ckpt);
+	const lines = view.render(90);
+	const raw = lines.join("\n");
+	assert.match(raw, /\x1b\[94m●\x1b\[39m \x1b\[94mphysicsnemo sweep\x1b\[39m +\x1b\[94mbash 4m/); // working: bright blue name and detail
+	assert.match(raw, /\x1b\[33m◐\x1b\[39m \x1b\[1m\x1b\[33mckpt restart\x1b\[39m\x1b\[22m/); // waiting yellow, bold when selected
+	assert.match(raw, /\x1b\[1m\x1b\[35m\?\x1b\[39m\x1b\[22m \x1b\[1m\x1b\[35mflare refactor/); // question magenta bold
+	assert.match(raw, /\x1b\[31m✕\x1b\[39m \x1b\[31mcrashy/); // crashed red
+	assert.match(raw, /\x1b\[97mnotes outside\x1b\[39m/); // idle: bright white
+	assert.match(raw, /\x1b\[37m\d+m ago\x1b\[39m/); // idle detail: plain grey 37
+	assert.match(raw, /\x1b\[38;5;250m◌\x1b\[39m \x1b\[38;5;250mstart the old run/); // closed: grey 250
+	assert.match(raw, /\x1b\[1m\x1b\[36malpha\x1b\[39m\x1b\[22m/); // repo header bold cyan
+	assert.ok(lines.some((l) => l.startsWith(sv.ANSI_SELECTED_BG) && l.includes("ckpt restart")), "the selection background");
+	// Dark grey 90 is chrome only: never in the list rows, the search bar or the hints.
+	const body = [...lines.slice(0, 13), ...lines.slice(18)];
+	assert.ok(body.every((l) => !l.includes("\x1b[90m")), body.filter((l) => l.includes("\x1b[90m")).join("\n"));
+	for (const color of ["text", "muted", "dim"] as const) assert.notEqual(sv.ANSI_FG[color], "90", color);
+	for (const tone of ["off", "closed"] as const) assert.notEqual(sv.ANSI_FG[sv.TONE_COLOR[tone]], "90", tone);
 });
 
 // ---------------------------------------------------------------- modes and search
@@ -250,10 +261,10 @@ test("modes: i and / enter INSERT; fuzzy terms filter live; Esc back to NORMAL k
 	press(view, KEY.esc);
 	assert.equal(view.query, "");
 	assert.match(screen(view)[18]!, /9\/9$/);
-	// `/` too; a search unfolds the closed group; Enter in INSERT is NORMAL Enter.
+	// `/` too; a closed session is found under its repo; Enter in INSERT is NORMAL Enter.
 	press(view, "/", "o", "l", "d", " ", "r", "u", "n");
 	lines = screen(view).filter((l) => l);
-	assert.ok(lines.some((l) => l.includes("▾ closed (1)")), lines.join("\n"));
+	assert.deepEqual(lines.slice(0, 2), [" ▾ alpha (1 closed)", "▌› ◌ start the old run              3h ago                   1✓ 1 interr…"]);
 	press(view, KEY.enter);
 	assert.equal(view.mode, "normal");
 	await clock.advance(50);
@@ -326,9 +337,7 @@ test("rows without a pane preview in the holder: card for closed/remote/outside;
 
 test("subagent rows: Space expands, the holder shows the transcript tail, re-read on fs.watch of its JSONL", { skip }, async () => {
 	const { view, clock, of, watchers, calls } = makeView({ height: 30 });
-	// Unfold `closed`, find old run, expand it.
-	selectLine(view, "closed (3)");
-	press(view, KEY.space);
+	// old run (closed, under alpha): expand it.
 	selectLine(view, "start the old run");
 	press(view, KEY.space);
 	selectLine(view, "/runner");
@@ -364,6 +373,94 @@ test("subagent rows: Space expands, the holder shows the transcript tail, re-rea
 	assert.match(screen(view, 72).find((l) => l.startsWith("▌"))!, /start the old run/);
 });
 
+test("closed sessions: under their repo after its live rows, the newest 3 then `+N closed`; closed-only repos last, folded; a search shows all", { skip }, async () => {
+	const H = 3600_000;
+	const closed = (id: string, name: string, repo: string, ageH: number): Row => ({ id, file: `/s/${id}.jsonl`, name, unnamed: false, cwd: repo, repo, state: "closed", at: fx.now - ageH * H, counts: { working: 0, waiting: 0, done: 0, error: 0 } });
+	const extra = [
+		...[1, 2, 4, 5, 6].map((h) => closed(`alpha-${h}`, `alpha closed ${h}h`, fx.repos.alpha, h)),
+		closed("delta-1", "delta one", "/w/delta", 1),
+		closed("delta-2", "delta two", "/w/delta", 2),
+	];
+	class Source extends dv.DeckSource {
+		override rows() {
+			return [...super.rows(), ...extra];
+		}
+	}
+	const { view, clock, of } = makeView({ source: new Source(fx.env), height: 30 });
+	const names = () => screen(view, 72).filter((l) => l && !/^ (NORMAL|INSERT|j\/k)/.test(l)).slice(0, -1);
+	let lines = names();
+	const alpha = lines.indexOf(" ▾ alpha (2, 6 closed)");
+	assert.ok(alpha >= 0, lines.join("\n"));
+	assert.deepEqual(lines.slice(alpha + 1, alpha + 7).map((l) => l.slice(0, 26).trimEnd()), [
+		"  ◐ ckpt restart",
+		"  ● physicsnemo sweep",
+		"  ◌ alpha closed 1h",
+		"  ◌ alpha closed 2h",
+		"  ◌ start the old run",
+		"  ⋯ +3 closed",
+	]);
+	// The closed-only repo comes after every group with live sessions (outside included), folded.
+	assert.equal(lines.at(-1), " ▸ delta (2 closed)");
+	assert.ok(lines.indexOf(" ▾ outside (your tmux) (1)") < lines.length - 1);
+	// Enter on `+3 closed`: all of alpha's closed sessions, the selection on the first one it showed.
+	selectLine(view, "+3 closed");
+	assert.match(screen(view, 72)[27]!, /^ 3 older closed sessions in alpha · ⏎\/␣ show them$/);
+	press(view, KEY.enter);
+	lines = names();
+	assert.deepEqual(lines.slice(alpha + 5, alpha + 10).map((l) => l.slice(0, 26).trimEnd()), [
+		"  ◌ start the old run",
+		"▌› ◌ alpha closed 4h",
+		"  ◌ alpha closed 5h",
+		"  ◌ alpha closed 6h",
+		"  ⋯ − hide 3 older closed",
+	]);
+	// Space on the toggle folds them again.
+	press(view, "j", "j", "j", KEY.space);
+	assert.ok(names().some((l) => l.startsWith("▌› ⋯ +3 closed")), names().join("\n"));
+	// Space on the folded closed-only repo opens it.
+	selectLine(view, "delta (2 closed)");
+	press(view, KEY.space);
+	lines = names();
+	assert.deepEqual(lines.slice(-3).map((l) => l.slice(0, 26).trimEnd()), ["▌›▾ delta (2 closed)", "  ◌ delta one", "  ◌ delta two"]);
+	press(view, KEY.space);
+	// A search shows every match, folded or not; Enter resumes it into the deck.
+	press(view, "/", "c", "l", "o", "s", "e", "d", " ", "6", "h");
+	assert.deepEqual(names().slice(0, 2).map((l) => l.trimEnd()), [" ▾ alpha (1 closed)", "▌› ◌ alpha closed 6h                6h ago"]);
+	press(view, KEY.esc, KEY.esc, "/", "t", "w", "o");
+	assert.ok(names().some((l) => l.startsWith("▌› ◌ delta two")), names().join("\n"));
+	press(view, KEY.enter);
+	await clock.advance(50);
+	assert.deepEqual(of("open").at(-1)![1], { session: "/s/delta-2.jsonl", focus: true });
+	// Selecting a folded closed session (deck.sock select) unfolds what hides it.
+	press(view, KEY.esc, KEY.esc);
+	view.selectSession("alpha-6");
+	assert.ok(names().some((l) => l.startsWith("▌› ◌ alpha closed 6h")), names().join("\n"));
+	// a on a closed-only repo opens a new session there.
+	selectLine(view, "delta (2 closed)");
+	press(view, "a");
+	await clock.advance(50);
+	assert.deepEqual(of("open").at(-1)![1], { cwd: "/w/delta", focus: true });
+});
+
+test("expanded subagents: unfinished ones first, then completed/stopped/failed; each most recently updated first", { skip }, () => {
+	type Thread = import("../../pi/extensions/fleet/registry.ts").FoldedThread;
+	const t = (path: string, state: string, updatedAt?: number): Thread => ({ path, type: "coder", state, updatedAt });
+	const threads = [t("/done-old", "completed", 1), t("/run-old", "running", 2), t("/failed", "failed", 9), t("/paused", "paused", 5), t("/done-new", "completed", 8), t("/stopped", "stopped", 3), t("/run-new", "running", 7), t("/waiting", "waiting", 4), t("/starting", "starting")];
+	class Source extends dv.DeckSource {
+		override threads(row: Row) {
+			return row.id === IDS.sweep ? threads : super.threads(row);
+		}
+	}
+	const { view } = makeView({ source: new Source(fx.env), height: 40 });
+	view.selectSession(IDS.sweep);
+	press(view, KEY.space);
+	const subs = screen(view, 100)
+		.map((l) => /coder (\/\S+)/.exec(l)?.[1])
+		.filter(Boolean);
+	assert.deepEqual(subs, ["/run-new", "/paused", "/waiting", "/run-old", "/starting", "/failed", "/done-new", "/stopped", "/done-old"]);
+	assert.deepEqual(threads.map((x) => x.path)[0], "/done-old", "the source's list is not reordered in place");
+});
+
 // ---------------------------------------------------------------- keys that act
 
 test("Enter / C-l: deck row focuses the slot; outside row jumps; closed resumes; remote explains; a opens in the repo", { skip }, async () => {
@@ -396,13 +493,13 @@ test("Enter / C-l: deck row focuses the slot; outside row jumps; closed resumes;
 	assert.equal(of("detach").length, 2);
 });
 
-test("d: inline kill confirm (y kill, s kill + scancel, n/Esc cancel); never for remote or closed rows", { skip }, async () => {
+test("d: inline kill confirm (y or Enter kill, s kill + scancel, n or Esc cancel); never for remote or closed rows", { skip }, async () => {
 	const { view, clock, of } = makeView();
 	view.selectSession(IDS.ckpt);
 	press(view, "d");
 	let lines = screen(view);
 	assert.match(lines[17]!, /^ Kill ckpt restart\?$/);
-	assert.match(lines[19]!, /^ y kill · n\/Esc cancel$/);
+	assert.match(lines[19]!, /^ y\/⏎ kill · n\/Esc cancel$/);
 	press(view, "s"); // no Slurm jobs: s does nothing
 	assert.ok(view.confirming());
 	press(view, "n");
@@ -412,16 +509,32 @@ test("d: inline kill confirm (y kill, s kill + scancel, n/Esc cancel); never for
 	press(view, "d", "y");
 	await clock.advance(10);
 	assert.deepEqual(of("kill"), [["kill", IDS.ckpt, false]]);
+	// Enter confirms like y (no scancel); Esc cancels without killing.
+	press(view, "d", KEY.enter);
+	await clock.advance(10);
+	assert.equal(view.confirming(), undefined);
+	assert.deepEqual(of("kill"), [["kill", IDS.ckpt, false], ["kill", IDS.ckpt, false]]);
+	press(view, "d", KEY.esc);
+	await clock.advance(10);
+	assert.equal(view.confirming(), undefined);
+	assert.equal(of("kill").length, 2);
+	assert.equal(view.mode, "normal");
 	// sweep: a Slurm job; s kills and scancels.
 	view.selectSession(IDS.sweep);
 	press(view, "d");
 	await clock.advance(10);
 	lines = screen(view, 120);
 	assert.match(lines[17]!, /Kill physicsnemo sweep\? agent working · 2 subagents working · Slurm 4242 running/);
-	assert.match(lines[19]!, /y kill · s kill\+scancel · n\/Esc cancel/);
+	assert.match(lines[19]!, /y\/⏎ kill · s kill\+scancel · n\/Esc cancel/);
 	press(view, "s");
 	await clock.advance(10);
-	assert.deepEqual(of("kill")[1], ["kill", IDS.sweep, true]);
+	assert.deepEqual(of("kill")[2], ["kill", IDS.sweep, true]);
+	// With Slurm jobs, Enter still kills only the session (jobs left running).
+	press(view, "d");
+	await clock.advance(10);
+	press(view, KEY.enter);
+	await clock.advance(10);
+	assert.deepEqual(of("kill")[3], ["kill", IDS.sweep, false]);
 	view.selectSession(IDS.notes);
 	press(view, "d");
 	assert.equal(view.confirming(), undefined);

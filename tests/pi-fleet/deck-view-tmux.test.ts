@@ -146,8 +146,9 @@ test("a subagent row previews its transcript in the holder (fs.watch on its JSON
 		const transcript = readFileSync(new URL("./fixtures/subagent-transcript.jsonl", import.meta.url), "utf8").replaceAll("00000000-0000-7000-8000-00000000a003", root);
 		writeFileSync(sub, transcript);
 		d.start();
-		await waitList(d, "the closed group", () => /closed \(1\)/.test(d.listScreen()));
-		// Search it (closed rows unfold while searching), back to NORMAL, Space: its subagents.
+		// Its repo has only closed sessions: a group of its own, folded.
+		await waitList(d, "the closed-only repo group", () => /^.▸ .*\(1 closed\)/m.test(d.listScreen()));
+		// Search it (a search shows folded rows), back to NORMAL, Space: its subagents.
 		d.keys("/", "old run", "Escape");
 		await waitList(d, "old run selected, NORMAL", () => /^› .*old run/m.test(d.listScreen()) && /^ NORMAL /m.test(d.listScreen()));
 		d.keys("Space");

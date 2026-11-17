@@ -161,15 +161,15 @@ test("render: groups by repo, ordered by urgency (? > ✕ > ◐ > ● > ○), co
 	assert.deepEqual(lines.slice(1), [
 		" ▾ gamma (2)",
 		"›  ? flare refactor                 question 12m         $0.80 1◐",
-		"   ○ what does gamma do?            2d ago",
+		"   ◌ what does gamma do?            2d ago",
 		" ▾ beta (3)",
 		"   ✕ crashy                         crashed just now           1 interrupted",
 		"   ⇢ notes                          live on other-node",
-		"   ○ forked idea                    1d ago",
+		"   ◌ forked idea                    1d ago",
 		" ▾ alpha (3)",
 		"   ◐ ckpt restart                   done 2m ago          $0.40",
 		"   ● physicsnemo sweep              bash 4m              $3.41 2w 1◐ 3✓",
-		"   ○ start the old run              3h ago                     1✓ 1 interrupted",
+		"   ◌ start the old run              3h ago                     1✓ 1 interrupted",
 		` ? question: needs your answer · a dialog · for 12m · $0.80 · subagents 1◐ · ${fx.repos.gamma}`,
 		" enter open · ctrl+l interact · space subagents · d kill · a new · / filter · !@#& status · ? help · q close",
 	]);
@@ -572,16 +572,16 @@ test("colors: glyph + state text by tone; autonomous working is green `auto`, an
 		const { view } = polishView(f);
 		const lines = view.render(120);
 		const fg = (code: string, text: string) => `\x1b[${code}m${text}\x1b[39m`;
-		// sweep: working (blue), glyph and detail; the name stays uncolored.
-		assert.ok(rowOf(lines, "physicsnemo sweep").includes(fg("34", "●")));
-		assert.ok(rowOf(lines, "physicsnemo sweep").includes(fg("34", "bash 4m")));
+		// sweep: working (bright blue), glyph and detail; the name stays uncolored.
+		assert.ok(rowOf(lines, "physicsnemo sweep").includes(fg("94", "●")));
+		assert.ok(rowOf(lines, "physicsnemo sweep").includes(fg("94", "bash 4m")));
 		assert.ok(rowOf(lines, "physicsnemo sweep").includes(" physicsnemo sweep "));
 		assert.ok(rowOf(lines, "flare refactor").includes(`\x1b[1m${fg("35", "?")}\x1b[22m`), "question: magenta bold");
 		assert.ok(rowOf(lines, "ckpt restart").includes(fg("33", "◐")), "waiting: yellow");
 		assert.ok(rowOf(lines, "ckpt restart").includes(fg("33", "done 2m ago")));
 		assert.ok(rowOf(lines, "crashy").includes(fg("31", "✕")), "crashed: red");
-		assert.ok(rowOf(lines, "start the old run").includes(fg("90", "○")), "closed: dim");
-		assert.ok(rowOf(lines, "notes").includes(fg("90", "⇢")), "remote: dim");
+		assert.ok(rowOf(lines, "start the old run").includes(fg("38;5;250", "◌")), "closed: grey");
+		assert.ok(rowOf(lines, "notes").includes(fg("38;5;250", "⇢")), "remote: grey");
 		assert.ok(lines[0]!.includes(fg("32", "● auto")), "legend in the header");
 
 		const sweep = JSON.parse(readFileSync(join(f.statusDir, `${IDS.sweep}.json`), "utf8"));
@@ -613,7 +613,7 @@ test("status line: the selected session in full; a repo header; a subagent", { s
 		select("flare refactor");
 		assert.match(statusLine(), /^ \? question: needs your answer · a dialog · for 12m · \$0\.80 · subagents 1◐ · /);
 		select("start the old run");
-		assert.match(statusLine(), /^ ○ not running · last active 3h ago · subagents 1✓ 1 interrupted · .*alpha\/sub · “the old run finished”$/);
+		assert.match(statusLine(), /^ ◌ not running · last active 3h ago · subagents 1✓ 1 interrupted · .*alpha\/sub · “the old run finished”$/);
 		select("crashy");
 		assert.match(statusLine(), /^ ✕ crashed · died just now · subagents 1 interrupted · /);
 		press(view, "k");

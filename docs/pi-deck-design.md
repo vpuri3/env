@@ -141,21 +141,32 @@ with the caller's environment plus the stable `SSH_AUTH_SOCK` link, like tmux.co
 
 ```
 ┌ list (50%) ──────────────────────────────────────┬ right slot ───────────────────────────────┐
-│ ▾ physicsnemo-runner (3)                          │  (the real pi pane of "sweep")            │
+│ ▾ physicsnemo-runner (3, 5 closed)                │  (the real pi pane of "sweep")            │
 │ › ● sweep            bash 4m    $3.41  2w 1◐      │  ● bash  squeue -u $USER                  │
 │   ◐ ckpt restart     done 2m                      │  ── ⠴ Working ─────────────────────────── │
 │   ○ seeds            3h ago     2 interrupted     │  > _                                      │
+│   ◌ old sweep        1d ago                       │                                           │
+│   ◌ data prep        2d ago                       │                                           │
+│   ◌ lr search        3d ago                       │                                           │
+│   ⋯ +2 closed                                     │                                           │
 │ ▾ FLARE-dev.py (1)                                │                                           │
 │   ? flare refactor   question 12m                 │                                           │
 │ ▾ outside (your tmux)                             │                                           │
 │   ◐ notes ⇱ win 3    waiting 5m                   │                                           │
-│ ▸ closed (30)                                     │                                           │
+│ ▸ dotfiles (2 closed)                             │                                           │
 │                                                   │                                           │
 │ sweep · bash 4m · $3.41 · 2 working 1 waiting     │                                           │
 │ NORMAL  ⌕ phys run_                     4/12      │                                           │
 │ j/k move  ⏎/C-l open  a new  d kill  i / search   │                                           │
 └───────────────────────────────────────────────────┴───────────────────────────────────────────┘
 ```
+
+Closed sessions sit in their repo's group (by cwd → repo), after its live rows: grey, `◌`, the
+newest 3, older ones behind a `+N closed` row (Enter/Space shows them). Repos with only closed
+sessions get a group of their own, after every group with live sessions, folded. A search shows
+every match. Row names take their state's color (working blue, needs-you yellow, question
+magenta, autonomous green, error red, idle bright white, closed grey); dark grey is for borders
+and separators only.
 
 Built from `sessions-view.ts` (rows, grouping, ordering, colors, `humanizeSince`, the inline
 kill confirm, `fleetSource`, `TranscriptTails`), minus the preview pane, joins and timers.
@@ -167,7 +178,7 @@ Telescope layout: list on top, then the selected row's detail line, then the **s
 | Row | Right slot |
 |---|---|
 | live deck session | its pi pane (or its nvim if toggled), swapped in on highlight |
-| subagent (Space expands) | preview holder: transcript tail (existing renderer), refreshed on `fs.watch` of its JSONL while selected |
+| subagent (Space expands; unfinished first, then completed/stopped/failed, newest first in each) | preview holder: transcript tail (existing renderer), refreshed on `fs.watch` of its JSONL while selected |
 | outside session (plain `pi` in the user's tmux) | preview holder: summary card + one `capture-pane -p -e` taken on highlight and on that session's status change (≤ 1/s); no timer |
 | closed / crashed-elsewhere / remote | preview holder: summary card (state, cwd, last assistant message, cost, subagents, Slurm jobs) |
 
@@ -204,9 +215,9 @@ popup (direct attach) the row flashes "runs in your tmux (window N)".
 |---|---|---|
 | NORMAL | `j`/`k`, ↓/↑, `C-n`/`C-p`, PgUp/PgDn | move; the right slot follows |
 | | `Enter`, `C-l` | live deck row: focus the right pane. Closed row: resume into the pool, then focus. Outside row: jump there (above). Subagent: select its main |
-| | `Space` | expand subagents / collapse a repo group |
+| | `Space` | expand subagents / collapse a repo group / show a repo's older closed sessions (`+N closed`) |
 | | `a` | new session in the highlighted row's repo (or header's) → shown and focused |
-| | `d` | kill with the inline confirm: `y` kill · `s` kill + scancel · `n`/Esc cancel (unchanged semantics; Slurm default: left running) |
+| | `d` | kill with the inline confirm: `y`/Enter kill · `s` kill + scancel · `n`/Esc cancel (Slurm default: left running) |
 | | `i`, `/` | INSERT mode (search bar) |
 | | `!` `@` `#` `&` / `0` | status filters / clear (unchanged) |
 | | `?` | help; `q` detach (close the popup / back to the shell) |

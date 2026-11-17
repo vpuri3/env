@@ -6,11 +6,13 @@
  *
  * Layout (top to bottom): the list, the selected row's status line, the search bar
  * (`NORMAL ⌕ query   4/12`), key hints. Groups: one per repo (deck sessions, crashed ones,
- * sessions running outside tmux, other hosts' dimmed), then `outside (your tmux)` (pis started by
- * hand in the user's tmux), then `closed (N)` (collapsed until opened or searched).
+ * sessions running outside tmux, other hosts' greyed, then that repo's closed sessions: grey, ◌, the
+ * newest CLOSED_SHOWN, the rest behind a `+N closed` row), then `outside (your tmux)` (pis started
+ * by hand in the user's tmux), then repos with only closed sessions (folded until opened). A search
+ * shows every match, folded or not. Row names take their state's color (sessions-view TONE_COLOR).
  *
  * Right slot per row: a deck session → its pi (or its nvim, if that was shown last); a subagent
- * (Space expands) → the tail of its transcript (registry.ts TranscriptTails), re-read on fs.watch of
+ * (Space expands; unfinished ones first, see orderThreads) → the tail of its transcript (registry.ts TranscriptTails), re-read on fs.watch of
  * its JSONL while selected; an outside session → a summary card plus one `capture-pane` taken on
  * highlight and on that session's status change (≤ 1/s); closed/crashed/remote → a summary card.
  * Highlight changes are coalesced: the slot follows SWAP_COALESCE_MS after the last move, so a
@@ -27,8 +29,8 @@
  *
  * Keys: NORMAL j/k ↓/↑ C-n/C-p PgUp/PgDn move · Enter/C-l open (deck row: focus the slot; closed or
  * crashed: resume into the pool; outside: close the popup and jump the outer client there via
- * @deck_jump; subagent: its main; header: fold) · Space subagents / fold · a new session in the
- * row's repo · d kill (inline: y kill · s kill + scancel · n/Esc no) · i or / INSERT · ! @ # & / 0
+ * @deck_jump; subagent: its main; header: fold; `+N closed`: unfold) · Space subagents / fold · a new
+ * session in the row's repo · d kill (inline: y or Enter kill · s kill + scancel · n or Esc no) · i or / INSERT · ! @ # & / 0
  * status filters · ? help · Esc clears the query · q detach. INSERT: letters are fuzzy terms
  * (space-separated, all must match), C-n/C-p ↑/↓ move, Enter opens, Esc back to NORMAL.
  *
@@ -114,6 +116,8 @@ export const RESCAN_MS = 60_000;
 /** An outside session's capture-pane is taken at most this often. */
 export const CAPTURE_MIN_MS = 1000;
 const MESSAGE_MS = 4000;
+/** Closed sessions shown per repo; older ones fold behind a `+N closed` row (a search shows all). */
+export const CLOSED_SHOWN = 3;
 
 // ---------------------------------------------------------------- rows from status files + the index
 
@@ -319,8 +323,10 @@ export type RowKind = "deck" | "outside" | "local" | "remote" | "crashed" | "clo
 export type Mode = "normal" | "insert";
 
 type Item =
-	| { kind: "group"; key: string; group: Group; collapsed: boolean; special?: "outside" | "closed" }
+	| { kind: "group"; key: string; group: Group; collapsed: boolean; special?: "outside"; live: number; closed: number }
 	| { kind: "main"; key: string; row: SessionRow; rowKind: RowKind; expanded: boolean }
+	/** A repo's older closed sessions: folded (`+N closed`) or shown (`− hide N closed`). */
+	| { kind: "more"; key: string; groupKey: string; group: Group; hidden: SessionRow[]; open: boolean }
 	| { kind: "sub"; key: string; row: SessionRow; thread: FoldedThread }
 	| { kind: "note"; key: string; text: string };
 
@@ -344,7 +350,6 @@ export interface DeckViewOptions {
 }
 
 const OUTSIDE_KEY = "g:@outside";
-const CLOSED_KEY = "g:@closed";
 
 const HELP_LINES = [
 	"NORMAL",
@@ -352,8 +357,9 @@ const HELP_LINES = [
 	"  Enter, C-l        open: focus the session (closed: resume it;",
 	"                    outside: jump there; subagent: its main)",
 	"  Space             subagents of a session / fold a group",
+	"                    (on +N closed: a repo's older closed sessions)",
 	"  a                 new session in the row's repo",
-	"  d                 kill: y kill · s kill + scancel Slurm · n/Esc no",
+	"  d                 kill: y/⏎ kill · s kill + scancel Slurm · n/Esc no",
 	"  i  /              search (INSERT)    Esc  clear the search",
 	"  ! @ # &   0       only working / waiting / idle / error;  all",
 	"  q  (prefix g)     detach    C-h (anywhere)  back to this list",
@@ -361,6 +367,18 @@ const HELP_LINES = [
 	"  letters           fuzzy terms (all must match name, repo, cwd, message)",
 	"  C-n/C-p ↑/↓       move    Enter  open    Esc  back to NORMAL",
 ];
+
+const FINISHED = new Set(["completed", "stopped", "failed"]);
+
+/**
+ * Subagents as the list shows them: unfinished ones (running, starting, waiting, paused, anything
+ * not finished) first, then completed/stopped/failed; each bucket most recently updated first,
+ * ties in their original order.
+ */
+export function orderThreads(threads: FoldedThread[]): FoldedThread[] {
+	const rank = (t: FoldedThread) => (FINISHED.has(t.state) ? 1 : 0);
+	return [...threads].sort((a, b) => rank(a) - rank(b) || (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+}
 
 /** Every char of `needle` in order in `hay`. */
 function subsequence(needle: string, hay: string): boolean {
@@ -394,7 +412,12 @@ export class DeckView implements Component {
 	private selected = 0;
 	private selectedKey: string | undefined;
 	private top = 0;
-	private collapsed = new Set<string>([CLOSED_KEY]);
+	/** Folded groups with live sessions (unfolded by default). */
+	private collapsed = new Set<string>();
+	/** Unfolded groups with only closed sessions (folded by default). */
+	private opened = new Set<string>();
+	/** Groups whose older closed sessions are shown. */
+	private allClosed = new Set<string>();
 	private expanded = new Set<string>();
 	private threadCache = new Map<string, FoldedThread[] | undefined>();
 	private help = false;
@@ -498,7 +521,10 @@ export class DeckView implements Component {
 			// Maybe folded away: unfold its group.
 			const row = this.rows.find((r) => r.id === id);
 			if (row) {
-				this.collapsed.delete(this.groupKeyOf(row));
+				const key = this.groupKeyOf(row);
+				this.collapsed.delete(key);
+				this.opened.add(key);
+				if (this.rowKind(row) === "closed") this.allClosed.add(key);
 				this.rebuild();
 			}
 		}
@@ -536,10 +562,7 @@ export class DeckView implements Component {
 	}
 
 	private groupKeyOf(row: SessionRow): string {
-		const kind = this.rowKind(row);
-		if (kind === "outside") return OUTSIDE_KEY;
-		if (kind === "closed") return CLOSED_KEY;
-		return `g:${row.repo}`;
+		return this.rowKind(row) === "outside" ? OUTSIDE_KEY : `g:${row.repo}`;
 	}
 
 	private matches(row: SessionRow): boolean {
@@ -557,40 +580,47 @@ export class DeckView implements Component {
 		const shown = this.rows.filter((r) => this.matches(r));
 		const repoRows: SessionRow[] = [];
 		const outside: SessionRow[] = [];
-		const closed: SessionRow[] = [];
 		const kinds = new Map<string, RowKind>();
 		for (const row of shown) {
 			const kind = this.rowKind(row);
 			kinds.set(row.id, kind);
 			if (kind === "outside") outside.push(row);
-			else if (kind === "closed") closed.push(row);
 			else repoRows.push(row);
 		}
-		const groups: { key: string; group: Group; special?: "outside" | "closed" }[] = groupRows(repoRows).map((g) => ({ key: `g:${g.repo}`, group: g }));
+		const isClosed = (r: SessionRow) => kinds.get(r.id) === "closed";
+		// Closed sessions sit in their repo's group (one groupRows call: same-named repos get paths),
+		// after its live rows; repos with only closed sessions come after every live group.
+		type G = { key: string; group: Group; special?: "outside"; closedOnly: boolean };
+		const byRepo: G[] = groupRows(repoRows).map((g) => ({ key: `g:${g.repo}`, group: g, closedOnly: g.rows.every(isClosed) }));
+		const groups: G[] = byRepo.filter((g) => !g.closedOnly);
 		if (outside.length) {
 			const g = groupRows(outside).flatMap((x) => x.rows);
-			groups.push({ key: OUTSIDE_KEY, group: { repo: "", label: "outside (your tmux)", rows: g }, special: "outside" });
+			groups.push({ key: OUTSIDE_KEY, group: { repo: "", label: "outside (your tmux)", rows: g }, special: "outside", closedOnly: false });
 		}
-		if (closed.length) {
-			closed.sort((a, b) => b.at - a.at);
-			groups.push({ key: CLOSED_KEY, group: { repo: "", label: "closed", rows: closed }, special: "closed" });
-		}
+		groups.push(...byRepo.filter((g) => g.closedOnly));
 		const items: Item[] = [];
-		for (const { key, group, special } of groups) {
-			const collapsed = !searching && this.collapsed.has(key);
-			items.push({ kind: "group", key, group, collapsed, special });
-			if (collapsed) continue;
-			for (const row of group.rows) {
-				const expanded = this.expanded.has(row.id);
-				items.push({ kind: "main", key: `m:${row.id}`, row, rowKind: kinds.get(row.id)!, expanded });
-				if (!expanded) continue;
-				const threads = this.threadsOf(row);
-				if (!threads?.length) {
-					items.push({ kind: "note", key: `n:${row.id}`, text: threads ? "no subagents" : "no session file yet" });
-					continue;
-				}
-				for (const thread of threads) items.push({ kind: "sub", key: `s:${row.id}:${thread.path}`, row, thread });
+		const pushRow = (row: SessionRow) => {
+			const expanded = this.expanded.has(row.id);
+			items.push({ kind: "main", key: `m:${row.id}`, row, rowKind: kinds.get(row.id)!, expanded });
+			if (!expanded) return;
+			const threads = this.threadsOf(row);
+			if (!threads?.length) {
+				items.push({ kind: "note", key: `n:${row.id}`, text: threads ? "no subagents" : "no session file yet" });
+				return;
 			}
+			for (const thread of threads) items.push({ kind: "sub", key: `s:${row.id}:${thread.path}`, row, thread });
+		};
+		for (const { key, group, special, closedOnly } of groups) {
+			const live = group.rows.filter((r) => !isClosed(r));
+			const closed = group.rows.filter(isClosed).sort((a, b) => b.at - a.at);
+			const collapsed = !searching && (closedOnly ? !this.opened.has(key) : this.collapsed.has(key));
+			items.push({ kind: "group", key, group, collapsed, special, live: live.length, closed: closed.length });
+			if (collapsed) continue;
+			for (const row of live) pushRow(row);
+			const folds = !searching && closed.length > CLOSED_SHOWN;
+			const open = !folds || this.allClosed.has(key);
+			for (const row of open ? closed : closed.slice(0, CLOSED_SHOWN)) pushRow(row);
+			if (folds) items.push({ kind: "more", key: `c:${key}`, groupKey: key, group, hidden: closed.slice(CLOSED_SHOWN), open });
 		}
 		this.items = items;
 		let index = this.selectedKey ? items.findIndex((i) => i.key === this.selectedKey) : -1;
@@ -603,7 +633,10 @@ export class DeckView implements Component {
 	}
 
 	private threadsOf(row: SessionRow): FoldedThread[] | undefined {
-		if (!this.threadCache.has(row.id)) this.threadCache.set(row.id, this.opts.source.threads(row));
+		if (!this.threadCache.has(row.id)) {
+			const threads = this.opts.source.threads(row);
+			this.threadCache.set(row.id, threads && orderThreads(threads));
+		}
 		return this.threadCache.get(row.id);
 	}
 
@@ -959,7 +992,8 @@ export class DeckView implements Component {
 		if (item?.kind === "group") {
 			if (item.special) return this.flash("a: highlight a repo or a session");
 			cwd = item.group.repo;
-		} else if (item && item.kind !== "note") cwd = item.row.repo || item.row.cwd;
+		} else if (item?.kind === "more") cwd = item.group.repo;
+		else if (item && item.kind !== "note") cwd = item.row.repo || item.row.cwd;
 		cwd ||= this.opts.home ?? homedir();
 		this.flash(`new session in ${tilde(oneLine(cwd))}…`);
 		void this.run(async () => {
@@ -1013,7 +1047,7 @@ export class DeckView implements Component {
 	private handleConfirm(data: string): void {
 		const c = this.confirm!;
 		const ch = printable(data);
-		if (ch === "y" || ch === "s") {
+		if (ch === "y" || ch === "s" || matchesKey(data, "enter")) {
 			const scancel = ch === "s";
 			if (scancel && !this.confirmJobs(c).length) return;
 			this.confirm = undefined;
@@ -1033,7 +1067,7 @@ export class DeckView implements Component {
 	private activate(): void {
 		const item = this.items[this.selected];
 		if (!item || item.kind === "note") return;
-		if (item.kind === "group") return this.toggle();
+		if (item.kind === "group" || item.kind === "more") return this.toggle();
 		if (item.kind === "sub") {
 			this.selectSession(item.row.id);
 			return;
@@ -1089,8 +1123,16 @@ export class DeckView implements Component {
 		const item = this.items[this.selected];
 		if (!item) return;
 		if (item.kind === "group") {
-			if (this.collapsed.has(item.key)) this.collapsed.delete(item.key);
-			else this.collapsed.add(item.key);
+			const set = item.live || item.special ? this.collapsed : this.opened;
+			if (set.has(item.key)) set.delete(item.key);
+			else set.add(item.key);
+		} else if (item.kind === "more") {
+			// Unfolding lands on the first row it shows; folding stays on the toggle row.
+			if (item.open) this.allClosed.delete(item.groupKey);
+			else {
+				this.allClosed.add(item.groupKey);
+				if (item.hidden[0]) this.selectedKey = `m:${item.hidden[0].id}`;
+			}
 		} else if (item.kind === "main" || item.kind === "sub") {
 			const id = item.row.id;
 			if (this.expanded.has(id)) {
@@ -1141,7 +1183,7 @@ export class DeckView implements Component {
 		const style = this.opts.style;
 		if (this.confirm) {
 			const scancel = this.confirmJobs(this.confirm).length ? " · s kill+scancel" : "";
-			return fit(` ${style.bold(style.fg("warning", `y kill${scancel} · n/Esc cancel`))}`, width);
+			return fit(` ${style.bold(style.fg("warning", `y/⏎ kill${scancel} · n/Esc cancel`))}`, width);
 		}
 		if (this.message) return fit(` ${style.fg("warning", this.message.text)}`, width);
 		const chunks =
@@ -1161,7 +1203,7 @@ export class DeckView implements Component {
 	/** The selected row in one line, or the kill question. */
 	private statusLine(width: number): string {
 		const style = this.opts.style;
-		const sep = style.fg("dim", " · ");
+		const sep = style.fg("border", " · ");
 		if (this.confirm) {
 			const { row, jobs } = this.confirm;
 			const parts: string[] = [];
@@ -1178,6 +1220,11 @@ export class DeckView implements Component {
 		const item = this.items[this.selected];
 		if (!item || item.kind === "note") return "";
 		const now = this.now();
+		if (item.kind === "more") {
+			const n = item.hidden.length;
+			const what = `${n} older closed session${n === 1 ? "" : "s"} in ${oneLine(item.group.label)}`;
+			return fit(` ${what}${sep}${style.fg("dim", item.open ? "⏎/␣ hide them" : "⏎/␣ show them")}`, width);
+		}
 		if (item.kind === "group") {
 			const g = item.group;
 			const live = g.rows.filter((r) => r.live === "live" || this.deckPanesById.has(r.id)).length;
@@ -1238,11 +1285,17 @@ export class DeckView implements Component {
 		const style = this.opts.style;
 		const marker = selected ? style.bold(style.fg("accent", "›")) : " ";
 		if (item.kind === "group") {
-			const n = item.group.rows.length;
-			const label = selected ? style.bold(item.group.label) : style.fg("accent", item.group.label);
-			return fit(`${marker}${style.fg("dim", item.collapsed ? "▸" : "▾")} ${label} ${style.fg("dim", `(${n})`)}`, width);
+			const { live, closed } = item;
+			const n = closed ? (live ? `(${live}, ${closed} closed)` : `(${closed} closed)`) : `(${live})`;
+			const label = style.bold(style.fg("accent", item.group.label));
+			return fit(`${marker}${style.fg("dim", item.collapsed ? "▸" : "▾")} ${label} ${style.fg("dim", n)}`, width);
 		}
 		if (item.kind === "note") return fit(`       ${style.fg("dim", item.text)}`, width);
+		if (item.kind === "more") {
+			const n = item.hidden.length;
+			const text = item.open ? `− hide ${n} older closed` : `+${n} closed`;
+			return fit(`${marker} ${style.fg("dim", "⋯")} ${selected ? style.bold(style.fg("dim", text)) : style.fg("dim", text)}`, width);
+		}
 		const row = item.row;
 		if (item.kind === "sub") {
 			const live = row.live === "live" || row.live === "remote";
@@ -1253,7 +1306,7 @@ export class DeckView implements Component {
 			if (item.thread.task) text += ` ${style.fg("dim", oneLine(item.thread.task))}`;
 			return fit(`${marker}    ${g} ${text}`, width);
 		}
-		const dimRow = row.state === "remote" || row.state === "closed";
+		const tone = rowTone(row);
 		const avail = Math.max(10, width - 4);
 		const wide = avail >= 60;
 		const detailW = wide ? 16 : 13;
@@ -1266,13 +1319,15 @@ export class DeckView implements Component {
 		}
 		const nameRoom = Math.max(4, nameW - visibleWidth(suffix));
 		name = fit(name, nameRoom);
-		let nameText = row.unnamed ? style.fg("muted", name) : name;
-		if (selected) nameText = style.bold(nameText);
-		else if (dimRow) nameText = style.fg("dim", name);
+		// The name in its state's color (idle: bright, unnamed idle: plain, closed/remote: grey); bold when selected.
+		let nameText = tone === "off" && row.unnamed ? style.fg("muted", name) : toned(tone, name, style);
+		if (selected && tone !== "question") nameText = style.bold(nameText);
 		if (suffix) nameText += style.fg("accent", suffix);
-		const detailText = toned(rowTone(row), rowDetail(row, now), style);
+		// Details: the state's color while it means something, else plain readable text.
+		const detail = rowDetail(row, now);
+		const detailText = tone === "off" ? style.fg("muted", detail) : toned(tone, detail, style);
 		const cost = row.costUsd ? `$${row.costUsd.toFixed(2)}` : "";
-		const costText = wide ? ` ${padRight(style.fg("dim", cost), 7)}` : "";
+		const costText = wide ? ` ${padRight(style.fg(tone === "closed" ? "dim" : "muted", cost), 7)}` : "";
 		const counts = countsText(row.counts, style);
 		return fit(`${marker} ${glyph(row, style)} ${pad(nameText, nameW)} ${pad(detailText, detailW)}${costText} ${counts}`, width);
 	}
@@ -1290,12 +1345,12 @@ export class DeckView implements Component {
 		};
 		const out = (lines: string[]) => lines.slice(0, height).map((l) => fit(l, width));
 		if (!item || item.kind === "note") return out([rule("pi deck"), style.fg("dim", " no session selected · a: new session")]);
-		if (item.kind === "group") {
+		if (item.kind === "group" || item.kind === "more") {
 			const g = item.group;
-			const lines = [rule(oneLine(g.label))];
-			if (!item.special) lines.push(` ${style.fg("dim", tilde(oneLine(g.repo)))}`);
+			const lines = [rule(oneLine(item.kind === "more" ? `closed in ${g.label}` : g.label))];
+			if (item.kind === "more" || !item.special) lines.push(` ${style.fg("dim", tilde(oneLine(g.repo)))}`);
 			lines.push("");
-			for (const r of g.rows) lines.push(` ${glyph(r, style)} ${oneLine(r.name)}  ${style.fg("dim", rowDetail(r, this.now()))}`);
+			for (const r of item.kind === "more" ? item.hidden : g.rows) lines.push(` ${glyph(r, style)} ${oneLine(r.name)}  ${style.fg("dim", rowDetail(r, this.now()))}`);
 			return out(lines);
 		}
 		if (item.kind === "sub") return out(this.transcriptLines(item, width, height, rule));

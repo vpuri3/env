@@ -247,7 +247,7 @@ export function category(row: SessionRow): StatusFilter {
 }
 
 /** `working` is blue and `question` magenta: semantic colors the pi adapter maps to theme tokens. */
-export type ViewColor = "accent" | "muted" | "dim" | "success" | "warning" | "error" | "border" | "working" | "question";
+export type ViewColor = "accent" | "text" | "muted" | "dim" | "success" | "warning" | "error" | "border" | "working" | "question";
 
 /** The styling the view needs (ansiStyle; tests use a plain one). */
 export interface ViewStyle {
@@ -262,19 +262,25 @@ export function withBackground(line: string, open: string): string {
 	return `${open}${line.replace(/\x1b\[(?:0|49)?m/g, (m) => m + open)}\x1b[49m`;
 }
 
-const ANSI_FG: Record<ViewColor, string> = {
+/**
+ * Readable on a dark terminal and on the selection background: `text` (idle names) is bright
+ * white, `dim` (details, closed rows, hints) light grey 250; only `border` (rules, separators,
+ * scroll arrows) is the dark grey 90. `working` is bright blue: plain blue is too dark.
+ */
+export const ANSI_FG: Record<ViewColor, string> = {
 	accent: "36",
+	text: "97",
 	muted: "37",
-	dim: "90",
+	dim: "38;5;250",
 	success: "32",
 	warning: "33",
 	error: "31",
 	border: "90",
-	working: "34",
+	working: "94",
 	question: "35",
 };
-/** The dashboard's selection background: grey 237 of the 256-color cube. */
-export const ANSI_SELECTED_BG = "\x1b[48;5;237m";
+/** The selection background: grey 238 of the 256-color cube. */
+export const ANSI_SELECTED_BG = "\x1b[48;5;238m";
 export const ansiStyle: ViewStyle = {
 	fg: (color, text) => `\x1b[${ANSI_FG[color] ?? "39"}m${text}\x1b[39m`,
 	bold: (text) => `\x1b[1m${text}\x1b[22m`,
@@ -282,8 +288,9 @@ export const ansiStyle: ViewStyle = {
 };
 
 /** How a row is colored: what it means for the user (§9). */
-export type Tone = "working" | "auto" | "attention" | "question" | "error" | "off";
-const TONE_COLOR: Record<Tone, ViewColor> = { working: "working", auto: "success", attention: "warning", question: "question", error: "error", off: "dim" };
+export type Tone = "working" | "auto" | "attention" | "question" | "error" | "off" | "closed";
+/** off: idle, plain bright text; closed: not running here (closed, other hosts), grey. */
+export const TONE_COLOR: Record<Tone, ViewColor> = { working: "working", auto: "success", attention: "warning", question: "question", error: "error", off: "text", closed: "dim" };
 
 export function rowTone(row: SessionRow): Tone {
 	switch (row.state) {
@@ -298,6 +305,9 @@ export function rowTone(row: SessionRow): Tone {
 		case "error":
 		case "crashed":
 			return "error";
+		case "closed":
+		case "remote":
+			return "closed";
 		default:
 			return "off";
 	}
@@ -308,9 +318,12 @@ export function toned(tone: Tone, text: string, style: ViewStyle): string {
 	return tone === "question" ? style.bold(t) : t;
 }
 
+/** A session that is not running anymore. */
+export const CLOSED_GLYPH = "◌";
+
 export function glyphChar(row: SessionRow): string {
 	if (row.state === "remote") return "⇢";
-	if (row.state === "closed") return GLYPHS.idle;
+	if (row.state === "closed") return CLOSED_GLYPH;
 	return GLYPHS[row.state];
 }
 
