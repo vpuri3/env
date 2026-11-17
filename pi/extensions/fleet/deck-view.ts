@@ -4,12 +4,14 @@
  * highlighted row's session is in the right slot (its real pi pane, swapped in by deck.ts), or,
  * for rows without a deck pane, a preview frame written into the preview holder's tty.
  *
- * Layout (top to bottom): the list, the selected row's status line, the search bar
- * (`NORMAL ⌕ query   4/12`), key hints. Groups: one per repo (deck sessions, crashed ones,
+ * Layout (top to bottom): the list, the selected row's status line, the search bar in a box
+ * (mode badge and `4/12` on its top border, the color legend on its bottom one), key hints.
+ * Groups: one per repo (deck sessions, crashed ones,
  * sessions running outside tmux, other hosts' greyed, then that repo's closed sessions: grey, ◌, the
  * newest CLOSED_SHOWN, the rest behind a `+N closed` row), then `outside (your tmux)` (pis started
  * by hand in the user's tmux), then repos with only closed sessions (folded until opened). A search
- * shows every match, folded or not. Row names take their state's color (sessions-view TONE_COLOR).
+ * shows every match, folded or not. Glyph, name and detail take their state's color (sessions-view
+ * TONE_COLOR: active blue, working purple, done green, needs input orange, error red, closed grey).
  *
  * Right slot per row: a deck session → its pi (or its nvim, if that was shown last); a subagent
  * (Space expands; unfinished ones first, see orderThreads) → the tail of its transcript (registry.ts TranscriptTails), re-read on fs.watch of
@@ -67,6 +69,7 @@ import {
 import { queuedJobs, type SlurmJob } from "./lifecycle.ts";
 import { SessionIndex, TranscriptTails, countSubagents, type FoldedThread, type IndexEntry, type TranscriptItem } from "./registry.ts";
 import {
+	LEGEND,
 	RECENT_CLOSED,
 	STATUS_FILTER_KEYS,
 	THINKING_LINES,
@@ -93,6 +96,7 @@ import {
 	type PreviewResult,
 	type SessionRow,
 	type StatusFilter,
+	type Tone,
 	type ViewStyle,
 } from "./sessions-view.ts";
 import { GLYPHS, STALE_MS, ensureStatusDir, liveness, statusDir, writeSeen, type StatusFile } from "./status.ts";
@@ -367,6 +371,21 @@ const HELP_LINES = [
 	"  letters           fuzzy terms (all must match name, repo, cwd, message)",
 	"  C-n/C-p ↑/↓       move    Enter  open    Esc  back to NORMAL",
 ];
+
+/** The legend on the search box's border, most important first (as many as fit). */
+const BOX_LEGEND: Tone[] = ["active", "working", "done", "input", "error", "auto", "closed", "remote"];
+
+/** What each color means, for the help screen. */
+const LEGEND_WORDS: Record<Tone, string> = {
+	active: "open, idle: ready for you",
+	working: "the agent is running a turn (or its subagents are)",
+	auto: "working under /run-autonomously",
+	done: "finished, not looked at yet (selecting it for 1 s marks it seen)",
+	input: "needs your input: a question or dialog is waiting",
+	error: "the last run failed, or the pi crashed",
+	closed: "not running (⏎ resumes it)",
+	remote: "running on another host",
+};
 
 const FINISHED = new Set(["completed", "stopped", "failed"]);
 
@@ -1149,8 +1168,8 @@ export class DeckView implements Component {
 
 	invalidate(): void {}
 
-	/** Lines below the list: status line, search bar, key hints. */
-	static readonly CHROME = 3;
+	/** Lines below the list: status line, the boxed search bar (3), key hints. */
+	static readonly CHROME = 5;
 
 	private listHeight(): number {
 		return Math.max(1, this.opts.height() - DeckView.CHROME);
@@ -1161,22 +1180,50 @@ export class DeckView implements Component {
 		const height = Math.max(DeckView.CHROME + 1, this.opts.height());
 		if (this.message && this.message.until < this.now()) this.message = undefined;
 		const bodyH = height - DeckView.CHROME;
-		const body = this.help ? HELP_LINES.map((l) => fit(style.fg("muted", ` ${l}`), width)) : this.listLines(width, bodyH);
+		const body = this.help ? this.helpLines(width) : this.listLines(width, bodyH);
 		while (body.length < bodyH) body.push("");
-		return [...body.slice(0, bodyH), this.statusLine(width), this.searchLine(width), this.hintLine(width)].map((l) => fit(l, width));
+		return [...body.slice(0, bodyH), this.statusLine(width), ...this.searchBox(width), this.hintLine(width)].map((l) => fit(l, width));
 	}
 
-	private searchLine(width: number): string {
+	private helpLines(width: number): string[] {
 		const style = this.opts.style;
-		const badge = this.mode === "insert" ? style.bold(style.fg("success", "INSERT")) : style.bold(style.fg("accent", "NORMAL"));
-		const cursor = this.mode === "insert" ? style.fg("accent", "▏") : "";
-		const filter = this.statusFilter ? ` ${style.fg("accent", `[${this.statusFilter}]`)}` : "";
-		const left = ` ${badge}  ${style.fg("dim", "⌕")} ${oneLine(this.query)}${cursor}${filter}`;
+		const colors = LEGEND.map(([tone, text]) => fit(`  ${pad(toned(tone, text, style), 15)}${style.fg("muted", LEGEND_WORDS[tone])}`, width));
+		return [...HELP_LINES.map((l) => fit(style.fg("muted", ` ${l}`), width)), fit(style.fg("muted", " COLORS"), width), ...colors];
+	}
+
+	/**
+	 * The search bar, boxed so it stands out: mode badge and match count on the top border, the
+	 * query inside, the color legend on the bottom border (as many entries as fit). The border is
+	 * light grey in NORMAL, bold cyan in INSERT.
+	 */
+	private searchBox(width: number): string[] {
+		const style = this.opts.style;
+		const insert = this.mode === "insert";
+		const line = (t: string) => (insert ? style.bold(style.fg("accent", t)) : style.fg("muted", t));
+		const badge = insert ? style.bold(style.fg("success", " INSERT ")) : style.bold(style.fg("accent", " NORMAL "));
 		const total = this.rows.length;
 		const matched = this.query.trim() || this.statusFilter ? this.rows.filter((r) => this.matches(r)).length : total;
-		const right = style.fg("dim", `${matched}/${total}`);
-		const gap = width - visibleWidth(left) - visibleWidth(right) - 1;
-		return gap >= 1 ? `${left}${" ".repeat(gap)}${right} ` : fit(left, width);
+		const count = style.fg("text", ` ${matched}/${total} `);
+		const inner = Math.max(0, width - 2);
+		// ╭─ NORMAL ───── 4/12 ─╮
+		const topFill = inner - 1 - visibleWidth(badge) - visibleWidth(count) - 1;
+		const top = topFill >= 1 ? `${line("╭─")}${badge}${line("─".repeat(topFill))}${count}${line("─╮")}` : `${line("╭")}${fit(badge, inner)}${line("─".repeat(Math.max(0, inner - visibleWidth(fit(badge, inner)))))}${line("╮")}`;
+		// │ ⌕ query▏ [filter] │
+		const cursor = insert ? style.fg("accent", "▏") : "";
+		const filter = this.statusFilter ? ` ${style.fg("accent", `[${this.statusFilter}]`)}` : "";
+		const query = fit(` ${style.fg(insert ? "accent" : "muted", "⌕")} ${style.fg("text", oneLine(this.query))}${cursor}${filter}`, inner);
+		const mid = `${line("│")}${query}${" ".repeat(Math.max(0, inner - visibleWidth(query)))}${line("│")}`;
+		// ╰─ ○ active  ● working … ─╯
+		let legendText = "";
+		for (const tone of BOX_LEGEND) {
+			const text = LEGEND.find(([t]) => t === tone)![1];
+			const next = `${legendText}${legendText ? "  " : " "}${toned(tone, text, style)}`;
+			if (visibleWidth(next) + 1 > inner - 2) break;
+			legendText = next;
+		}
+		if (legendText) legendText += " ";
+		const bottom = `${line("╰─")}${legendText}${line("─".repeat(Math.max(0, inner - 1 - visibleWidth(legendText))))}${line("╯")}`;
+		return [top, mid, bottom];
 	}
 
 	private hintLine(width: number): string {
@@ -1319,15 +1366,13 @@ export class DeckView implements Component {
 		}
 		const nameRoom = Math.max(4, nameW - visibleWidth(suffix));
 		name = fit(name, nameRoom);
-		// The name in its state's color (idle: bright, unnamed idle: plain, closed/remote: grey); bold when selected.
-		let nameText = tone === "off" && row.unnamed ? style.fg("muted", name) : toned(tone, name, style);
-		if (selected && tone !== "question") nameText = style.bold(nameText);
+		// Glyph, name and detail in the state's color (sessions-view TONE_COLOR); bold when selected.
+		let nameText = toned(tone, name, style);
+		if (selected && tone !== "input") nameText = style.bold(nameText);
 		if (suffix) nameText += style.fg("accent", suffix);
-		// Details: the state's color while it means something, else plain readable text.
-		const detail = rowDetail(row, now);
-		const detailText = tone === "off" ? style.fg("muted", detail) : toned(tone, detail, style);
+		const detailText = toned(tone, rowDetail(row, now), style);
 		const cost = row.costUsd ? `$${row.costUsd.toFixed(2)}` : "";
-		const costText = wide ? ` ${padRight(style.fg(tone === "closed" ? "dim" : "muted", cost), 7)}` : "";
+		const costText = wide ? ` ${padRight(style.fg(tone === "closed" || tone === "remote" ? "dim" : "muted", cost), 7)}` : "";
 		const counts = countsText(row.counts, style);
 		return fit(`${marker} ${glyph(row, style)} ${pad(nameText, nameW)} ${pad(detailText, detailW)}${costText} ${counts}`, width);
 	}
@@ -1440,7 +1485,8 @@ export class DeckView implements Component {
 
 // ---------------------------------------------------------------- the outer status bar
 
-const BAR_STYLE: Record<string, string> = { question: "#[fg=magenta,bold]", waiting: "#[fg=yellow]", error: "#[fg=red]" };
+/** The row palette (sessions-view ANSI_FG) in tmux styles: needs input orange, done green, error red. */
+const BAR_STYLE: Record<string, string> = { question: "#[fg=colour208,bold]", waiting: "#[fg=colour78]", error: "#[fg=colour196]" };
 
 /**
  * `π 1? 2◐ 1✕`: live sessions of this node that need the user (questions, unacknowledged

@@ -110,7 +110,7 @@ test("status writes reach the list within 300 ms (fs.watch); the outer @pi_deck_
 		assert.equal(d.tryTmux(["show", "-gv", "@pi_deck_bar"], "outer") ?? "", "", "nothing needs the user yet");
 		// It finishes (waiting, run r1): the bar shows it. Nobody is attached: no ack.
 		d.writeStatus(s.id, { name: "bar test", state: "waiting", acked: false, runId: "r1", pid: d.stubPid(s.id) });
-		await waitFor("the outer bar", () => d.tryTmux(["show", "-gv", "@pi_deck_bar"], "outer") === "π #[fg=yellow]1◐#[default] ", 3000);
+		await waitFor("the outer bar", () => d.tryTmux(["show", "-gv", "@pi_deck_bar"], "outer") === "π #[fg=colour78]1◐#[default] ", 3000);
 		await sleep(1300);
 		assert.equal(existsSync(join(d.statusDir, `${s.id}.seen`)), false, "no client attached: not seen");
 		// A client attaches (resize → the ack re-arms): after 1 s shown, acknowledged.
@@ -150,7 +150,7 @@ test("a subagent row previews its transcript in the holder (fs.watch on its JSON
 		await waitList(d, "the closed-only repo group", () => /^.▸ .*\(1 closed\)/m.test(d.listScreen()));
 		// Search it (a search shows folded rows), back to NORMAL, Space: its subagents.
 		d.keys("/", "old run", "Escape");
-		await waitList(d, "old run selected, NORMAL", () => /^› .*old run/m.test(d.listScreen()) && /^ NORMAL /m.test(d.listScreen()));
+		await waitList(d, "old run selected, NORMAL", () => /^› .*old run/m.test(d.listScreen()) && /^╭─ NORMAL /m.test(d.listScreen()));
 		d.keys("Space");
 		await waitList(d, "the /runner row", () => /\/runner/.test(d.listScreen()));
 		d.keys("j");

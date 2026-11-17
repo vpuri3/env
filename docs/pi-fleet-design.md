@@ -197,7 +197,7 @@ The dashboard shows the list with a preview pane on the right (decided; below th
   - `!` `@` `#` `&` filter running/waiting/idle/error, `0` clears (agent-deck's keys).
   - `q`/`Esc` close the popup, or in the `fleet` window go back to the last window (the dashboard keeps running); `ctrl+c` quits.
   - The view never binds Tab and never needs Alt or Ctrl+Shift.
-- **Colors** (glyph and state text only): working blue, autonomous working green `auto`, needs you (done, unseen) yellow, question magenta bold (an autonomous question too), error/crashed red, idle/closed/remote dim. The selected row gets a full-width background (grey 237) as well as the `›` marker. The header shows the legend; `?` repeats it.
+- **Colors** (glyph, name and state text; user, 2026-11-17, replacing the earlier blue/yellow/magenta/green set): active (live pi, open but idle, or starting) blue 75 `○`; working (running a turn, or its subagents are) purple 141 `●`, autonomous working the same purple with `»`; done (`waiting`: the run finished, not seen yet; seeing it acks it → active) green 78 `◐`; needs input (`question`: ask_user_question or a dialog, autonomous too) orange 208 bold `?`; error/crashed red 196 `✕`; closed grey 250 `◌`; remote (other host) grey 244 `⇢`. 256-color codes, so terminal themes don't change them. The selected row gets a full-width background (grey 238) as well as the `›` marker. The header shows the legend; `?` repeats it.
 - **Status line** above the key hints: the selected session's full state, current tool, time in that state, cost, subagent counts, cwd and last message (a repo header: its path and counts).
 
 ## 10. Notifications and control socket

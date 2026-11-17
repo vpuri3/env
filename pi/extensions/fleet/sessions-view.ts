@@ -30,10 +30,10 @@
  * ! @ # & only running/waiting/idle/error, 0 clears; ? help; Esc clears the filters, then
  * closes; q closes.
  *
- * Colors (glyph and state text only, so the selected row's background stays readable): working
- * blue, autonomous (/run-autonomously) working green "auto", needs you (done, unseen) yellow,
- * question magenta bold, error/crashed red, idle/closed/remote dim. The selected row gets a
- * full-width background (grey 237) besides the `›` marker. The line above the key hints
+ * Colors (TONE_COLOR; glyph, name and state text): active (live, idle) blue, working purple
+ * (autonomous: purple `»`), done (finished, not yet seen) green, needs input (question/dialog)
+ * orange bold, error/crashed red, closed grey, remote dimmer grey. The selected row gets a
+ * full-width background (grey 238) besides the `›` marker. The line above the key hints
  * describes the selected session.
  *
  * Portions adapted from agent-deck (github.com/asheshgoplani/agent-deck, MIT, commit 80494e5):
@@ -246,8 +246,21 @@ export function category(row: SessionRow): StatusFilter {
 	return "idle";
 }
 
-/** `working` is blue and `question` magenta: semantic colors the pi adapter maps to theme tokens. */
-export type ViewColor = "accent" | "text" | "muted" | "dim" | "success" | "warning" | "error" | "border" | "working" | "question";
+/** Semantic colors; the state colors (active … remote) are the row palette (TONE_COLOR). */
+export type ViewColor =
+	| "accent"
+	| "text"
+	| "muted"
+	| "dim"
+	| "success"
+	| "warning"
+	| "error"
+	| "border"
+	| "active"
+	| "working"
+	| "done"
+	| "input"
+	| "remote";
 
 /** The styling the view needs (ansiStyle; tests use a plain one). */
 export interface ViewStyle {
@@ -263,9 +276,10 @@ export function withBackground(line: string, open: string): string {
 }
 
 /**
- * Readable on a dark terminal and on the selection background: `text` (idle names) is bright
- * white, `dim` (details, closed rows, hints) light grey 250; only `border` (rules, separators,
- * scroll arrows) is the dark grey 90. `working` is bright blue: plain blue is too dark.
+ * Readable on a dark terminal and on the selection background (grey 238). The row palette is
+ * 256-color so it looks the same in every terminal theme: active blue 75, working purple 141,
+ * done green 78, needs input orange 208, error red 196, closed grey 250, remote grey 244.
+ * `dim` (details, hints) is grey 250 too; only `border` (rules, separators) is the dark grey 90.
  */
 export const ANSI_FG: Record<ViewColor, string> = {
 	accent: "36",
@@ -274,10 +288,13 @@ export const ANSI_FG: Record<ViewColor, string> = {
 	dim: "38;5;250",
 	success: "32",
 	warning: "33",
-	error: "31",
+	error: "38;5;196",
 	border: "90",
-	working: "94",
-	question: "35",
+	active: "38;5;75",
+	working: "38;5;141",
+	done: "38;5;78",
+	input: "38;5;208",
+	remote: "38;5;244",
 };
 /** The selection background: grey 238 of the 256-color cube. */
 export const ANSI_SELECTED_BG = "\x1b[48;5;238m";
@@ -287,43 +304,61 @@ export const ansiStyle: ViewStyle = {
 	selected: (line) => withBackground(line, ANSI_SELECTED_BG),
 };
 
-/** How a row is colored: what it means for the user (§9). */
-export type Tone = "working" | "auto" | "attention" | "question" | "error" | "off" | "closed";
-/** off: idle, plain bright text; closed: not running here (closed, other hosts), grey. */
-export const TONE_COLOR: Record<Tone, ViewColor> = { working: "working", auto: "success", attention: "warning", question: "question", error: "error", off: "text", closed: "dim" };
+/**
+ * How a row is colored: what it means for the user (docs/pi-fleet-design.md §9, pi-deck-design
+ * §6). active: a live pi that is open but idle (or starting); working: running a turn, or its
+ * subagents are (auto: the same, under /run-autonomously, glyph `»`); done: the run finished and
+ * the user has not seen it yet (state `waiting`, unacked; seen/acked → idle → active); input: the
+ * agent waits for an answer (`question`: ask_user_question or a dialog); error: a failed run or a
+ * crashed pi; closed: not running; remote: live on another host.
+ */
+export type Tone = "active" | "working" | "auto" | "done" | "input" | "error" | "closed" | "remote";
+export const TONE_COLOR: Record<Tone, ViewColor> = {
+	active: "active",
+	working: "working",
+	auto: "working",
+	done: "done",
+	input: "input",
+	error: "error",
+	closed: "dim",
+	remote: "remote",
+};
 
 export function rowTone(row: SessionRow): Tone {
 	switch (row.state) {
 		case "running":
 			return row.status?.autonomous ? "auto" : "working";
-		case "starting":
-			return "working";
 		case "question":
-			return "question";
+			return "input";
 		case "waiting":
-			return "attention";
+			return "done";
 		case "error":
 		case "crashed":
 			return "error";
 		case "closed":
-		case "remote":
 			return "closed";
+		case "remote":
+			return "remote";
 		default:
-			return "off";
+			return "active";
 	}
 }
 
+/** `text` in the tone's color; needs input is bold too. */
 export function toned(tone: Tone, text: string, style: ViewStyle): string {
 	const t = style.fg(TONE_COLOR[tone], text);
-	return tone === "question" ? style.bold(t) : t;
+	return tone === "input" ? style.bold(t) : t;
 }
 
 /** A session that is not running anymore. */
 export const CLOSED_GLYPH = "◌";
+/** A session working under /run-autonomously. */
+export const AUTO_GLYPH = "»";
 
 export function glyphChar(row: SessionRow): string {
 	if (row.state === "remote") return "⇢";
 	if (row.state === "closed") return CLOSED_GLYPH;
+	if (row.state === "running" && row.status?.autonomous) return AUTO_GLYPH;
 	return GLYPHS[row.state];
 }
 
@@ -331,17 +366,21 @@ export function glyph(row: SessionRow, style: ViewStyle): string {
 	return toned(rowTone(row), glyphChar(row), style);
 }
 
-/** The color legend: one glyph per tone. */
-export function legend(style: ViewStyle): string {
-	const items: [Tone, string][] = [
-		["working", `${GLYPHS.running} working`],
-		["auto", `${GLYPHS.running} auto`],
-		["attention", `${GLYPHS.waiting} needs you`],
-		["question", `${GLYPHS.question} question`],
-		["error", `${GLYPHS.error} error`],
-		["off", `${GLYPHS.idle} idle`],
-	];
-	return items.map(([tone, text]) => toned(tone, text, style)).join(" ");
+/** The color legend, one entry per tone. */
+export const LEGEND: [Tone, string][] = [
+	["active", `${GLYPHS.idle} active`],
+	["working", `${GLYPHS.running} working`],
+	["auto", `${AUTO_GLYPH} auto`],
+	["done", `${GLYPHS.waiting} done`],
+	["input", `${GLYPHS.question} needs input`],
+	["error", `${GLYPHS.error} error`],
+	["closed", `${CLOSED_GLYPH} closed`],
+	["remote", "⇢ remote"],
+];
+
+/** The color legend in one line (`sep` between entries). */
+export function legend(style: ViewStyle, sep = " "): string {
+	return LEGEND.map(([tone, text]) => toned(tone, text, style)).join(sep);
 }
 
 /** The middle column: what the session is doing and since when. */
@@ -1171,7 +1210,6 @@ export class SessionsView implements Component {
 		}
 		if (item.kind === "note") return fit(`       ${style.fg("dim", item.text)}`, width);
 		const row = item.row;
-		const dimRow = row.state === "remote" || row.state === "closed";
 		if (item.kind === "sub") {
 			const live = row.live === "live" || row.live === "remote";
 			const { glyph: g, word } = threadGlyph(item.thread, live, style);
@@ -1189,9 +1227,8 @@ export class SessionsView implements Component {
 		const detailW = wide ? 18 : 15;
 		const nameW = Math.min(wide ? 30 : 22, Math.max(8, avail - detailW - 1 - (wide ? 8 : 0) - 1 - 10));
 		const name = oneLine(row.name);
-		let nameText = row.unnamed ? style.fg("muted", name) : name;
+		let nameText = toned(rowTone(row), name, style);
 		if (selected) nameText = style.bold(nameText);
-		else if (dimRow) nameText = style.fg("dim", name);
 		const detailText = toned(rowTone(row), rowDetail(row, now), style);
 		const cost = row.costUsd ? `$${row.costUsd.toFixed(2)}` : "";
 		const counts = countsText(row.counts, style);

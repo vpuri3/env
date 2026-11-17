@@ -198,44 +198,62 @@ test("layout: repo groups with their closed sessions after the live ones, then o
 	// The selection is padded to the full width.
 	const sel = view.render(72).find((l) => l.startsWith("\x1b[7m"))!;
 	assert.equal(strip(sel).length, 1 + 72);
-	assert.deepEqual(lines.slice(13, 17), ["", "", "", ""]);
-	assert.deepEqual(lines.slice(18), [` NORMAL  ⌕${" ".repeat(58)}9/9`, " j/k move  ⏎/C-l open  a new  d kill  i / search  ? help  q detach"]);
-	assert.equal(lines[17], " physicsnemo sweep · ● working · tool bash · for 4m · $3.41 · subagents…");
-	assert.match(screen(view, 140)[17]!, /^ physicsnemo sweep · ● working · tool bash · for 4m · \$3\.41 · subagents 2w 1◐ 3✓ · \/.*\/work\/alpha$/);
+	assert.deepEqual(lines.slice(13, 15), ["", ""]);
+	// The search bar in a box: badge and count on the top border, the color legend on the bottom one.
+	assert.deepEqual(lines.slice(16), [
+		`╭─ NORMAL ${"─".repeat(55)} 9/9 ─╮`,
+		`│ ⌕${" ".repeat(68)}│`,
+		`╰─ ○ active  ● working  ◐ done  ? needs input  ✕ error  » auto ${"─".repeat(8)}╯`,
+		" j/k move  ⏎/C-l open  a new  d kill  i / search  ? help  q detach",
+	]);
+	assert.equal(lines[15], " physicsnemo sweep · ● working · tool bash · for 4m · $3.41 · subagents…");
+	assert.match(screen(view, 140)[15]!, /^ physicsnemo sweep · ● working · tool bash · for 4m · \$3\.41 · subagents 2w 1◐ 3✓ · \/.*\/work\/alpha$/);
 });
 
-test("ANSI colors: names in their state's color (working bright blue, waiting yellow, question magenta bold, error red), idle bright, closed grey 250; 90 only for chrome", { skip }, async () => {
+test("ANSI colors (§6): active blue 75, working purple 141 (autonomous: purple »), done green 78, needs input orange 208 bold, error red 196, closed grey 250, remote grey 244; on glyph, name and detail; 90 only for chrome", { skip }, async () => {
 	const sv = await import("../../pi/extensions/fleet/sessions-view.ts");
 	const clock = new Clock();
-	// The outside session idles (no idle row in the fixture otherwise).
-	class Source extends dv.DeckSource {
-		override rows() {
-			return super.rows().map((r) => (r.id === OUT ? { ...r, state: "idle" as const } : r));
+	// The outside session idles (no idle row in the fixture otherwise); a second view makes sweep autonomous.
+	const make = (patch: (r: Row) => Row) => {
+		class Source extends dv.DeckSource {
+			override rows() {
+				return super.rows().map(patch);
+			}
 		}
-	}
-	const source = new Source(fx.env);
-	source.readAllStatuses();
-	source.rescan();
-	const view = new dv.DeckView({ source, ops: fakeOps().ops, style: sv.ansiStyle, height: () => 20, requestRender: () => {}, deckSocket: "/tmp/fake-deck-sock", now: () => fx.now, timers: clock });
-	view.setPanes(PANES);
-	view.refresh();
-	view.selectSession(IDS.ckpt);
-	const lines = view.render(90);
+		const source = new Source(fx.env);
+		source.readAllStatuses();
+		source.rescan();
+		const view = new dv.DeckView({ source, ops: fakeOps().ops, style: sv.ansiStyle, height: () => 22, requestRender: () => {}, deckSocket: "/tmp/fake-deck-sock", now: () => fx.now, timers: clock });
+		view.setPanes(PANES);
+		view.refresh();
+		view.selectSession(IDS.ckpt);
+		return view.render(90);
+	};
+	const lines = make((r) => (r.id === OUT ? { ...r, state: "idle" as const } : r));
 	const raw = lines.join("\n");
-	assert.match(raw, /\x1b\[94m●\x1b\[39m \x1b\[94mphysicsnemo sweep\x1b\[39m +\x1b\[94mbash 4m/); // working: bright blue name and detail
-	assert.match(raw, /\x1b\[33m◐\x1b\[39m \x1b\[1m\x1b\[33mckpt restart\x1b\[39m\x1b\[22m/); // waiting yellow, bold when selected
-	assert.match(raw, /\x1b\[1m\x1b\[35m\?\x1b\[39m\x1b\[22m \x1b\[1m\x1b\[35mflare refactor/); // question magenta bold
-	assert.match(raw, /\x1b\[31m✕\x1b\[39m \x1b\[31mcrashy/); // crashed red
-	assert.match(raw, /\x1b\[97mnotes outside\x1b\[39m/); // idle: bright white
-	assert.match(raw, /\x1b\[37m\d+m ago\x1b\[39m/); // idle detail: plain grey 37
-	assert.match(raw, /\x1b\[38;5;250m◌\x1b\[39m \x1b\[38;5;250mstart the old run/); // closed: grey 250
+	const fg = (n: number, text: string) => `\x1b[38;5;${n}m${text}\x1b[39m`;
+	assert.ok(raw.includes(`${fg(141, "●")} ${fg(141, "physicsnemo sweep")}`) && raw.includes(fg(141, "bash 4m")), "working: purple glyph, name, detail");
+	assert.ok(raw.includes(`${fg(78, "◐")} \x1b[1m${fg(78, "ckpt restart")}\x1b[22m`) && raw.includes(fg(78, "done 2m ago")), "done (unseen): green, bold when selected");
+	assert.ok(raw.includes(`\x1b[1m${fg(208, "?")}\x1b[22m \x1b[1m${fg(208, "flare refactor")}\x1b[22m`), "needs input: orange bold");
+	assert.ok(raw.includes(`${fg(196, "✕")} ${fg(196, "crashy")}`), "crashed: red");
+	assert.ok(raw.includes(`${fg(75, "○")} ${fg(75, "notes outside")}`) && /\x1b\[38;5;75m\d+m ago/.test(raw), "active (live, idle): blue");
+	assert.ok(raw.includes(`${fg(250, "◌")} ${fg(250, "start the old run")}`), "closed: grey 250");
+	assert.ok(raw.includes(`${fg(244, "⇢")} ${fg(244, "notes")}`), "remote: grey 244");
 	assert.match(raw, /\x1b\[1m\x1b\[36malpha\x1b\[39m\x1b\[22m/); // repo header bold cyan
 	assert.ok(lines.some((l) => l.startsWith(sv.ANSI_SELECTED_BG) && l.includes("ckpt restart")), "the selection background");
-	// Dark grey 90 is chrome only: never in the list rows, the search bar or the hints.
-	const body = [...lines.slice(0, 13), ...lines.slice(18)];
+	// The colors stay distinct: no two tones share a color but working/auto.
+	const colors = Object.entries(sv.TONE_COLOR).filter(([t]) => t !== "auto").map(([, c]) => sv.ANSI_FG[c]);
+	assert.equal(new Set(colors).size, colors.length, colors.join(" "));
+	// Dark grey 90 is chrome only: never in the list rows, the search box or the hints.
+	const body = [...lines.slice(0, 15), ...lines.slice(18)];
 	assert.ok(body.every((l) => !l.includes("\x1b[90m")), body.filter((l) => l.includes("\x1b[90m")).join("\n"));
 	for (const color of ["text", "muted", "dim"] as const) assert.notEqual(sv.ANSI_FG[color], "90", color);
-	for (const tone of ["off", "closed"] as const) assert.notEqual(sv.ANSI_FG[sv.TONE_COLOR[tone]], "90", tone);
+	// The legend on the search box's bottom border, in the same colors.
+	const bottom = lines.find((l) => l.includes("╰"))!;
+	for (const [n, text] of [[75, "○ active"], [141, "● working"], [78, "◐ done"], [208, "? needs input"], [196, "✕ error"]] as const) assert.ok(bottom.includes(fg(n, text)), text);
+	// Autonomous working: purple with its own glyph.
+	const auto = make((r) => (r.id === IDS.sweep && r.status ? { ...r, status: { ...r.status, autonomous: true } } : r)).join("\n");
+	assert.ok(auto.includes(`${fg(141, "»")} ${fg(141, "physicsnemo sweep")}`) && auto.includes(fg(141, "auto bash 4m")), "autonomous: purple »");
 });
 
 // ---------------------------------------------------------------- modes and search
@@ -244,23 +262,26 @@ test("modes: i and / enter INSERT; fuzzy terms filter live; Esc back to NORMAL k
 	const { view, clock, of } = makeView();
 	press(view, "i");
 	assert.equal(view.mode, "insert");
-	assert.match(screen(view)[18]!, /^ INSERT  ⌕ ▏/);
+	assert.match(screen(view)[16]!, /^╭─ INSERT ─+ 9\/9 ─╮$/);
+	assert.match(screen(view)[17]!, /^│ ⌕ ▏ +│$/);
 	assert.match(screen(view)[19]!, /type to search/);
 	press(view, "f", "l", "r"); // a subsequence of "flare refactor"
 	let lines = screen(view).filter((l) => l);
 	assert.deepEqual(lines.slice(0, 2), [" ▾ gamma (1)", "▌› ? flare refactor                 question 12m       $0.80 1◐"]);
-	assert.match(screen(view)[18]!, /^ INSERT  ⌕ flr▏ +1\/9$/);
+	assert.match(screen(view)[16]!, /^╭─ INSERT ─+ 1\/9 ─╮$/);
+	assert.match(screen(view)[17]!, /^│ ⌕ flr▏ +│$/);
 	// Every term must match (name, repo, cwd or last message).
 	press(view, " ", "z", "z", "z");
 	assert.match(screen(view)[0]!, /no sessions match/);
 	press(view, KEY.bs, KEY.bs, KEY.bs, KEY.bs);
 	press(view, KEY.esc);
 	assert.equal(view.mode, "normal");
-	assert.match(screen(view)[18]!, /^ NORMAL  ⌕ flr +1\/9$/);
+	assert.match(screen(view)[16]!, /^╭─ NORMAL ─+ 1\/9 ─╮$/);
+	assert.match(screen(view)[17]!, /^│ ⌕ flr +│$/);
 	// j/k work on the filtered list in NORMAL; Esc clears.
 	press(view, KEY.esc);
 	assert.equal(view.query, "");
-	assert.match(screen(view)[18]!, /9\/9$/);
+	assert.match(screen(view)[16]!, / 9\/9 ─╮$/);
 	// `/` too; a closed session is found under its repo; Enter in INSERT is NORMAL Enter.
 	press(view, "/", "o", "l", "d", " ", "r", "u", "n");
 	lines = screen(view).filter((l) => l);
@@ -273,7 +294,7 @@ test("modes: i and / enter INSERT; fuzzy terms filter live; Esc back to NORMAL k
 	press(view, KEY.esc, "&");
 	assert.deepEqual(screen(view).filter((l) => /^▌?.? [?✕◐●○⇢⟳] /.test(l)).length, 1);
 	press(view, "0");
-	assert.match(screen(view)[18]!, /9\/9$/);
+	assert.match(screen(view)[16]!, / 9\/9 ─╮$/);
 });
 
 // ---------------------------------------------------------------- the slot follows
@@ -387,7 +408,7 @@ test("closed sessions: under their repo after its live rows, the newest 3 then `
 		}
 	}
 	const { view, clock, of } = makeView({ source: new Source(fx.env), height: 30 });
-	const names = () => screen(view, 72).filter((l) => l && !/^ (NORMAL|INSERT|j\/k)/.test(l)).slice(0, -1);
+	const names = () => screen(view, 72).filter((l) => l && !/^( j\/k|[╭│╰])/.test(l)).slice(0, -1);
 	let lines = names();
 	const alpha = lines.indexOf(" ▾ alpha (2, 6 closed)");
 	assert.ok(alpha >= 0, lines.join("\n"));
@@ -404,7 +425,7 @@ test("closed sessions: under their repo after its live rows, the newest 3 then `
 	assert.ok(lines.indexOf(" ▾ outside (your tmux) (1)") < lines.length - 1);
 	// Enter on `+3 closed`: all of alpha's closed sessions, the selection on the first one it showed.
 	selectLine(view, "+3 closed");
-	assert.match(screen(view, 72)[27]!, /^ 3 older closed sessions in alpha · ⏎\/␣ show them$/);
+	assert.match(screen(view, 72)[25]!, /^ 3 older closed sessions in alpha · ⏎\/␣ show them$/);
 	press(view, KEY.enter);
 	lines = names();
 	assert.deepEqual(lines.slice(alpha + 5, alpha + 10).map((l) => l.slice(0, 26).trimEnd()), [
@@ -498,7 +519,7 @@ test("d: inline kill confirm (y or Enter kill, s kill + scancel, n or Esc cancel
 	view.selectSession(IDS.ckpt);
 	press(view, "d");
 	let lines = screen(view);
-	assert.match(lines[17]!, /^ Kill ckpt restart\?$/);
+	assert.match(lines[15]!, /^ Kill ckpt restart\?$/);
 	assert.match(lines[19]!, /^ y\/⏎ kill · n\/Esc cancel$/);
 	press(view, "s"); // no Slurm jobs: s does nothing
 	assert.ok(view.confirming());
@@ -524,7 +545,7 @@ test("d: inline kill confirm (y or Enter kill, s kill + scancel, n or Esc cancel
 	press(view, "d");
 	await clock.advance(10);
 	lines = screen(view, 120);
-	assert.match(lines[17]!, /Kill physicsnemo sweep\? agent working · 2 subagents working · Slurm 4242 running/);
+	assert.match(lines[15]!, /Kill physicsnemo sweep\? agent working · 2 subagents working · Slurm 4242 running/);
 	assert.match(lines[19]!, /y\/⏎ kill · s kill\+scancel · n\/Esc cancel/);
 	press(view, "s");
 	await clock.advance(10);
@@ -577,7 +598,7 @@ test("barText: questions, unseen waiting, errors and crashes, tmux-colored", { s
 	const source = new dv.DeckSource(fx.env);
 	source.readAllStatuses();
 	source.rescan();
-	assert.equal(dv.barText(source.rows()), "π #[fg=magenta,bold]1?#[default] #[fg=yellow]2◐#[default] #[fg=red]1✕#[default] ");
+	assert.equal(dv.barText(source.rows()), "π #[fg=colour208,bold]1?#[default] #[fg=colour78]2◐#[default] #[fg=colour196]1✕#[default] ");
 	assert.equal(dv.barText([]), "");
 	assert.deepEqual(dv.parseOuter("/tmp/tmux-1/default|/dev/pts/3"), { socket: "/tmp/tmux-1/default", client: "/dev/pts/3" });
 	assert.equal(dv.outerBarSocket("/tmp/tmux-1/default|c", { PI_FLEET_TMUX_GUARD: "1" }), undefined, "the guard refuses the default server");

@@ -157,7 +157,7 @@ test("source: a stale status of another host is not a remote row", { skip }, () 
 test("render: groups by repo, ordered by urgency (? > ✕ > ◐ > ● > ○), counts per main", { skip }, () => {
 	const { view } = makeView();
 	const lines = screen(view);
-	assert.match(lines[0]!, /^ pi-fleet {2}node1 {3}3 live · 2 waiting +● working ● auto ◐ needs you \? question ✕ error ○ idle$/);
+	assert.match(lines[0]!, /^ pi-fleet {2}node1 {3}3 live · 2 waiting +○ active ● working » auto ◐ done \? needs input ✕ error ◌ closed ⇢ remote$/);
 	assert.deepEqual(lines.slice(1), [
 		" ▾ gamma (2)",
 		"›  ? flare refactor                 question 12m         $0.80 1◐",
@@ -272,7 +272,7 @@ test("keys: ! @ # & status filters, 0 clears; d on a dead row, a new, q close, ?
 	press(view, "?");
 	assert.ok(screen(view).some((l) => l.includes("Space") && l.includes("subagents")));
 	assert.ok(screen(view).some((l) => /^ d\s+kill the session: y kill · s kill \+ scancel/.test(l)));
-	assert.ok(screen(view).some((l) => l === " ● working ● auto ◐ needs you ? question ✕ error ○ idle"));
+	assert.ok(screen(view).some((l) => l === " ○ active ● working » auto ◐ done ? needs input ✕ error ◌ closed ⇢ remote"));
 	press(view, "?", "q");
 	assert.equal(actions.at(-1)?.type, "close");
 	// Kitty CSI-u letters work like plain ones.
@@ -566,34 +566,39 @@ test("highlight: the selected row (only it) gets a full-width background", { ski
 	}
 });
 
-test("colors: glyph + state text by tone; autonomous working is green `auto`, an autonomous question stays magenta", { skip }, () => {
+test("colors: glyph, name and state text by tone (§9); autonomous working is purple `»`, an autonomous question stays orange", { skip }, () => {
 	const f = buildFixture();
 	try {
 		const { view } = polishView(f);
 		const lines = view.render(120);
 		const fg = (code: string, text: string) => `\x1b[${code}m${text}\x1b[39m`;
-		// sweep: working (bright blue), glyph and detail; the name stays uncolored.
-		assert.ok(rowOf(lines, "physicsnemo sweep").includes(fg("94", "●")));
-		assert.ok(rowOf(lines, "physicsnemo sweep").includes(fg("94", "bash 4m")));
-		assert.ok(rowOf(lines, "physicsnemo sweep").includes(" physicsnemo sweep "));
-		assert.ok(rowOf(lines, "flare refactor").includes(`\x1b[1m${fg("35", "?")}\x1b[22m`), "question: magenta bold");
-		assert.ok(rowOf(lines, "ckpt restart").includes(fg("33", "◐")), "waiting: yellow");
-		assert.ok(rowOf(lines, "ckpt restart").includes(fg("33", "done 2m ago")));
-		assert.ok(rowOf(lines, "crashy").includes(fg("31", "✕")), "crashed: red");
-		assert.ok(rowOf(lines, "start the old run").includes(fg("38;5;250", "◌")), "closed: grey");
-		assert.ok(rowOf(lines, "notes").includes(fg("38;5;250", "⇢")), "remote: grey");
-		assert.ok(lines[0]!.includes(fg("32", "● auto")), "legend in the header");
+		const c = (n: number) => `38;5;${n}`;
+		// sweep: working (purple), glyph, name and detail.
+		assert.ok(rowOf(lines, "physicsnemo sweep").includes(fg(c(141), "●")));
+		assert.ok(rowOf(lines, "physicsnemo sweep").includes(fg(c(141), "physicsnemo sweep")));
+		assert.ok(rowOf(lines, "physicsnemo sweep").includes(fg(c(141), "bash 4m")));
+		assert.ok(rowOf(lines, "flare refactor").includes(`\x1b[1m${fg(c(208), "?")}\x1b[22m`), "needs input: orange bold");
+		assert.ok(rowOf(lines, "ckpt restart").includes(fg(c(78), "◐")), "done, unseen: green");
+		assert.ok(rowOf(lines, "ckpt restart").includes(fg(c(78), "done 2m ago")));
+		assert.ok(rowOf(lines, "crashy").includes(fg(c(196), "✕")), "crashed: red");
+		assert.ok(rowOf(lines, "start the old run").includes(fg(c(250), "◌")), "closed: grey");
+		assert.ok(rowOf(lines, "notes").includes(fg(c(244), "⇢")), "remote: dimmer grey");
+		assert.ok(lines[0]!.includes(fg(c(141), "» auto")), "legend in the header");
+		assert.ok(lines[0]!.includes(fg(c(75), "○ active")), "legend in the header");
 
 		const sweep = JSON.parse(readFileSync(join(f.statusDir, `${IDS.sweep}.json`), "utf8"));
 		f.writeStatus(IDS.sweep, { ...sweep, autonomous: true });
 		const flare = JSON.parse(readFileSync(join(f.statusDir, `${IDS.flare}.json`), "utf8"));
 		f.writeStatus(IDS.flare, { ...flare, autonomous: true });
+		const ckpt = JSON.parse(readFileSync(join(f.statusDir, `${IDS.ckpt}.json`), "utf8"));
+		f.writeStatus(IDS.ckpt, { ...ckpt, state: "idle", acked: true });
 		view.refresh();
 		const auto = view.render(120);
-		assert.ok(rowOf(auto, "physicsnemo sweep").includes(fg("32", "●")));
-		assert.ok(rowOf(auto, "physicsnemo sweep").includes(fg("32", "auto bash 4m")));
-		assert.ok(rowOf(auto, "flare refactor").includes(`\x1b[1m${fg("35", "?")}\x1b[22m`));
+		assert.ok(rowOf(auto, "physicsnemo sweep").includes(fg(c(141), "»")));
+		assert.ok(rowOf(auto, "physicsnemo sweep").includes(fg(c(141), "auto bash 4m")));
+		assert.ok(rowOf(auto, "flare refactor").includes(`\x1b[1m${fg(c(208), "?")}\x1b[22m`));
 		assert.ok(rowOf(auto, "flare refactor").includes("question 12m"));
+		assert.ok(rowOf(auto, "ckpt restart").includes(fg(c(75), "○")), "seen, idle: active blue");
 	} finally {
 		f.cleanup();
 	}
@@ -609,7 +614,7 @@ test("status line: the selected session in full; a repo header; a subagent", { s
 		const sweep = JSON.parse(readFileSync(join(f.statusDir, `${IDS.sweep}.json`), "utf8"));
 		f.writeStatus(IDS.sweep, { ...sweep, autonomous: true });
 		view.refresh();
-		assert.match(statusLine(), /^ ● working autonomously · tool bash · for 4m · /);
+		assert.match(statusLine(), /^ » working autonomously · tool bash · for 4m · /);
 		select("flare refactor");
 		assert.match(statusLine(), /^ \? question: needs your answer · a dialog · for 12m · \$0\.80 · subagents 1◐ · /);
 		select("start the old run");
@@ -795,7 +800,7 @@ test("subagent preview: the tail of its transcript (text, dim thinking, one line
 				.render(170)
 				.map((l) => (l.includes("│") ? l.slice(l.indexOf("│") + 1).trimEnd() : ""))
 				.filter(Boolean);
-		select("start the old run");
+		select("start the old"); // the fake <dim> tags count as width: the name is cut short
 		press(view, " ", "j");
 		// /runner has no sessionFile in the registry: the index finds its subagent file (thread entry).
 		await view.updatePreview();

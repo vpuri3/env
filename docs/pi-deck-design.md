@@ -156,7 +156,9 @@ with the caller's environment plus the stable `SSH_AUTH_SOCK` link, like tmux.co
 │ ▸ dotfiles (2 closed)                             │                                           │
 │                                                   │                                           │
 │ sweep · bash 4m · $3.41 · 2 working 1 waiting     │                                           │
-│ NORMAL  ⌕ phys run_                     4/12      │                                           │
+│╭─ NORMAL ───────────────────────────────── 4/12 ─╮│                                           │
+││ ⌕ phys run_                                     ││                                           │
+│╰─ ○ active  ● working  ◐ done  ? needs input ────╯│                                           │
 │ j/k move  ⏎/C-l open  a new  d kill  i / search   │                                           │
 └───────────────────────────────────────────────────┴───────────────────────────────────────────┘
 ```
@@ -164,14 +166,30 @@ with the caller's environment plus the stable `SSH_AUTH_SOCK` link, like tmux.co
 Closed sessions sit in their repo's group (by cwd → repo), after its live rows: grey, `◌`, the
 newest 3, older ones behind a `+N closed` row (Enter/Space shows them). Repos with only closed
 sessions get a group of their own, after every group with live sessions, folded. A search shows
-every match. Row names take their state's color (working blue, needs-you yellow, question
-magenta, autonomous green, error red, idle bright white, closed grey); dark grey is for borders
-and separators only.
+every match.
+
+**Colors** (user, 2026-11-17): glyph, name and detail take the row's state color, 256-color so
+terminal themes don't change them, all legible on the selection background (grey 238):
+
+| State | Color | Glyph |
+|---|---|---|
+| active: live pi, open but idle (or starting) | blue 75 | `○` (`⟳`) |
+| working: running a turn, or its subagents are | purple 141 | `●` |
+| autonomous working (`/run-autonomously`) | purple 141 | `»` |
+| done: the run finished, not seen yet (`waiting`; 1 s selected acks it → active) | green 78 | `◐` |
+| needs input: ask_user_question or a dialog (`question`) | orange 208, bold | `?` |
+| error (failed run) / crashed | red 196 | `✕` |
+| closed | grey 250 | `◌` |
+| remote (other host) | grey 244 | `⇢` |
+
+Dark grey is for borders and separators only. The legend sits on the search box's bottom border
+(as many entries as fit) and in full under `?`.
 
 Built from `sessions-view.ts` (rows, grouping, ordering, colors, `humanizeSince`, the inline
 kill confirm, `fleetSource`, `TranscriptTails`), minus the preview pane, joins and timers.
-Telescope layout: list on top, then the selected row's detail line, then the **search bar**
-(mode + query + match count), then key hints.
+Telescope layout: list on top, then the selected row's detail line, then the **search bar** in a
+box (rounded border, light grey in NORMAL, bold cyan in INSERT; mode badge and match count on the
+top border, the query inside, the color legend on the bottom border), then key hints.
 
 **Right slot per row kind**
 
@@ -199,7 +217,7 @@ events for other hosts). `pane-died` in the deck config runs `run-shell -b 'kill
 #{@deck_tui_pid}'` (an sh, only when a pane dies) and the TUI reconciles: a dead pane in the
 slot is replaced by the next row (or the holder) and killed.
 
-**Outer bar.** On any state change the TUI computes `π 1? 2◐ 1✕` (colored with `#[fg=…]`) and,
+**Outer bar.** On any state change the TUI computes `π 1? 2◐ 1✕` (in the list's colors: `#[fg=colour208,bold]`, `colour78`, `colour196`) and,
 debounced 500 ms, runs one `tmux -S <outer socket> set -g @pi_deck_bar '…'` (outer socket from
 `@deck_outer`, else the default socket if it exists). On exit it clears it. Entering
 waiting/question/error writes BEL to the deck client (`bell-action any` in the deck config).
