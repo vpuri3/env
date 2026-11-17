@@ -26,6 +26,7 @@ import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { inTmux, livePeer, nvimSockPath, pairPane } from "./cli.ts";
+import { duplicateOf } from "./control.ts";
 import { parseUserEdit, USER_EDIT, type NvimCall, type UserEditMessage } from "./protocol.ts";
 import { fleetOf } from "./shared.ts";
 
@@ -357,8 +358,13 @@ export async function resolveNvim(sessionId: string, env: NodeJS.ProcessEnv = pr
 	const pane = env.TMUX_PANE;
 	if (pane && inTmux(env)) {
 		const peer = await livePeer(pane, env).catch(() => undefined);
-		if (peer?.role === "nvim") return { pane: peer.pane, sock: peer.nvimSock || nvimSockPath(sessionId, env) };
-		return undefined;
+		if (peer?.role !== "nvim") return undefined;
+		if (peer.nvimSock) return { pane: peer.pane, sock: peer.nvimSock };
+		try {
+			return { pane: peer.pane, sock: nvimSockPath(sessionId, env) };
+		} catch {
+			return undefined;
+		}
 	}
 	if (!sessionId) return undefined;
 	let sock: string;
@@ -478,25 +484,27 @@ export function register(pi: ExtensionAPI): void {
 
 	registerControl();
 
+	// `pairing` is deliberately not cleared on session_start/session_shutdown: an in-flight
+	// pairPane must keep deduping (its result is discarded by the generation check).
 	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
 		generation++;
 		peer = undefined;
-		pairing = undefined;
 		registerControl();
-		if (!shared.main) return;
+		// A duplicate pi (another live pi owns this session; lifecycle.ts makes it quit) must
+		// not pair or patch the status file.
+		if (!shared.main || duplicateOf(shared)) return;
 		sessionId = ctx.sessionManager.getSessionId();
 		cwd = ctx.cwd;
 		tui = (ctx as { mode?: string }).mode === "tui";
 		// §7: a TUI pi in tmux without a live nvim peer gets one now (this module is the only
 		// one that pairs at session start). Never in RPC/print/json mode. Idempotent:
 		// pairPane returns the live peer instead of splitting again, and `pairing` dedupes.
-		void findPeer(tui);
+		void findPeer(tui).catch(() => {});
 	});
 
 	pi.on("session_shutdown", async () => {
 		generation++;
 		peer = undefined;
-		pairing = undefined;
 	});
 
 	pi.on("tool_result", async (event, ctx) => {

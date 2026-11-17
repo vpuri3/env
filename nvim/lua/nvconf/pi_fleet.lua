@@ -1,7 +1,9 @@
 -- pi-fleet: the nvim half of a pi | nvim session window (~/env/docs/pi-fleet-design.md §11).
 --
--- Loaded by nvconf/init.lua only when $PI_FLEET_SESSION is set, i.e. in the nvim pane that
--- `pi-fleet pair` starts next to a pi. Other nvims never load it.
+-- Loaded by nvconf/init.lua only when M.paired(): $PI_FLEET_SESSION and $PI_FLEET_CTL_SOCK
+-- are set and this is not an nvim nested in another nvim's terminal ($NVIM), i.e. in the nvim
+-- pane that `pi-fleet pair` starts next to a pi. Other nvims (including ones started by the
+-- agent's bash commands, which inherit $PI_FLEET_SESSION only) never load it.
 --
 --   * File buffers are read-only; again after every write (`:w!` clears 'readonly').
 --   * `:w!`  = save + note: pi gets the diff with your next message.
@@ -35,8 +37,9 @@ local function env(name)
     return v
 end
 
+--- Keep in sync with the inline check in nvconf/init.lua.
 function M.paired()
-    return env("PI_FLEET_SESSION") ~= nil
+    return env("PI_FLEET_SESSION") ~= nil and env("PI_FLEET_CTL_SOCK") ~= nil and env("NVIM") == nil
 end
 
 local function notify(msg, level)
@@ -75,9 +78,13 @@ end
 
 -- ---------------------------------------------------------------- sending
 
---- Send one JSON line to pi's control socket. Synchronous (waits up to 1 s) so that `:wq!`
---- still delivers before nvim exits. Returns true on success.
-function M.send(msg)
+--- Send one JSON line to pi's control socket. Synchronous until the line is written (waits
+--- up to 1 s) so that `:wq!` still delivers before nvim exits; returns true when it was sent.
+--- The one-line reply ({"ok":...}) is read afterwards without blocking, within the same 1 s
+--- budget; `on_reply(err)` then runs on the main loop with pi's error when it answered
+--- ok:false and nil otherwise (no reply in time counts as delivered). Not blocking on the reply
+--- keeps RPC requests from pi from being run inside this write's autocmd any longer than before.
+function M.send(msg, on_reply)
     local sock = env("PI_FLEET_CTL_SOCK")
     if not sock then
         notify("saved, but $PI_FLEET_CTL_SOCK is not set: pi was not told", vim.log.levels.WARN)
@@ -96,26 +103,62 @@ function M.send(msg)
         return false
     end
     local pipe = uv.new_pipe(false)
-    local done, err = false, nil
-    pipe:connect(sock, function(cerr)
-        if cerr then
-            err, done = cerr, true
+    local timer = uv.new_timer()
+    local sent, finished, err, reply = false, false, nil, ""
+    local function finish()
+        if finished then
             return
         end
+        finished = true
+        timer:stop()
+        timer:close()
+        if not pipe:is_closing() then
+            pipe:close()
+        end
+        if not sent or not on_reply then
+            return
+        end
+        local rejected
+        local first = reply:match("^[^\n]*")
+        if first and first ~= "" then
+            local ok, r = pcall(vim.json.decode, first)
+            if ok and type(r) == "table" and r.ok == false then
+                rejected = tostring(r.error or "unknown error")
+            end
+        end
+        vim.schedule(function()
+            on_reply(rejected)
+        end)
+    end
+    timer:start(1000, 0, finish) -- the whole budget: connect, write and reply
+    pipe:connect(sock, function(cerr)
+        if cerr then
+            err = cerr
+            return finish()
+        end
+        pipe:read_start(function(rerr, data)
+            if rerr or data == nil then
+                return finish() -- error or EOF
+            end
+            reply = reply .. data
+            if reply:find("\n", 1, true) then
+                finish()
+            end
+        end)
         pipe:write(line, function(werr)
-            err = werr
-            pipe:shutdown(function()
-                done = true
-            end)
+            if werr then
+                err = werr
+                return finish()
+            end
+            sent = true
+            pipe:shutdown()
         end)
     end)
-    local finished = vim.wait(1000, function()
-        return done
+    vim.wait(1000, function()
+        return sent or finished
     end, 10)
-    if not pipe:is_closing() then
-        pipe:close()
-    end
-    if not finished or err then
+    if not sent then
+        finish()
         notify("saved, but pi is not reachable (" .. tostring(err or "timeout") .. "): pi was not told",
             vim.log.levels.WARN)
         return false
@@ -186,7 +229,12 @@ local function after_write(args)
             notify("saved " .. vim.fn.fnamemodify(p.path, ":~:.") .. " (no changes, pi not told)")
             return
         end
-        diff = text_diff(p.old or "", new) or ""
+        local d = text_diff(p.old or "", new)
+        if d == nil or d == "" then
+            -- no usable diff for a real change: same as too large, pi reads the file
+            truncated = true
+        end
+        diff = d or ""
         added, removed = diff_counts(diff) -- of the whole change, before any cut
         if #diff > MAX_DIFF then
             -- cut at a line boundary
@@ -208,10 +256,15 @@ local function after_write(args)
         session = env("PI_FLEET_SESSION") or "",
         time = now_ms(),
     }
-    if M.send(msg) then
+    local name = vim.fn.fnamemodify(p.path, ":~:.")
+    M.send(msg, function(rejected)
+        if rejected then
+            notify("saved, but pi rejected the message: " .. rejected, vim.log.levels.WARN)
+            return
+        end
         local what = mode == "steer" and "pi interrupted with" or "pi gets with your next message:"
-        notify(string.format("%s %s (+%d −%d)", what, vim.fn.fnamemodify(p.path, ":~:."), added, removed))
-    end
+        notify(string.format("%s %s (+%d −%d)", what, name, added, removed))
+    end)
 end
 
 --- :PiWriteSteer [file] — `write!` and tell pi now (`:w!!` is rewritten to this).
@@ -298,17 +351,38 @@ local function find_buf(path)
     end
 end
 
+--- The bytes a write of `buf` would put on disk (approximately: no encoding conversion).
+local function buf_text(buf)
+    local nl = vim.bo[buf].fileformat == "dos" and "\r\n" or (vim.bo[buf].fileformat == "mac" and "\r" or "\n")
+    local text = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), nl)
+    if vim.bo[buf].eol or vim.bo[buf].fixeol then
+        text = text .. nl
+    end
+    if vim.bo[buf].bomb then
+        text = "\239\187\191" .. text
+    end
+    return text
+end
+
 local function check_buf(buf)
+    local disk = read_file(vim.api.nvim_buf_get_name(buf))
     if vim.bo[buf].modified then
         -- disk may or may not differ; only a real change is a conflict
-        local disk = read_file(vim.api.nvim_buf_get_name(buf))
-        if disk == nil or disk ~= table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n") .. "\n" then
+        if disk == nil or disk ~= buf_text(buf) then
             mark_conflict(buf)
         end
         return
     end
     local views = views_of(buf)
-    pcall(vim.cmd, "silent! checktime " .. buf)
+    if disk ~= nil and disk ~= buf_text(buf) then
+        -- Compare contents, not just mtime/size: on filesystems with 1 s mtime (Lustre) a
+        -- same-size change within the same second is invisible to :checktime.
+        pcall(vim.api.nvim_buf_call, buf, function()
+            vim.cmd("silent! edit!")
+        end)
+    else
+        pcall(vim.cmd, "silent! checktime " .. buf)
+    end
     restore_views(views)
 end
 

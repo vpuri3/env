@@ -187,7 +187,7 @@ Slurm job IDs come from the `tool_result` of `bash` calls that match `Submitted 
 - **Bell**: `\a` written to pi's stdout on waiting/question/error. `tmux.conf`: `monitor-bell on`, `bell-action other`, `visual-bell off`.
 - **Notification bar**: `status-left` gets `#(pi-fleet bar)` with `status-interval 5`. Output looks like `π [3]? flare [5]◐ ckpt`. The numbers are real window indices, so the existing `prefix 3` jumps there.
 - **Window glyphs** as in §7. OSC 7501/777 passthrough is not used.
-- **Control socket** `<id>.pi.sock` (0600 in the 0700 dir) accepts NDJSON `ping`, `kill` and `user_write` (64 KB cap, 2 s idle drop, private bind + rename).
+- **Control socket** `<id>.pi.sock` (0600 in the 0700 dir) accepts NDJSON `ping`, `kill` and `user_edit` (64 KB cap, 2 s idle drop, private bind + rename).
 
 ## 11. Paired nvim, `/view`, and saves
 
@@ -195,7 +195,7 @@ Slurm job IDs come from the `tool_result` of `bash` calls that match `Submitted 
 
 - Every file buffer gets `readonly` on `BufReadPost`, and again after each write, because `:w!` clears it. Telescope, nvim-tree and treesitter are unaffected.
 - **Hint**: a `winbar` in paired windows: `pi ▸ read-only · :w! save + note · :w!! save + interrupt · :PiHelp`. When the buffer is modified it reads `pi ▸ modified · :w! tells pi with your next message · :w!! tells it now`. `:PiHelp` opens a scratch buffer explaining both writes, conflicts and `:PiDiff`.
-- **`:w!`** = save + **note**. Native semantics are untouched. `BufWritePre` keeps the old disk text. `BufWritePost` computes `vim.text.diff(old, new)` and sends `{"type":"user_write","mode":"note",path,diff,added,removed}` over `sockconnect("pipe", $PI_FLEET_CTL_SOCK)`.
+- **`:w!`** = save + **note**. Native semantics are untouched. `BufWritePre` keeps the old disk text. `BufWritePost` computes `vim.text.diff(old, new)` and sends `{"type":"user_edit","mode":"note",path,diff,added,removed}` over `$PI_FLEET_CTL_SOCK` and reads the one-line reply (a warning on `ok:false`).
 - **`:w!!`** = save + **interrupt**. It is not a native command, so it is implemented as:
   - a user command `:PiWriteSteer` that sets `b:pi_fleet_write_mode='steer'` and runs `write!`;
   - a buffer-independent, paired-only mapping `vim.keymap.set('c', '<CR>', expr)`. It returns `<C-u>PiWriteSteer<CR>` when `getcmdtype()==':'` and `getcmdline()` matches `^%s*w!!%s*$`, and plain `<CR>` otherwise.
@@ -206,7 +206,7 @@ Slurm job IDs come from the `tool_result` of `bash` calls that match `Submitted 
   - Modified buffer → no reload. Mark a conflict and show `pi changed foo.py — :PiDiff compares, :e! takes pi's version`.
   - `FileChangedShell` sets `v:fcs_choice`, so no W12 prompt ever blocks.
   - `M.checktime_all()` runs on `agent_settled` for edits made through bash.
-- **Calls into nvim**: `nvim --server SOCK --remote-expr "luaeval('require\"nvconf.pi_fleet\".X(_A)', …)"`. This works in any mode, and paths travel only in `_A`.
+- **Calls into nvim**: a msgpack-RPC `nvim_exec_lua` request on the nvim's `--listen` socket (nvim.ts's own client), running a fixed chunk that calls `require("nvconf.pi_fleet")[fn](arg)`; the function name and the paths are RPC arguments (`...`), data that is never spliced into Lua code or a shell string. This works in any mode.
 - **Other commands**: `:PiDiff`, `:PiFocus` (focuses the pi pane).
 
 **pi side, receiving saves** (`edits.ts`). Saves are coalesced per path over 2 s; empty diffs are dropped. The diff is capped at 120 lines; beyond that the message gives a hunk summary and "read the file".
@@ -279,8 +279,8 @@ The fleet binds nothing at the pi editor level, so Tab (follow-up) and Up (deque
 **Security:**
 - The runtime dir `/tmp/pi-fleet-$UID` is created 0700. Before each use, `lstat` checks: no symlink, owned by us, mode 0700. Otherwise fall back to `mkdtemp`.
 - Sockets are 0600, with no TCP. `~/.local/state/pi-fleet` is 0700 and status files are 0600.
-- Only `ping`, `kill` and `user_write` are accepted on the control socket.
-- tmux, nvim, squeue and rg are always called with argument arrays. Paths reach nvim only through `_A`.
+- Only `ping`, `kill` and `user_edit` are accepted on the control socket.
+- tmux, nvim, squeue and rg are always called with argument arrays. Paths reach nvim only as msgpack-RPC arguments (`nvim_exec_lua` args), never as code.
 
 ## 14. Phases (each one coder task)
 

@@ -7,9 +7,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
-import { homedir, tmpdir } from "node:os";
+import { homedir, hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -28,6 +28,12 @@ import { fleetOf } from "../../pi/extensions/fleet/shared.ts";
 delete process.env.TMUX;
 delete process.env.TMUX_PANE;
 delete process.env.PI_FLEET_SESSION;
+delete process.env.PI_FLEET_CTL_SOCK;
+delete process.env.NVIM;
+
+/** nvconf/init.lua's paired check (kept in sync with it and with pi_fleet.lua M.paired). */
+const PAIRED_LUA =
+	"if (vim.env.PI_FLEET_SESSION or '') ~= '' and (vim.env.PI_FLEET_CTL_SOCK or '') ~= '' and (vim.env.NVIM or '') == '' then require('nvconf.pi_fleet').setup() end";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = join(here, "../..");
@@ -50,21 +56,26 @@ async function waitFor<T>(what: string, probe: () => T | undefined | false, time
 	}
 }
 
-/** The fake pi control socket: collects NDJSON lines. */
+/** The fake pi control socket: collects NDJSON lines, answers each like control.ts. */
 class CtlServer {
 	readonly lines: any[] = [];
+	/** The reply to each line (control.ts: {"ok":true} or {"ok":false,error}). */
+	reply: (msg: any) => object = () => ({ ok: true });
 	readonly server: Server;
 	readonly path: string;
 	constructor(path: string) {
 		this.path = path;
 		this.server = createServer((conn) => {
 			let buf = "";
+			conn.on("error", () => {}); // nvim may be gone before the reply (:wq!), as control.ts allows
 			conn.on("data", (d) => {
 				buf += d.toString("utf8");
 				let i: number;
 				while ((i = buf.indexOf("\n")) >= 0) {
-					this.lines.push(JSON.parse(buf.slice(0, i)));
+					const msg = JSON.parse(buf.slice(0, i));
+					this.lines.push(msg);
 					buf = buf.slice(i + 1);
+					conn.write(JSON.stringify(this.reply(msg)) + "\n");
 				}
 			});
 		});
@@ -125,7 +136,7 @@ class Nvim {
 			base.unshift("--clean");
 			base.push(
 				"--cmd", `set rtp^=${nvimDir}`,
-				"--cmd", "lua if (vim.env.PI_FLEET_SESSION or '') ~= '' then require('nvconf.pi_fleet').setup() end",
+				"--cmd", `lua ${PAIRED_LUA}`,
 			);
 		}
 		return [...base, ...extra];
@@ -380,6 +391,94 @@ nvimTest("agent_changed reloads clean buffers, flags modified ones; PiDiff; chec
 	});
 });
 
+nvimTest("agent_changed reloads a same-size change with an unchanged mtime (1 s mtime filesystems)", async () => {
+	await withNvim({ paired: true, userConfig: false }, async (n) => {
+		const f = n.file("same.txt", "aaaa\nbbbb\n");
+		await n.lua("vim.cmd.edit(...)", f);
+		await n.lua("vim.api.nvim_win_set_cursor(0, {2, 2})");
+		// what a coarse-mtime fs shows within the same second: same size, same mtime (to the ns)
+		const ref = join(n.root, "mtime.ref");
+		writeFileSync(ref, "");
+		assert.equal(spawnSync("touch", ["-r", f, ref]).status, 0);
+		writeFileSync(f, "cccc\ndddd\n");
+		assert.equal(spawnSync("touch", ["-r", ref, f]).status, 0);
+		assert.equal(statSync(f, { bigint: true }).mtimeNs, statSync(ref, { bigint: true }).mtimeNs);
+		await n.cmd("silent! checktime");
+		assert.deepEqual(await n.lua("return vim.api.nvim_buf_get_lines(0, 0, -1, false)"), ["aaaa", "bbbb"], "checktime alone misses it");
+		assert.equal(await nvimCall(n.sock, { fn: "agent_changed", arg: [f] }), 1);
+		assert.deepEqual(await n.lua("return vim.api.nvim_buf_get_lines(0, 0, -1, false)"), ["cccc", "dddd"]);
+		assert.deepEqual(await n.lua("return vim.api.nvim_win_get_cursor(0)"), [2, 2], "view kept");
+		assert.equal(await n.lua("return vim.bo.readonly"), true);
+		assert.equal(await n.lua("return vim.bo.modified"), false);
+		assert.equal(await n.lua("return vim.b.pi_fleet_conflict"), null);
+		// an identical disk text is not reloaded (no needless edit!)
+		await n.lua("vim.b.marker = 1");
+		await nvimCall(n.sock, { fn: "agent_changed", arg: [f] });
+		assert.equal(await n.lua("return vim.b.marker"), 1);
+		assert.doesNotMatch(n.output, ERROR_RE);
+	});
+});
+
+nvimTest("a rejected user_edit (reply ok:false) warns with pi's error", async () => {
+	await withNvim({ paired: true, userConfig: false }, async (n) => {
+		n.ctl.reply = () => ({ ok: false, error: "user_edit dropped: test says no" });
+		const f = n.file("r.txt", "a\n");
+		await n.lua("vim.cmd.edit(...)", f);
+		await n.lua("vim.api.nvim_buf_set_lines(0, 0, -1, false, {'b'})");
+		await n.feed(":w!\r");
+		await waitFor("user_edit", () => n.ctl.lines[0]);
+		const messages = () => n.lua("return vim.fn.execute('messages')");
+		let msgs = "";
+		for (const end = Date.now() + 5000; !/rejected/.test(msgs) && Date.now() < end; await sleep(25)) msgs = await messages();
+		assert.match(msgs, /pi rejected the message: user_edit dropped: test says no/);
+		assert.doesNotMatch(msgs, /pi gets with your next message/);
+		// an ok reply still reports success
+		n.ctl.reply = () => ({ ok: true });
+		await n.lua("vim.api.nvim_buf_set_lines(0, 0, -1, false, {'c'})");
+		await n.feed(":w!\r");
+		await waitFor("second user_edit", () => n.ctl.lines[1]);
+		for (const end = Date.now() + 5000; !/pi gets/.test(msgs) && Date.now() < end; await sleep(25)) msgs = await messages();
+		assert.match(msgs, /pi gets with your next message: r\.txt \(\+1 −1\)/);
+	});
+});
+
+nvimTest("a file over 4 MiB is still sent: truncated, diff \"\"", async () => {
+	await withNvim({ paired: true, userConfig: false }, async (n) => {
+		const f = n.file("huge.txt", ("x".repeat(99) + "\n").repeat(45_000)); // 4.5 MB
+		await n.lua("vim.cmd.edit(...)", f);
+		await n.lua("vim.api.nvim_buf_set_lines(0, 0, 1, false, {'changed'})");
+		await n.feed(":w!\r");
+		const msg = await waitFor("user_edit", () => n.ctl.lines[0]);
+		assert.equal(msg.truncated, true);
+		assert.equal(msg.diff, "");
+		assert.equal(msg.path, f);
+		assert.ok(parseUserEdit(msg));
+	});
+});
+
+nvimTest("paired detection: PI_FLEET_SESSION alone or a nested nvim ($NVIM) is unpaired", async () => {
+	const variants: [string, NodeJS.ProcessEnv, boolean][] = [
+		["session + ctl sock", {}, true],
+		["session only (agent bash)", { PI_FLEET_CTL_SOCK: "" }, false],
+		["nested in nvim", { NVIM: "/tmp/parent.sock" }, false],
+	];
+	for (const [what, extra, want] of variants) {
+		const n = new Nvim({ paired: true, userConfig: false });
+		try {
+			const f = n.file("p.txt", "one\n");
+			const r = spawnSync(
+				"nvim",
+				n.args(["-c", "lua io.stdout:write(tostring(require('nvconf.pi_fleet').paired()) .. ':' .. tostring(vim.fn.exists(':PiHelp')) .. '\\n')", "-c", "qa!", f]),
+				{ cwd: n.work, env: { ...n.env, ...extra }, encoding: "utf8", timeout: 30_000 },
+			);
+			assert.equal(r.status, 0, `${what}: ${r.stderr}`);
+			assert.match(r.stdout, want ? /true:2/ : /false:0/, what);
+		} finally {
+			rmSync(n.root, { recursive: true, force: true });
+		}
+	}
+});
+
 // ---------------------------------------------------------------- nvim.ts in a fake pi
 
 function fakePi() {
@@ -459,6 +558,38 @@ nvimTest("nvim.ts: edit/write tool results reload the paired nvim; user_edit han
 	}
 });
 
+test("nvim.ts: a duplicate pi (live prior claim) neither pairs nor patches status at session start", async () => {
+	const runtime = mkdtempSync(join(tmpdir(), "pfd-"));
+	const saved = process.env.PI_FLEET_RUNTIME_DIR;
+	process.env.PI_FLEET_RUNTIME_DIR = runtime;
+	const session = "00000000-dupl-4000-8000-000000000005";
+	const srv = createServer(() => {});
+	await new Promise<void>((r) => srv.listen(join(runtime, `${session}.nvim.sock`), () => r()));
+	try {
+		const run = async (prior: any) => {
+			const { pi, fire } = fakePi();
+			const shared = fleetOf(pi);
+			shared.main = true;
+			shared.prior = prior;
+			const patches: any[] = [];
+			shared.status = { patch: (f: any) => patches.push(f), ack() {}, current: () => ({}) } as any;
+			register(pi);
+			await fire("session_start", { reason: "startup" }, { cwd: runtime, mode: "tui", sessionManager: { getSessionId: () => session } });
+			await sleep(100);
+			return patches;
+		};
+		const live = { host: hostname(), pid: process.pid, heartbeat: new Date().toISOString() };
+		assert.deepEqual(await run(live), [], "duplicate: no status patch");
+		const fresh = await run(undefined);
+		assert.equal(fresh[0]?.nvimSock, join(runtime, `${session}.nvim.sock`), "control: the peer is patched in");
+	} finally {
+		srv.close();
+		if (saved === undefined) delete process.env.PI_FLEET_RUNTIME_DIR;
+		else process.env.PI_FLEET_RUNTIME_DIR = saved;
+		rmSync(runtime, { recursive: true, force: true });
+	}
+});
+
 const haveTmux = spawnSync("tmux", ["-V"], { stdio: "ignore", timeout: 5000 }).status === 0;
 const tmuxTest = haveNvim && haveTmux ? test : test.skip;
 
@@ -471,7 +602,7 @@ tmuxTest("nvim.ts in tmux: TUI pairs at session start (once, never in RPC), an e
 	mkdirSync(join(root, "home"));
 	writeFileSync(
 		init,
-		`vim.opt.rtp:prepend(${JSON.stringify(nvimDir)})\nif (vim.env.PI_FLEET_SESSION or "") ~= "" then require("nvconf.pi_fleet").setup() end\n`,
+		`vim.opt.rtp:prepend(${JSON.stringify(nvimDir)})\n${PAIRED_LUA}\n`,
 	);
 	const tenv: NodeJS.ProcessEnv = {
 		PATH: process.env.PATH,
@@ -570,6 +701,30 @@ cfgTest("user config: nvim --headless -c 'qa!' is clean, paired and unpaired", (
 			assert.equal(r.status, 0, `exit status (paired=${paired}): ${out}`);
 			assert.doesNotMatch(out, ERROR_RE, `paired=${paired}`);
 			assert.doesNotMatch(out, /pi ▸/, `no pi-fleet warnings (paired=${paired})`);
+		} finally {
+			rmSync(n.root, { recursive: true, force: true });
+		}
+	}
+});
+
+cfgTest("user config: an nvim from the agent's bash (PI_FLEET_SESSION only) or nested ($NVIM) edits normally", () => {
+	for (const [what, extra] of [
+		["session only", { PI_FLEET_CTL_SOCK: "" }],
+		["nested", { NVIM: "/tmp/parent.sock" }],
+	] as [string, NodeJS.ProcessEnv][]) {
+		const n = new Nvim({ paired: true, userConfig: true });
+		try {
+			const f = n.file("w.txt", "abc\n");
+			const r = spawnSync("nvim", n.args(["-c", "normal Ax", "-c", "wq", f]), {
+				cwd: n.work,
+				env: { ...n.env, ...extra },
+				encoding: "utf8",
+				timeout: 60_000,
+			});
+			const out = (r.stdout ?? "") + (r.stderr ?? "");
+			assert.equal(r.status, 0, `${what}: exit status: ${out}`);
+			assert.equal(readFileSync(f, "utf8"), "abcx\n", `${what}: written`);
+			assert.doesNotMatch(out, /pi ▸|E45/, what);
 		} finally {
 			rmSync(n.root, { recursive: true, force: true });
 		}

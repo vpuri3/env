@@ -25,14 +25,22 @@ export interface UserEditMessage {
 	mode: UserEditMode;
 	/** Absolute path of the written file (resolved by nvim). */
 	path: string;
-	/** Unified diff (vim.text.diff, no file header), old disk text → new text. "" when unchanged. */
+	/**
+	 * Unified diff (vim.text.diff, no file header), old disk text → new text. nvim does not send
+	 * unchanged writes. `truncated && diff === ""` means the file was too large to diff (over
+	 * 4 MiB before or after the write) or no diff could be built: the change is unknown, read
+	 * the file.
+	 */
 	diff: string;
 	/** Lines added / removed in `diff`. */
 	added: number;
 	removed: number;
 	/** True when the file did not exist before this write. */
 	created: boolean;
-	/** True when `diff` was cut to `maxDiffBytes` in nvim (the line cap of 120 is edits.ts's job). */
+	/**
+	 * True when `diff` was cut in nvim (48 KiB, then further to fit CONTROL_MAX_LINE; the line
+	 * cap of 120 is edits.ts's job), or is "" because the file was too large (see `diff`).
+	 */
 	truncated: boolean;
 	/** $PI_FLEET_SESSION of the sending nvim; receivers may drop messages for another session. */
 	session: string;
@@ -50,7 +58,10 @@ export interface KillMessage {
 
 export type ControlMessage = UserEditMessage | PingMessage | KillMessage;
 
-/** Optional one-line reply written back by the socket server. nvim ignores replies. */
+/**
+ * One-line reply written back by the socket server for every line. nvim (pi_fleet.lua
+ * M.send) reads it within its 1 s budget and warns with `error` on ok:false.
+ */
 export interface ControlReply {
 	ok: boolean;
 	error?: string;
