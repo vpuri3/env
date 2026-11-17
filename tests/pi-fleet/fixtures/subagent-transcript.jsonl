@@ -1,0 +1,9 @@
+{"type":"session","version":3,"id":"00000000-0000-7000-8000-00000000a005","timestamp":"2026-11-17T10:00:00.000Z","cwd":"/project/me/alpha/sub","parentSession":"x.jsonl"}
+{"type":"custom","customType":"pi-subagent:thread:v1","data":{"rootId":"00000000-0000-7000-8000-00000000a003","threadPath":"/runner"},"id":"t0000001","parentId":null}
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"run the thing"}]},"id":"t0000002","parentId":"t0000001"}
+{"type":"message","message":{"role":"assistant","content":[{"type":"thinking","thinking":"I should look at\nthe logs first"},{"type":"text","text":"Checking the logs.\u001b[2J"},{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"tail -n 5\nrun.log"}}]},"id":"t0000003","parentId":"t0000002"}
+{"type":"message","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","isError":false,"content":[{"type":"text","text":"loss 0.12"}]},"id":"t0000004","parentId":"t0000003"}
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"c2","name":"read","arguments":{"path":"/w/missing\u001b]0;pwn\u0007.py"}}]},"id":"t0000005","parentId":"t0000004"}
+{"type":"message","message":{"role":"toolResult","toolCallId":"c2","toolName":"read","isError":true,"content":[{"type":"text","text":"ENOENT"}]},"id":"t0000006","parentId":"t0000005"}
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"c3","name":"grep","arguments":{"pattern":"loss","path":"."}}]},"id":"t0000007","parentId":"t0000006"}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"The run finished:\nloss 0.12"}]},"id":"t0000008","parentId":"t0000007"}

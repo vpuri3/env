@@ -24,6 +24,12 @@
  *   The sessions dir is $PI_CODING_AGENT_SESSION_DIR, else $PI_CODING_AGENT_DIR/sessions, else
  *   ~/.pi/agent/sessions; the cache dir is $PI_FLEET_CACHE_DIR, else $XDG_CACHE_HOME/pi-fleet,
  *   else ~/.cache/pi-fleet. Readers merge live status files over this (sessions-view.ts).
+ *   - subagentFile(root, path): a thread's own session file when its registry view has no
+ *     `sessionFile` (folded threads carry it when it has).
+ *
+ * Transcript tails (the dashboard's subagent preview): TranscriptTails reads the last
+ * TAIL_BYTES of a session file asynchronously, cached by (size, mtime); transcriptItems() turns
+ * them into assistant text, thinking and one-line tool calls.
  *
  * The registry format is private to pi-subagent-manager. The fold never throws: unknown or
  * malformed entries set `formatError` and unknown states count as `unknown` ("?" in the UI).
@@ -34,6 +40,7 @@
 
 import { execFileSync } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -61,6 +68,8 @@ export interface FoldedThread {
 	state: string;
 	task?: string;
 	updatedAt?: number;
+	/** The thread's own session JSONL (pi-subagent-manager's view.sessionFile), once it has one. */
+	sessionFile?: string;
 }
 
 export interface SubagentCounts {
@@ -88,6 +97,7 @@ function threadFrom(record: unknown): FoldedThread | undefined {
 		state: typeof view.state === "string" ? view.state : "?",
 		task: typeof view.task === "string" ? view.task : undefined,
 		updatedAt: typeof view.updatedAt === "number" ? view.updatedAt : undefined,
+		sessionFile: typeof view.sessionFile === "string" && view.sessionFile ? view.sessionFile : undefined,
 	};
 }
 
@@ -215,6 +225,7 @@ export class RegistryFold {
 				if (typeof view.type === "string") next.type = view.type;
 				if (typeof view.task === "string") next.task = view.task;
 				if (typeof view.updatedAt === "number") next.updatedAt = view.updatedAt;
+				if (typeof view.sessionFile === "string" && view.sessionFile) next.sessionFile = view.sessionFile;
 				this.threads.set(current.path, next);
 			}
 		}
@@ -302,7 +313,7 @@ export function isSubagentSession(session: SessionLike): boolean {
 // ---------------------------------------------------------------- session index (§6)
 
 export const HEAD_BYTES = 16 * 1024;
-const INDEX_VERSION = 1;
+const INDEX_VERSION = 2; // 2: threads carry sessionFile
 const TASK_CHARS = 200;
 const LAST_ASSISTANT_CHARS = 2000;
 
@@ -550,6 +561,20 @@ export class SessionIndex {
 	}
 
 	/**
+	 * The session file of a main's subagent thread: the scanned subagent file whose thread entry
+	 * names this root and path (newest if a thread was resumed into another file). For threads
+	 * whose registry view has no sessionFile (older pi-subagent-manager). Uses the last scan().
+	 */
+	subagentFile(rootId: string, threadPath: string): string | undefined {
+		let best: IndexEntry | undefined;
+		for (const entry of this.files.values()) {
+			if (!entry.subagent || entry.rootId !== rootId || entry.threadPath !== threadPath) continue;
+			if (!best || best.mtimeMs < entry.mtimeMs) best = entry;
+		}
+		return best?.path;
+	}
+
+	/**
 	 * The folded detail of a scanned file, recomputed only when its size or mtime changed.
 	 * `settleMs`: a file written to within that long keeps its existing detail (a session being
 	 * written without a status file is not re-folded on every scan); refolded once it settles.
@@ -615,6 +640,99 @@ export class SessionIndex {
 			this.lastSave = now;
 		} catch {
 			// a cache only
+		}
+	}
+}
+
+// ---------------------------------------------------------------- transcript tails (§9)
+
+/** One line of a subagent's recent transcript, as the dashboard preview shows it. */
+export interface TranscriptItem {
+	kind: "text" | "thinking" | "tool";
+	/** Raw text (text/thinking may hold line breaks); the view sanitizes it. */
+	text: string;
+	/** Tool calls: "ok" / "error" once its result is in the tail, else undefined. */
+	result?: "ok" | "error";
+}
+
+/** At most this much of the end of a session file is read for a preview. */
+export const TAIL_BYTES = 256 * 1024;
+const TOOL_ARG_CHARS = 200;
+
+/** `name target` for a tool call: its command, pattern, query or path, else its arguments. */
+export function toolCallLine(name: string, args: unknown): string {
+	const a = isObject(args) ? args : {};
+	const pick = ["command", "pattern", "query", "path", "file_path", "url", "task", "message"].map((k) => a[k]).find((v) => typeof v === "string" && v);
+	let target = typeof pick === "string" ? pick : Object.keys(a).length ? JSON.stringify(a) : "";
+	// Whitespace only: escape sequences stay whole for the view's sanitizer (oneLine) to drop.
+	target = target.replace(/\s+/g, " ").trim();
+	if (target.length > TOOL_ARG_CHARS) target = `${target.slice(0, TOOL_ARG_CHARS - 1)}…`;
+	return target ? `${name} ${target}` : name;
+}
+
+/**
+ * The recent transcript in `text` (the end of a session JSONL; `cut`: the first line may be a
+ * partial one and is dropped): assistant text, thinking and tool calls in file order, the last
+ * `max` of them. Tool calls are marked by their result when it is in the text too.
+ */
+export function transcriptItems(text: string, cut: boolean, max = 60): TranscriptItem[] {
+	const lines = text.split("\n");
+	if (cut) lines.shift();
+	const items: TranscriptItem[] = [];
+	const calls = new Map<string, TranscriptItem>();
+	for (const entry of parseJsonl(lines.join("\n"))) {
+		if (entry.type !== "message" || !isObject(entry.message)) continue;
+		const m = entry.message;
+		if (m.role === "toolResult") {
+			const call = typeof m.toolCallId === "string" ? calls.get(m.toolCallId) : undefined;
+			if (call) call.result = m.isError ? "error" : "ok";
+			continue;
+		}
+		if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+		for (const block of m.content) {
+			if (!isObject(block)) continue;
+			if (block.type === "text" && typeof block.text === "string" && block.text.trim()) items.push({ kind: "text", text: block.text.trim() });
+			else if (block.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim()) items.push({ kind: "thinking", text: block.thinking.trim() });
+			else if (block.type === "toolCall" && typeof block.name === "string") {
+				const item: TranscriptItem = { kind: "tool", text: toolCallLine(block.name, block.arguments) };
+				if (typeof block.id === "string") calls.set(block.id, item);
+				items.push(item);
+			}
+		}
+	}
+	return items.slice(-max);
+}
+
+/**
+ * Transcript tails of session files: the last TAIL_BYTES read asynchronously, parsed once per
+ * (size, mtime). One per dashboard (no module-level state).
+ */
+export class TranscriptTails {
+	private cache = new Map<string, { size: number; mtimeMs: number; items: TranscriptItem[] }>();
+	private bytes: number;
+
+	constructor(opts: { bytes?: number } = {}) {
+		this.bytes = opts.bytes ?? TAIL_BYTES;
+	}
+
+	/** The items of `path`, or undefined if it cannot be read. */
+	async get(path: string): Promise<TranscriptItem[] | undefined> {
+		let fh: Awaited<ReturnType<typeof open>> | undefined;
+		try {
+			fh = await open(path, "r");
+			const st = await fh.stat();
+			const hit = this.cache.get(path);
+			if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.items;
+			const start = Math.max(0, st.size - this.bytes);
+			const buf = Buffer.alloc(st.size - start);
+			const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+			const items = transcriptItems(buf.subarray(0, bytesRead).toString("utf8"), start > 0);
+			this.cache.set(path, { size: st.size, mtimeMs: st.mtimeMs, items });
+			return items;
+		} catch {
+			return undefined;
+		} finally {
+			await fh?.close().catch(() => {});
 		}
 	}
 }

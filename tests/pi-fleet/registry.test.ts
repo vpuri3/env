@@ -3,16 +3,20 @@
 // 1.7.1), anonymised: ids, paths, types and every free-text field replaced, other entries dropped.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	REGISTRY_DELTA_ENTRY,
 	REGISTRY_ENTRY,
 	RegistryFold,
 	THREAD_ENTRY,
+	TranscriptTails,
 	branchOf,
 	countSubagents,
 	isSubagentSession,
 	parseJsonl,
+	transcriptItems,
 	type EntryLike,
 } from "../../pi/extensions/fleet/registry.ts";
 
@@ -140,4 +144,42 @@ test("isSubagentSession: thread entry or parentSession + subagent name; forks ar
 	assert.equal(isSubagentSession(session({ parentSession: "/p.jsonl" }, [], "my fork")), false);
 	assert.equal(isSubagentSession(session({ parentSession: "/p.jsonl" }, [])), false);
 	assert.equal(isSubagentSession(session({}, [], "coder /fix-bug")), false);
+});
+
+test("threads carry their session file (full records and deltas)", () => {
+	const fold = new RegistryFold().update(branch);
+	assert.equal(fold.threads.get("/agent-1")?.sessionFile, "<sessionFile>");
+	const reg = (sessionFile?: string) => ({ type: "custom", customType: REGISTRY_ENTRY, id: "r1", parentId: null, data: { version: 1, rootSessionId: "x", threads: [{ view: { path: "/a", type: "t", state: "running", sessionFile } }] } });
+	assert.equal(new RegistryFold().update([reg("/s/a.jsonl")]).threads.get("/a")?.sessionFile, "/s/a.jsonl");
+	const delta = { type: "custom", customType: REGISTRY_DELTA_ENTRY, id: "r2", parentId: "r1", data: { version: 1, rootSessionId: "x", changes: [{ path: "/a", view: { sessionFile: "/s/b.jsonl" } }] } };
+	assert.equal(new RegistryFold().update([reg(), delta]).threads.get("/a")?.sessionFile, "/s/b.jsonl");
+});
+
+test("transcript tails: bounded read, a cut first line dropped, cached by size and mtime", async () => {
+	const fixtureText = readFileSync(new URL("./fixtures/subagent-transcript.jsonl", import.meta.url), "utf8");
+	const all = transcriptItems(fixtureText, false);
+	assert.deepEqual(all.map((i) => `${i.kind}:${i.result ?? ""}`), ["thinking:", "text:", "tool:ok", "tool:error", "tool:", "text:"]);
+	assert.equal(all[2]!.text, "bash tail -n 5 run.log");
+	assert.equal(transcriptItems(fixtureText, false, 2).length, 2);
+	const dir = mkdtempSync(join(tmpdir(), "pft-"));
+	try {
+		const file = join(dir, "s.jsonl");
+		writeFileSync(file, fixtureText);
+		utimesSync(file, 1_700_000_000, 1_700_000_000); // whole seconds: restorable exactly
+		// Only the last 300 bytes: the line they start in is dropped, the last message survives.
+		const tails = new TranscriptTails({ bytes: 300 });
+		const items = (await tails.get(file))!;
+		assert.ok(items.length >= 1 && items.length < all.length, `${items.length}`);
+		assert.deepEqual(items.at(-1), all.at(-1));
+		// Same size and mtime: the cached parse, even though the bytes changed.
+		const st = statSync(file);
+		writeFileSync(file, fixtureText.replace("finished", "FINISHED"));
+		utimesSync(file, st.atime, st.mtime);
+		assert.equal((await tails.get(file))!.at(-1)!.text, "The run finished:\nloss 0.12");
+		utimesSync(file, st.atime, new Date(st.mtimeMs + 5000));
+		assert.equal((await tails.get(file))!.at(-1)!.text, "The run FINISHED:\nloss 0.12");
+		assert.equal(await tails.get(join(dir, "missing.jsonl")), undefined);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 });
