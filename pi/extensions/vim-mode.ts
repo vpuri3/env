@@ -29,6 +29,8 @@
  *   Space f s        grep;  Space f h  slash commands (inserted into the prompt)
  *   Space g s        :Git (fugitive) in the paired nvim;  Space t  tool output picker
  *   The mode line shows ␣… while pending; any other key, Esc or 1 s without a key cancels.
+ *   While a fleet view takes the screen (pi.events "pi-fleet:overlay" {name, open}), neither
+ *   the transcript cursor nor the prompt's cursor is drawn.
  *
  * INSERT mode: everything goes to the prompt. Esc -> NORMAL.
  *   ctrl+p / ctrl+n act as up / down (previous/next line, history, autocomplete menu).
@@ -86,6 +88,8 @@ let agentBusy: () => boolean = () => false;
 let hasQueued: () => boolean = () => false;
 // Runs a leader action (set in session_start: emits pi-fleet:action on pi.events).
 let leaderAction: (name: string) => void = () => {};
+// Fleet views open now (pi-fleet:overlay); while any is, no cursor is drawn.
+const openOverlays = new Set<string>();
 
 /** Leader key sequences (after Space) and the pi-fleet action each one emits. */
 export const LEADER_MAPS: Readonly<Record<string, string>> = {
@@ -101,6 +105,13 @@ export const LEADER_MAPS: Readonly<Record<string, string>> = {
 export const LEADER_TIMEOUT_MS = 1000;
 /** pi.events channel; the handler sets `handled = true` synchronously when it takes the action. */
 export const FLEET_ACTION_EVENT = "pi-fleet:action";
+/** pi.events channel: `{ name, open }` when a pi-fleet view opens or closes (cursors hidden meanwhile). */
+export const FLEET_OVERLAY_EVENT = "pi-fleet:overlay";
+
+/** True while a pi-fleet view is open (tests). */
+export function overlayOpen(): boolean {
+	return openOverlays.size > 0;
+}
 
 function findBox(box: any, scrollView: any): any {
 	if (!box) return undefined;
@@ -660,8 +671,9 @@ function withVim(Base: any) {
 		installCopyLayer(this.screen);
 		let lines = super.render(width);
 		if (lines.length === 0) return lines;
-		// One cursor at a time: hide the prompt's block cursor while the transcript has it.
-		if (this.mode === "normal") lines = lines.map((l) => l.split(FAKE_CURSOR_START).join("").split(FAKE_CURSOR_END).join(""));
+		// One cursor at a time: hide the prompt's block cursor while the transcript has it
+		// (or a fleet view has the keyboard).
+		if (this.mode === "normal" || openOverlays.size) lines = lines.map((l) => l.split(FAKE_CURSOR_START).join("").split(FAKE_CURSOR_END).join(""));
 		let label = " INSERT ";
 		if (this.mode === "normal") {
 			label = this.leader !== undefined ? ` ␣${this.leader}… ` : !this.anchor ? " NORMAL " : this.lineSelect ? " V-LINE " : " VISUAL ";
@@ -730,6 +742,7 @@ function paintCells(line: string, from: number, to: number, style: string): stri
 function drawCopyLayer(tui: any, screen: string[], layout: any): string[] {
 	const ed = currentEditor;
 	if (!ed || ed.mode !== "normal" || !layout) return screen;
+	const hideCursor = openOverlays.size > 0;
 	const view = layout.primaryScrollView ?? tui.implicitScrollView;
 	const box = findBox(layout.root, view);
 	if (!box?.scrollContentLines) return screen;
@@ -755,7 +768,7 @@ function drawCopyLayer(tui: any, screen: string[], layout: any): string[] {
 		if (cols && cols[1] > cols[0]) {
 			line = paintCells(line, box.rect.x + cols[0], box.rect.x + Math.min(maxCol, cols[1]), SELECTION);
 		}
-		if (row === ed.cursor.row && ed.cursor.col < maxCol) {
+		if (!hideCursor && row === ed.cursor.row && ed.cursor.col < maxCol) {
 			const cells = toCells(box.scrollContentLines[row] ?? "");
 			const cell = cells.find((x) => ed.cursor!.col < x.end);
 			const w = cell ? cell.end - cell.start : 1;
@@ -790,6 +803,14 @@ function setSearchHighlight(tui: any): void {
 }
 
 export default function (pi: ExtensionAPI) {
+	pi.events?.on?.(FLEET_OVERLAY_EVENT, (data: unknown) => {
+		const { name, open } = (data ?? {}) as { name?: unknown; open?: unknown };
+		const key = typeof name === "string" ? name : "?";
+		if (open === true) openOverlays.add(key);
+		else openOverlays.delete(key);
+		currentEditor?.invalidate?.();
+		currentEditor?.screen?.requestRender?.();
+	});
 	pi.on("session_start", (_event, ctx) => {
 		if (!ctx.hasUI) return;
 

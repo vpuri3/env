@@ -64,13 +64,18 @@ function setup(opts: { fleet?: boolean } = {}) {
 		scrollToBottom: () => (view.scrollTop = lines.length - view.viewportHeight),
 		scrollToTop: () => (view.scrollTop = 0),
 		getPrimaryScrollView: () => view,
-		currentLayout: { root: { scrollView: view, scrollContentLines: lines } },
+		currentLayout: {
+			root: { scrollView: view, scrollContentLines: lines, rect: { x: 0, y: 0, width: 80, height: 10 }, clip: { x: 0, y: 0, width: 80, height: 10 } },
+			primaryScrollView: view,
+		},
+		// pi-tui's mouse-selection pass; vim-mode draws its cursor and selection after it.
+		applySelection: (screen: string[]) => screen,
 	};
 	const theme = { borderColor: (s: string) => s, selectList: {} };
 	const editor = factory(tui, theme, new KeybindingsManager());
 	const feed = (...keys: string[]) => keys.forEach((k) => editor.handleInput(k));
 	const label = () => editor.render(80).at(-1) as string;
-	return { editor, feed, actions, notes, label, view };
+	return { editor, feed, actions, notes, label, view, tui, bus };
 }
 
 test("each leader map emits its pi-fleet:action from NORMAL mode", { skip }, () => {
@@ -191,4 +196,27 @@ test("without pi-fleet, a leader map says so", { skip }, () => {
 	const { feed, notes } = setup({ fleet: false });
 	feed(ESC, " ", "e");
 	assert.deepEqual(notes, ["pi-fleet not loaded"]);
+});
+
+test("while a fleet view is open (pi-fleet:overlay), no transcript cursor and no prompt cursor are drawn", { skip }, () => {
+	const { editor, feed, tui, bus } = setup();
+	const CURSOR = "\x1b[0;7m";
+	const FAKE = "\x1b_pi:fc\x07";
+	const screen = () => tui.applySelection(Array.from({ length: 10 }, (_: unknown, i: number) => `row ${30 + i} alpha beta gamma`), tui.currentLayout).join("\n");
+	editor.focused = true;
+	assert.ok(editor.render(80).join("").includes(FAKE), "INSERT: the prompt's cursor");
+	feed(ESC);
+	editor.render(80); // installs the copy layer
+	assert.ok(screen().includes(CURSOR), "NORMAL: the transcript cursor");
+	bus.emit(vim.FLEET_OVERLAY_EVENT, { name: "sessions", open: true });
+	assert.equal(vim.overlayOpen(), true);
+	assert.ok(!screen().includes(CURSOR));
+	feed("i");
+	assert.ok(!editor.render(80).join("").includes(FAKE));
+	feed(ESC);
+	bus.emit(vim.FLEET_OVERLAY_EVENT, { name: "sessions", open: false });
+	assert.equal(vim.overlayOpen(), false);
+	assert.ok(screen().includes(CURSOR), "back once it closed");
+	feed("i");
+	assert.ok(editor.render(80).join("").includes(FAKE));
 });
