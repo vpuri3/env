@@ -9,12 +9,8 @@
  * ctrl+o (app.tools.expand) toggles to pi's normal full rendering, unchanged.
  * The built-in renderers are always run, so expanding is instant and their state stays current.
  *
- * /view      pick a tool call from the current branch and open its full output in nvim -R
- * /view N    open the Nth most recent call directly (/view 1 = latest)
- *   edit -> unified diff, write -> written file, read -> file contents (both with the file's
- *   name, so nvim picks the filetype), bash -> command + complete output (the untruncated log
- *   when pi spilled it to disk), others -> arguments + output.
- *   Inside tmux it opens in a new tmux window; otherwise pi suspends until you quit nvim.
+ * A tool call's full output opens with `/view tool:N` from the fleet extension
+ * (fleet/tool-output.ts, fleet/view.ts), which reuses describe/textOf/shortPath from here.
  *
  * Setting "hideToolOutput" (settings.json, global or project): the ctrl+o state pi starts in.
  *   true (pi's default) = collapsed, false = expanded.
@@ -23,7 +19,6 @@
 
 import { type ExtensionAPI, getAgentDir, type ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -42,7 +37,7 @@ interface RowState {
 
 const STATE_KEY = "__compactTools";
 
-function textOf(result: Result | undefined): string {
+export function textOf(result: Result | undefined): string {
 	if (!result) return "";
 	return result.content
 		.filter((c) => c.type === "text" && c.text)
@@ -55,7 +50,7 @@ function lineCount(text: string): number {
 	return t ? t.split("\n").length : 0;
 }
 
-function shortPath(p: unknown, cwd: string | undefined): string {
+export function shortPath(p: unknown, cwd: string | undefined): string {
 	if (typeof p !== "string" || !p) return "";
 	let abs = p;
 	if (cwd && !path.isAbsolute(p)) abs = path.resolve(cwd, p);
@@ -79,7 +74,7 @@ function duration(ms: number | undefined): string {
 }
 
 /** [target, stats] for the collapsed line. */
-function describe(tool: string, args: any, result: Result | undefined, ctx: any): [string, string[]] {
+export function describe(tool: string, args: any, result: Result | undefined, ctx: any): [string, string[]] {
 	const a = args ?? {};
 	const out = textOf(result);
 	const done = result && !ctx?.isPartial;
@@ -250,98 +245,6 @@ function wrap(tool: string, base: ToolRenderers): ToolRenderers {
 	} as ToolRenderers;
 }
 
-// ---------------------------------------------------------------------------
-// /view
-
-interface Call {
-	id: string;
-	name: string;
-	args: any;
-	result?: Result & { isError?: boolean };
-}
-
-const VIEW_ROOT = path.join(os.tmpdir(), "pi-view");
-
-function collectCalls(ctx: any): Call[] {
-	const calls: Call[] = [];
-	const results = new Map<string, any>();
-	for (const entry of ctx.sessionManager.getBranch()) {
-		if (entry.type !== "message") continue;
-		const m = entry.message;
-		if (m.role === "assistant" && Array.isArray(m.content)) {
-			for (const b of m.content) {
-				if (b.type === "toolCall") calls.push({ id: b.id, name: b.name, args: b.arguments });
-			}
-		} else if (m.role === "toolResult") {
-			results.set(m.toolCallId, m);
-		}
-	}
-	for (const c of calls) c.result = results.get(c.id);
-	return calls;
-}
-
-function label(c: Call, n: number, cwd: string): string {
-	const ctx = { cwd, isError: c.result?.isError, isPartial: !c.result };
-	const [target, stats] = describe(c.name, c.args, c.result, ctx);
-	const mark = !c.result ? "…" : c.result.isError ? "✗" : "✓";
-	const t = target.length > 70 ? target.slice(0, 69) + "…" : target;
-	return `${String(n).padStart(2)}. ${mark} ${c.name}  ${t}${stats.length ? "  · " + stats.join(" · ") : ""}`;
-}
-
-/** File name (drives nvim's filetype detection) and contents for a call. */
-function document(c: Call, cwd: string): { name: string; text: string } {
-	const a = c.args ?? {};
-	const out = textOf(c.result);
-	const base = typeof a.path === "string" && a.path ? path.basename(a.path) : "";
-	const argLines = Object.entries(a)
-		.map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v, null, 2)}`)
-		.join("\n");
-	switch (c.name) {
-		case "edit": {
-			const patch: string | undefined = c.result?.details?.patch;
-			if (patch) return { name: `${base || "edit"}.diff`, text: `# ${shortPath(a.path, cwd)}\n${patch}` };
-			return { name: `${base || "edit"}.edit.txt`, text: `${argLines}\n\n--- result ---\n${out}` };
-		}
-		case "write":
-			if (typeof a.content === "string") return { name: base || "write.txt", text: a.content };
-			break;
-		case "read":
-			if (!c.result?.isError && out) return { name: base || "read.txt", text: out };
-			break;
-		case "bash":
-		case "powershell": {
-			let body = out;
-			const full = c.result?.details?.fullOutputPath;
-			if (typeof full === "string" && fs.existsSync(full)) body = fs.readFileSync(full, "utf8");
-			return { name: `${c.name}.log`, text: `$ ${a.command ?? ""}\n\n${body}` };
-		}
-	}
-	return { name: `${c.name}.txt`, text: `${argLines}\n\n--- result ---\n${out}` };
-}
-
-function hasNvim(): boolean {
-	return !spawnSync("nvim", ["--version"], { stdio: "ignore" }).error;
-}
-
-async function openInNvim(file: string, title: string, ctx: any): Promise<void> {
-	if (process.env.TMUX) {
-		const r = spawnSync("tmux", ["new-window", "-n", title, "-c", ctx.cwd, "nvim", "-R", file], {
-			stdio: "ignore",
-		});
-		if (!r.error && r.status === 0) return;
-	}
-	// Not in tmux (or tmux failed): hand the terminal to nvim, resume pi when it exits.
-	await ctx.ui.custom((tui: any, _theme: any, _kb: any, done: (v: undefined) => void) => {
-		tui.stop();
-		process.stdout.write("\x1b[2J\x1b[H");
-		spawnSync("nvim", ["-R", file], { stdio: "inherit", cwd: ctx.cwd });
-		tui.start();
-		tui.requestRender(true);
-		done(undefined);
-		return { render: () => [], invalidate() {} };
-	});
-}
-
 const HIDE_KEY = "hideToolOutput";
 
 /** Write one key into the global settings.json, keeping everything else. */
@@ -380,45 +283,6 @@ export default function (pi: ExtensionAPI) {
 			}
 			ctx.ui.notify(`Tool output ${hide ? "hidden" : "shown"} (saved "${HIDE_KEY}": ${hide})`, "info");
 		},
-	});
-
-	pi.registerCommand("view", {
-		description: "Open a tool call's full output in nvim (/view N: Nth most recent)",
-		handler: async (args: string, ctx: any) => {
-			if (!ctx.hasUI) return;
-			const cwd = ctx.cwd ?? ctx.sessionManager.getCwd();
-			const calls = collectCalls(ctx).reverse(); // newest first
-			if (calls.length === 0) return ctx.ui.notify("No tool calls in this session yet", "info");
-			if (!hasNvim()) return ctx.ui.notify("nvim not found on PATH", "error");
-
-			let index: number;
-			const n = Number.parseInt(String(args ?? "").trim(), 10);
-			if (Number.isFinite(n)) {
-				if (n < 1 || n > calls.length) return ctx.ui.notify(`/view: pick 1..${calls.length}`, "error");
-				index = n - 1;
-			} else {
-				const labels = calls.map((c, i) => label(c, i + 1, cwd));
-				const choice = await ctx.ui.select("Open in nvim", labels);
-				if (choice === undefined) return;
-				index = labels.indexOf(choice);
-				if (index < 0) return;
-			}
-
-			const call = calls[index]!;
-			const { name, text } = document(call, cwd);
-			const dir = path.join(VIEW_ROOT, String(process.pid), call.id.replace(/[^\w.-]/g, "_"));
-			fs.mkdirSync(dir, { recursive: true });
-			const file = path.join(dir, name);
-			fs.writeFileSync(file, text.endsWith("\n") ? text : text + "\n");
-			await openInNvim(file, `pi:${call.name}`, { ...ctx, cwd, ui: ctx.ui });
-		},
-	});
-
-	// Temp files are per pi process; remove them when it exits.
-	pi.on("session_shutdown", () => {
-		try {
-			fs.rmSync(path.join(VIEW_ROOT, String(process.pid)), { recursive: true, force: true });
-		} catch {}
 	});
 
 	pi.registerToolRenderer((toolName, next) => {
