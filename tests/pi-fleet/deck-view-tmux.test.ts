@@ -5,6 +5,7 @@
 // harness: a harness server whose pane runs a real client of an outer server, which opens the deck popup.
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -159,6 +160,77 @@ test("a subagent row previews its transcript in the holder (fs.watch on its JSON
 		// The subagent writes on: the holder follows (fs.watch on its JSONL, no timer).
 		appendFileSync(sub, line({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "fresh tail line" }] }, id: "t9", parentId: "t0000004" }));
 		await waitList(d, "the new tail", () => /fresh tail line/.test(d.slotScreen()), 3000);
+	} finally {
+		d.close();
+	}
+});
+
+const haveLess = spawnSync("less", ["--version"], { stdio: "ignore" }).status === 0;
+
+test("a closed row: the holder previews its conversation; C-l opens it in less in the slot, q returns, moving on restores the holder, Enter in less resumes it", { skip: skip || (!haveLess && "less not installed"), timeout: 90_000 }, async () => {
+	const d = deck();
+	try {
+		const root = "00000000-0000-7000-8000-0000000f0101";
+		const dir = join(d.sessions, "--work--");
+		mkdirSync(dir, { recursive: true });
+		let n = 0;
+		const entry = (o: Record<string, unknown>) => `${JSON.stringify({ ...o, id: `e${++n}`, parentId: n > 1 ? `e${n - 1}` : null })}\n`;
+		const msg = (role: string, content: unknown, extra: Record<string, unknown> = {}) => entry({ type: "message", message: { role, content, ...extra } });
+		let body = entry({ type: "session_info", name: "old chat" }) + msg("user", "please read MARKER-USER") + msg("assistant", [{ type: "text", text: "MARKER-FIRST-ANSWER" }]);
+		for (let i = 0; i < 60; i++) body += msg("assistant", [{ type: "text", text: `filler line ${i}` }]);
+		body += msg("assistant", [{ type: "toolCall", id: "c1", name: "bash", arguments: { command: "echo hi" } }]);
+		body += msg("toolResult", [{ type: "text", text: "TOOL-OUTPUT-MARK" }], { toolCallId: "c1", toolName: "bash", isError: false });
+		body += msg("assistant", [{ type: "text", text: "MARKER-LAST-ANSWER" }]);
+		const file = join(dir, `2026-11-17T10-00-00-000Z_${root}.jsonl`);
+		writeFileSync(file, `${JSON.stringify({ type: "session", version: 3, id: root, timestamp: "2026-11-17T10:00:00.000Z", cwd: d.work })}\n${body}`);
+		d.start();
+		await waitList(d, "the closed-only repo group", () => /^.▸ .*\(1 closed\)/m.test(d.listScreen()));
+		d.keys("/", "old chat", "Escape");
+		await waitList(d, "old chat selected, NORMAL", () => /^› .*old chat/m.test(d.listScreen()) && /^╭─ NORMAL /m.test(d.listScreen()));
+		// Hover: the card, then the end of the conversation.
+		await waitList(d, "the conversation preview", () => d.slot().role === "preview" && /── transcript/.test(d.slotScreen()) && /MARKER-LAST-ANSWER/.test(d.slotScreen()));
+		assert.match(d.slotScreen(), /✓ bash echo hi/);
+		const holder = d.slot().pane;
+		const deckWindow = () => d.panes().filter((p) => p.where.startsWith("deck:deck."));
+		const pagerOn = () => d.tryTmux(["display-message", "-p", "-t", holder, "#{@pi_fleet_pager}"]) ?? "";
+		const command = () => d.tmux(["display-message", "-p", "-t", holder, "#{pane_current_command}"]);
+		// C-l: less in the slot (the same holder pane), focused, at the end of the transcript.
+		const t0 = Date.now();
+		d.keys("C-l");
+		await waitList(d, "less in the slot", () => d.activeIndex() === "1" && /q\/C-h back · ⏎ resume/.test(d.slotScreen()) && /MARKER-LAST-ANSWER/.test(d.slotScreen()));
+		assert.ok(Date.now() - t0 < 3000, `pager after ${Date.now() - t0} ms`);
+		assert.equal(d.slot().pane, holder);
+		assert.equal(deckWindow().length, 2);
+		assert.notEqual(pagerOn(), "");
+		assert.match(d.slotScreen(), /│ TOOL-OUTPUT-MARK/);
+		// less keys: g to the top, / search.
+		d.tmux(["send-keys", "-t", "=deck:=deck.1", "g"]);
+		await waitList(d, "the top", () => /── old chat/.test(d.slotScreen()) && /please read MARKER-USER/.test(d.slotScreen()));
+		d.tmux(["send-keys", "-t", "=deck:=deck.1", "/filler line 42", "Enter"]);
+		await waitList(d, "the search hit on top", () => /^ {2}filler line 42/.test(d.slotScreen()));
+		// q: back to the list, the holder is a holder again (the card redrawn), nothing resumed.
+		d.tmux(["send-keys", "-t", "=deck:=deck.1", "q"]);
+		await waitList(d, "back in the list, the card again", () => d.activeIndex() === "0" && /── transcript/.test(d.slotScreen()) && command() === "sleep");
+		assert.equal(pagerOn(), "");
+		assert.deepEqual([d.slot().pane, deckWindow().length, d.slot().dead], [holder, 2, false]);
+		assert.ok(!d.panes().some((p) => p.role === "pi"), "q resumes nothing");
+		// C-l again, C-h (as the root binding does), move on: the holder gets its sleep back and shows the next frame.
+		d.keys("C-l");
+		await waitList(d, "less again", () => d.activeIndex() === "1" && /q\/C-h back/.test(d.slotScreen()));
+		d.tmux(["select-pane", "-t", "=deck:=deck.0"]);
+		d.keys("k");
+		await waitList(d, "the holder restored", () => command() === "sleep" && pagerOn() === "" && !/q\/C-h back/.test(d.slotScreen()));
+		assert.deepEqual([d.slot().pane, deckWindow().length], [holder, 2]);
+		// Enter in less: resumed as a pi in the deck, shown and focused.
+		d.keys("j");
+		await waitList(d, "the card", () => /── transcript/.test(d.slotScreen()));
+		d.keys("C-l");
+		await waitList(d, "less again", () => d.activeIndex() === "1" && /q\/C-h back/.test(d.slotScreen()));
+		d.tmux(["send-keys", "-t", "=deck:=deck.1", "Enter"]);
+		await waitList(d, "resumed in the slot", () => d.slot().role === "pi" && d.slot().session === root && d.activeIndex() === "1", 15_000);
+		await waitList(d, "the stub pi started on that file", () => /--session .*0000000f0101\.jsonl/.test(d.file(root, "runs")));
+		assert.equal(deckWindow().length, 2);
+		await waitList(d, "the holder back to sleep in the pool", () => command() === "sleep" && pagerOn() === "");
 	} finally {
 		d.close();
 	}

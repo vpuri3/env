@@ -198,11 +198,29 @@ top border, the query inside, the color legend on the bottom border), then key h
 | live deck session | its pi pane (or its nvim if toggled), swapped in on highlight |
 | subagent (Space expands; unfinished first, then completed/stopped/failed, newest first in each) | preview holder: transcript tail (existing renderer), refreshed on `fs.watch` of its JSONL while selected |
 | outside session (plain `pi` in the user's tmux) | preview holder: summary card + one `capture-pane -p -e` taken on highlight and on that session's status change (≤ 1/s); no timer |
-| closed / crashed-elsewhere / remote | preview holder: summary card (state, cwd, last assistant message, cost, subagents, Slurm jobs) |
+| closed / crashed-elsewhere | preview holder: summary card (state, cwd, cost, subagents, Slurm jobs), then the end of the conversation: user and assistant messages, thinking (last lines, dim), tool calls one line each (`deck-pager.ts`, the last 256 KB of the JSONL, more while it has < 12 turns) |
+| remote | preview holder: summary card (state, cwd, last assistant message, cost, subagents, Slurm jobs) |
 
 The **preview holder** is a pool pane running `stty -echo -icanon; printf '\e[?25l'; exec sleep
 2147483647` with `@pi_fleet_role=preview`. The TUI writes frames straight to its
 `#{pane_tty}`: no second node process, no IPC.
+
+**Transcript pager** (`C-l` on a closed, crashed or subagent row; `deck-pager.ts`). The list
+renders the whole active branch of the JSONL in-process (thinking folded to 3 lines, tool output
+to 8 lines of ≤ 300 chars, pre-wrapped to the slot width; a 9 MB session opens in ~0.3 s) into
+`<runtime dir>/deck-pager-<pid>.txt`, then in one tmux call swaps the holder into the slot,
+`respawn-pane -k`s it with `less -R -i -L +G` (the user's `LESS` ignored; starts at the end), marks
+it `@pi_fleet_pager=<token>` and focuses the slot. less over a custom pager: every less key works
+as the user knows it (j/k, C-d/C-u, C-f/C-b, g/G, `/` `?` n/N), and less ≥ 582 takes a lesskey
+source (`--lesskey-src`) whose `\r quit R` makes Enter exit with status 82; older less: `q`, then
+Enter in the list. The pane id, its role and the deck window's two panes never change, so
+reconcile and pane-died see nothing. When less exits, its sh unmarks the pane, sets
+`@deck_pager_exit <token>:<status>`, selects the list, sends the list SIGUSR2 and `exec`s the
+holder command again; the list reads and clears `@deck_pager_exit` after the reconcile: status 82
+resumes the session (Enter on the row), 0 redraws the card. `C-h` leaves less running in the slot
+(C-l goes back to it); moving the selection to another row first `respawn-pane -k`s the holder
+back to its `sleep`, so frames never land in a running less. A list that starts over a marked
+holder (a restart) restores it the same way.
 
 **Highlight → swap.** Moving the selection runs `swap-pane -d -s <pane> -t deck:deck.1` (~2 ms);
 key repeats faster than 30 ms are coalesced into one swap. Selection that lands on a session
@@ -232,7 +250,9 @@ popup (direct attach) the row flashes "runs in your tmux (window N)".
 | Mode | Key | Does |
 |---|---|---|
 | NORMAL | `j`/`k`, ↓/↑, `C-n`/`C-p`, PgUp/PgDn | move; the right slot follows |
-| | `Enter`, `C-l` | live deck row: focus the right pane. Closed row: resume into the pool, then focus. Outside row: jump there (above). Subagent: select its main |
+| | `Enter`, `C-l` | live deck row: focus the right pane. Outside row: jump there (above) |
+| | `Enter` | closed/crashed row: resume into the pool, then focus. Subagent: select its main |
+| | `C-l` | closed/crashed/subagent row: read its transcript in less in the right slot (above); `q` or `C-h` back to the list, Enter in less = Enter on the row |
 | | `Space` | expand subagents / collapse a repo group / show a repo's older closed sessions (`+N closed`) |
 | | `a` | new session in the highlighted row's repo (or header's) → shown and focused |
 | | `d` | kill with the inline confirm: `y`/Enter kill · `s` kill + scancel · `n`/Esc cancel (Slurm default: left running) |

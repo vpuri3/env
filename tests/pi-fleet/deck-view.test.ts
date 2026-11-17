@@ -128,9 +128,26 @@ function fakeOps(panes: DeckPane[] = PANES) {
 			};
 		},
 		squeue: async (ids: string[]) => ids.map((id) => ({ id, state: "RUNNING", time: "1:00" })),
+		conversation: async (file: string) => new (await import("../../pi/extensions/fleet/deck-pager.ts")).ConversationTails().get(file),
+		openPager: async (req: { token: string }) => {
+			calls.push(["pager", req]);
+			pagerToken = req.token;
+		},
+		closePager: async () => void calls.push(["closePager"]),
+		pagerExit: async () => {
+			const e = exit;
+			exit = undefined;
+			if (e) calls.push(["pagerExit", e.status]);
+			return e && { token: pagerToken!, status: e.status };
+		},
+		focusSlot: async () => void calls.push(["focusSlot"]),
 	};
+	let pagerToken: string | undefined;
+	let exit: { status: number } | undefined;
+	/** less exits with `status` (the next pagerExit reports it once). */
+	const lessExits = (status: number) => (exit = { status });
 	const of = (kind: string) => calls.filter((c) => c[0] === kind);
-	return { ops, calls, watchers, of };
+	return { ops, calls, watchers, of, lessExits: (status: number) => lessExits(status) };
 }
 
 /** A style whose selection survives strip() as a leading `▌` (the full-width line in reverse video). */
@@ -512,6 +529,146 @@ test("Enter / C-l: deck row focuses the slot; outside row jumps; closed resumes;
 	// q and C-c detach (close the popup); the list keeps running.
 	press(view, "q", "\x03");
 	assert.equal(of("detach").length, 2);
+});
+
+test("closed rows: the preview is the card then the end of the conversation; C-l reads the transcript (less in the holder), q back, Enter resumes, moving on restores the holder", { skip }, async () => {
+	const { view, clock, of, calls, lessExits } = makeView({ height: 30 });
+	const key = `m:${IDS.old}`;
+	view.selectSession(IDS.old);
+	await clock.advance(50);
+	assert.deepEqual(of("show"), [["show", "holder"]]);
+	const frame = (of("frame").at(-1)![1] as string[]).map(strip);
+	assert.match(frame[0]!, /^── start the old run ─+$/);
+	assert.ok(frame.includes(" ⏎ resume it in the deck · C-l read the transcript"), frame.join("\n"));
+	// The end of the conversation under the card: the user's message and the answer.
+	const at = frame.findIndex((l) => /^── transcript ─+$/.test(l));
+	assert.ok(at > 0, frame.join("\n"));
+	assert.deepEqual(frame.slice(at + 1), [" › start the old run", " the old run finished"]);
+	assert.match(screen(view, 100).at(-1)!, /⏎ resume {2}C-l read/);
+	// C-l: the pager, not a resume; the list writes no frames while it is open.
+	calls.length = 0;
+	press(view, KEY.ctrlL);
+	await clock.advance(50);
+	assert.equal(of("open").length, 0);
+	assert.equal(of("pager").length, 1);
+	assert.deepEqual({ ...(of("pager")[0]![1] as object), token: undefined }, { file: fx.files.old, title: "start the old run", enter: "resume", facts: [join(fx.repos.alpha, "sub")], width: 60, token: undefined });
+	assert.equal(view.pagerKey(), key);
+	view.refresh();
+	view.resized();
+	await clock.advance(50);
+	assert.equal(of("frame").length, 0, "no frames into less");
+	assert.equal(of("closePager").length, 0);
+	// Back with C-h (tmux), C-l again: the same pager, focused; not opened again.
+	press(view, KEY.ctrlL);
+	await clock.advance(50);
+	assert.deepEqual([of("pager").length, of("focusSlot").length], [1, 1]);
+	// q in less: the holder is a holder again (the list redraws its card), nothing resumed.
+	lessExits(0);
+	await view.checkPager();
+	await clock.advance(50);
+	assert.equal(view.pagerKey(), undefined);
+	assert.equal(of("frame").length, 1);
+	assert.match(strip((of("frame")[0]![1] as string[])[0]!), /^── start the old run/);
+	assert.equal(of("open").length, 0);
+	// Enter in less (PAGER_RESUME): resumed as a pi, as Enter on the row.
+	press(view, KEY.ctrlL);
+	await clock.advance(50);
+	assert.equal(of("pager").length, 2);
+	lessExits(dv.PAGER_RESUME);
+	await view.checkPager();
+	await clock.advance(50);
+	assert.deepEqual(of("open"), [["open", { session: fx.files.old, focus: true }]]);
+	// Enter on the row in the list resumes too (no pager involved).
+	view.selectSession(IDS.old);
+	await clock.advance(50);
+	press(view, KEY.enter);
+	await clock.advance(50);
+	assert.equal(of("open").length, 2);
+	// A pager open, the selection moves on: the holder gets its sleep back before the next frame.
+	view.selectSession(IDS.old);
+	await clock.advance(50);
+	press(view, KEY.ctrlL);
+	await clock.advance(50);
+	calls.length = 0;
+	view.selectSession(IDS.fork);
+	await clock.advance(50);
+	assert.deepEqual(calls.slice(0, 2).map((c) => c[0]), ["closePager", "frame"]);
+	assert.equal(view.pagerKey(), undefined);
+	assert.match(strip((of("frame")[0]![1] as string[])[0]!), /^── forked idea/);
+	// A stale exit (the killed pager's) changes nothing.
+	lessExits(0);
+	await view.checkPager();
+	assert.equal(of("pagerExit").length, 0, "no pager open: not even read");
+});
+
+test("deck-pager: the active branch; thinking folded, tool output cut, custom state skipped, escapes dropped; 10 MB renders in < 1 s", { skip }, async () => {
+	const dp = await import("../../pi/extensions/fleet/deck-pager.ts");
+	const lines: string[] = [];
+	let n = 0;
+	const add = (o: Record<string, unknown>, parent: string | null = n ? `e${n}` : null) => {
+		lines.push(JSON.stringify({ ...o, id: `e${++n}`, parentId: parent }));
+		return `e${n}`;
+	};
+	const msg = (role: string, content: unknown, extra: Record<string, unknown> = {}) => ({ type: "message", message: { role, content, ...extra } });
+	lines.push(JSON.stringify({ type: "session", version: 3, id: "s", cwd: "/w" }));
+	const fork = add({ type: "model_change", provider: "p", modelId: "m" });
+	add(msg("user", "first question"));
+	add(msg("assistant", [{ type: "text", text: "abandoned branch answer" }]));
+	add(msg("user", "the real question\x1b[2J"), fork);
+	add({ type: "custom", customType: "pi-subagent:registry:v1", data: { big: "x".repeat(5000), id: "nested", parentId: "nope" } });
+	add(msg("assistant", [{ type: "thinking", thinking: "t1\nt2\nt3\nt4\nt5" }, { type: "text", text: "an answer" }, { type: "toolCall", id: "c1", name: "bash", arguments: { command: "seq 20" } }]));
+	add(msg("toolResult", [{ type: "text", text: Array.from({ length: 20 }, (_, i) => `out ${i}`).join("\n") }], { toolCallId: "c1", toolName: "bash", isError: false }));
+	const hidden = add(msg("assistant", [{ type: "text", text: "edited away" }]));
+	add({ type: "context_edit", targetId: hidden, replacement: null });
+	add(msg("assistant", [{ type: "text", text: "the end" }]));
+	const turns = dp.parseConversation(lines.join("\n"));
+	const text = dp.pagerText(turns, 60, plainStyle, { title: "t", facts: ["/w"] }).replace(/\x1b\[[0-9;]*m/g, "");
+	assert.ok(!text.includes("abandoned") && !text.includes("first question"), "only the active branch");
+	assert.ok(!text.includes("edited away"), "context edits honoured");
+	assert.ok(text.includes("  the real question") && !text.includes("[2J"), text);
+	assert.ok(text.includes("  ┆ t3") && !text.includes("t4") && text.includes("┆ … 2 more lines of thinking"), text);
+	assert.ok(text.includes("  ✓ bash seq 20") && text.includes("    │ out 7") && !text.includes("out 8") && text.includes("│ … 12 more lines"), text);
+	assert.ok(text.includes("  the end"));
+	assert.deepEqual(dp.previewLines(turns, 40, 9, plainStyle), [" ◇ model p/m", " › the real question", " t2", " t3", " t4", " t5", " an answer", " ✓ bash seq 20", " the end"]);
+	// 10 MB: mostly subagent registry lines and tool output.
+	const big: string[] = [lines[0]!];
+	n = 0;
+	const reg = JSON.stringify({ data: "r".repeat(20_000) }).slice(1, -1);
+	while (big.reduce((a, l) => a + l.length, 0) < 10_000_000) {
+		big.push(`{"type":"custom","customType":"pi-subagent:registry-delta:v1",${reg},"id":"e${++n}","parentId":${n > 1 ? `"e${n - 1}"` : "null"}}`);
+		big.push(JSON.stringify({ ...msg("assistant", [{ type: "text", text: "word ".repeat(200) }, { type: "toolCall", id: `c${n}`, name: "bash", arguments: { command: "ls" } }]), id: `e${++n}`, parentId: `e${n - 1}` }));
+		big.push(JSON.stringify({ ...msg("toolResult", [{ type: "text", text: "line\n".repeat(2000) }], { toolCallId: `c${n}`, toolName: "bash", isError: false }), id: `e${++n}`, parentId: `e${n - 1}` }));
+	}
+	const t0 = Date.now();
+	const bigTurns = dp.parseConversation(big.join("\n"));
+	const out = dp.pagerText(bigTurns, 100, plainStyle, { title: "big" });
+	const ms = Date.now() - t0;
+	assert.ok(bigTurns.length > 100 && out.length > 0);
+	assert.ok(ms < 1000, `10 MB in ${ms} ms`);
+});
+
+test("C-l on a subagent row reads its transcript (Enter in it: its main); deck and outside rows keep C-l = Enter", { skip }, async () => {
+	const { view, clock, of, lessExits } = makeView({ height: 30 });
+	selectLine(view, "start the old run");
+	press(view, KEY.space);
+	selectLine(view, "/runner");
+	await clock.advance(50);
+	assert.match(screen(view, 100).at(-1)!, /⏎ its session {2}C-l read/);
+	press(view, KEY.ctrlL);
+	await clock.advance(50);
+	const req = of("pager")[0]![1] as { file: string; title: string; enter: string };
+	assert.deepEqual([req.file, req.title, req.enter], [subFile, "coder /runner of start the old run", "its session"]);
+	lessExits(dv.PAGER_RESUME);
+	await view.checkPager();
+	assert.match(screen(view, 72).find((l) => l.startsWith("▌"))!, /start the old run/);
+	assert.equal(of("open").length, 0);
+	// A deck row: C-l focuses its pi; an outside row: C-l jumps.
+	view.selectSession(IDS.ckpt);
+	press(view, KEY.ctrlL);
+	view.selectSession(OUT);
+	press(view, KEY.ctrlL);
+	await clock.advance(50);
+	assert.deepEqual([of("focus"), of("jump"), of("pager").length], [[["focus", IDS.ckpt]], [["jump", OUT]], 1]);
 });
 
 test("d: inline kill confirm (y or Enter kill, s kill + scancel, n or Esc cancel); never for remote or closed rows", { skip }, async () => {

@@ -16,7 +16,11 @@
  * Right slot per row: a deck session → its pi (or its nvim, if that was shown last); a subagent
  * (Space expands; unfinished ones first, see orderThreads) → the tail of its transcript (registry.ts TranscriptTails), re-read on fs.watch of
  * its JSONL while selected; an outside session → a summary card plus one `capture-pane` taken on
- * highlight and on that session's status change (≤ 1/s); closed/crashed/remote → a summary card.
+ * highlight and on that session's status change (≤ 1/s); closed/crashed → a summary card, then the
+ * end of its conversation (deck-pager.ts previewLines: user and assistant messages, one-line tool
+ * calls); remote → a summary card. C-l on a closed/crashed/subagent row runs `less` on its whole
+ * transcript in the holder (deck-pager.ts openPager), focused; while it runs the list writes no
+ * frames, and moving to another row gives the holder its `sleep` back first (closePager).
  * Highlight changes are coalesced: the slot follows SWAP_COALESCE_MS after the last move, so a
  * key repeat is one swap. A session shown for ACK_MS while a client is attached is acknowledged
  * (`<id>.seen`, as `pi-fleet seen` did).
@@ -25,13 +29,15 @@
  * the named files; LIVENESS_MS re-derives liveness (and relative times), RESCAN_MS re-scans the
  * sessions dir (closed list, other hosts). No 1 s timers. deck.ts's startDeckList brings deck.sock
  * (open/select move the selection here too), SIGWINCH sizes and SIGUSR2 reconcile (a dead slot
- * pane is replaced by the next deck row). The outer tmux's `@pi_deck_bar` (`π 1? 2◐ 1✕`, set via
+ * pane is replaced by the next deck row; a transcript pager that ended signals it too:
+ * checkPager). The outer tmux's `@pi_deck_bar` (`π 1? 2◐ 1✕`, set via
  * `@deck_outer`'s socket, else the default socket) is written BAR_DEBOUNCE_MS after a change, only
  * when it differs, and cleared on exit; entering waiting/question/error rings the deck client's bell.
  *
  * Keys: NORMAL j/k ↓/↑ C-n/C-p PgUp/PgDn move · Enter/C-l open (deck row: focus the slot; closed or
- * crashed: resume into the pool; outside: close the popup and jump the outer client there via
- * @deck_jump; subagent: its main; header: fold; `+N closed`: unfold) · Space subagents / fold · a new
+ * crashed: Enter resumes into the pool, C-l reads the transcript in less (q or C-h back; Enter in
+ * less resumes); outside: close the popup and jump the outer client there via @deck_jump; subagent:
+ * Enter its main, C-l its transcript; header: fold; `+N closed`: unfold) · Space subagents / fold · a new
  * session in the row's repo · d kill (inline: y or Enter kill · s kill + scancel · n or Esc no) · i or / INSERT · ! @ # & / 0
  * status filters · ? help · Esc clears the query · q detach. INSERT: letters are fuzzy terms
  * (space-separated, all must match), C-n/C-p ↑/↓ move, Enter opens, Esc back to NORMAL.
@@ -66,7 +72,20 @@ import {
 	type DeckOpenResult,
 	type DeckPane,
 } from "./deck.ts";
+import {
+	ConversationTails,
+	PAGER_RESUME,
+	closePager as closePagerPane,
+	openPager as openPagerPane,
+	pagerExit as readPagerExit,
+	previewLines,
+	removePagerFiles,
+	type PagerRequest,
+	type Turn,
+} from "./deck-pager.ts";
 import { queuedJobs, type SlurmJob } from "./lifecycle.ts";
+
+export { PAGER_RESUME } from "./deck-pager.ts";
 import { SessionIndex, TranscriptTails, countSubagents, type FoldedThread, type IndexEntry, type TranscriptItem } from "./registry.ts";
 import {
 	LEGEND,
@@ -306,6 +325,16 @@ export interface DeckOps {
 	ack(sessionId: string, runId: string): Promise<void>;
 	capture(row: SessionRow, rows: number): Promise<PreviewResult>;
 	transcript(file: string): Promise<TranscriptItem[] | undefined>;
+	/** The end of a session's conversation (user messages too), for a closed row's preview. */
+	conversation(file: string): Promise<Turn[] | undefined>;
+	/** Show a transcript in `less` in the holder (the slot) and focus it (deck-pager.ts). */
+	openPager(req: PagerRequest): Promise<void>;
+	/** The holder runs a pager: restore it. */
+	closePager(): Promise<void>;
+	/** How the last pager ended (read and cleared). */
+	pagerExit(): Promise<{ token: string; status: number } | undefined>;
+	/** Focus the slot (whatever it shows). */
+	focusSlot(): Promise<void>;
 	/** fs.watch a file; returns the unwatch function. */
 	watchFile(file: string, onChange: () => void): () => void;
 	squeue(ids: string[]): Promise<SlurmJob[] | undefined>;
@@ -358,8 +387,12 @@ const OUTSIDE_KEY = "g:@outside";
 const HELP_LINES = [
 	"NORMAL",
 	"  j/k ↓/↑ C-n/C-p   move (the right pane follows)    PgUp/PgDn  page",
-	"  Enter, C-l        open: focus the session (closed: resume it;",
-	"                    outside: jump there; subagent: its main)",
+	"  Enter, C-l        open: focus the session (outside: jump there;",
+	"                    subagent: Enter its main)",
+	"  Enter             closed/crashed: resume it as a pi in the deck",
+	"  C-l               closed/crashed/subagent: read its transcript in the",
+	"                    right pane (less: j/k C-d/C-u C-f/C-b g/G / ? n/N;",
+	"                    q or C-h back here; Enter resumes it)",
 	"  Space             subagents of a session / fold a group",
 	"                    (on +N closed: a repo's older closed sessions)",
 	"  a                 new session in the row's repo",
@@ -460,6 +493,11 @@ export class DeckView implements Component {
 	private lastFrame = "";
 	// previews
 	private transcripts = new Map<string, { file?: string; items?: TranscriptItem[]; failed?: boolean }>();
+	/** Closed/crashed rows: the end of their conversation (by session id). */
+	private conversations = new Map<string, Turn[] | null>();
+	/** The transcript pager (less in the holder) of this item; the holder shows it, no frames. */
+	private pager: { key: string; token: string; seq: number } | undefined;
+	private pagerSeq = 0;
 	private unwatch: (() => void) | undefined;
 	private watchedKey: string | undefined;
 	private transcriptTimer: unknown;
@@ -762,7 +800,11 @@ export class DeckView implements Component {
 		const t = "session" in target ? `s:${target.session}` : "h";
 		if (this.watchedKey !== key) this.stopWatching();
 		try {
-			if ("session" in target) {
+			// The slot moves on from a transcript pager: the holder gets its `sleep` back first.
+			if (this.pager && (this.pager.key !== key || "session" in target)) await this.closePager();
+			if (this.pager) {
+				// This item's pager is in the slot (the user came back with C-h): leave it.
+			} else if ("session" in target) {
 				if (this.appliedKey !== key || this.appliedTarget !== t) {
 					this.shows++;
 					const ok = await this.opts.ops.show(target);
@@ -798,7 +840,7 @@ export class DeckView implements Component {
 
 	/** Re-render the holder frame of the selected item if it still is the one shown. */
 	private redrawHolder(key: string | undefined): void {
-		if (this.disposed || key !== this.selectedKey || this.appliedTarget !== "h") return;
+		if (this.disposed || key !== this.selectedKey || this.appliedTarget !== "h" || this.pager) return;
 		const lines = this.holderLines(this.items[this.selected]);
 		const frame = lines.join("\n");
 		if (frame === this.lastFrame) return;
@@ -876,6 +918,7 @@ export class DeckView implements Component {
 			return;
 		}
 		if (item.kind === "main" && item.rowKind === "outside") this.captureOutside(item.row, item.key);
+		if (item.kind === "main" && (item.rowKind === "closed" || item.rowKind === "crashed")) this.readConversation(item.row, item.key);
 	}
 
 	/** One capture of an outside session: on highlight, and on its status change (≤ 1/s). */
@@ -904,6 +947,94 @@ export class DeckView implements Component {
 			},
 			Math.max(0, wait),
 		);
+	}
+
+	/** A closed/crashed row's preview: the end of its conversation under the card (read once per file change). */
+	private readConversation(row: SessionRow, key: string): void {
+		const file = row.file;
+		if (!file) return;
+		void this.opts.ops
+			.conversation(file)
+			.catch(() => undefined)
+			.then((turns) => {
+				const before = this.conversations.get(row.id);
+				this.conversations.set(row.id, turns ?? null);
+				if (before !== (turns ?? null)) this.redrawHolder(key);
+			});
+	}
+
+	// ------------------------------------------------------------ the transcript pager (deck-pager.ts)
+
+	/** The JSONL C-l pages for this item: closed/crashed rows and subagents; undefined for the rest. */
+	private pagerFile(item: Item | undefined): string | undefined {
+		if (item?.kind === "main" && (item.rowKind === "closed" || item.rowKind === "crashed")) return item.row.file;
+		if (item?.kind === "sub") return this.opts.source.subagentFile(item.row, item.thread);
+		return undefined;
+	}
+
+	/** C-l on a closed/crashed/subagent row: its transcript in less in the slot, focused. */
+	private openPager(item: Extract<Item, { kind: "main" | "sub" }>): void {
+		const file = this.pagerFile(item);
+		if (!file) return this.flash(`${item.row.name}: no transcript file`);
+		if (this.pager?.key === item.key) {
+			// Still open (the user came back with C-h): just go there again.
+			void this.opts.ops.focusSlot().catch((error) => this.flash(`pi-fleet: ${(error as Error).message}`));
+			return;
+		}
+		const seq = ++this.pagerSeq;
+		const pager = { key: item.key, token: `${process.pid}-${seq}`, seq };
+		const sub = item.kind === "sub" ? item.thread : undefined;
+		const title = sub ? `${sub.type ?? "?"} ${sub.path} of ${item.row.name}` : item.row.name;
+		const facts: string[] = [];
+		if (sub?.task) facts.push(`task: ${sub.task}`);
+		if (item.row.cwd) facts.push(tilde(item.row.cwd));
+		const req: PagerRequest = { file, title, enter: sub ? "its session" : "resume", facts, width: this.slotSize.width, token: pager.token };
+		void (async () => {
+			// An earlier pager (another row) gives the holder back first.
+			if (this.pager) await this.closePager();
+			this.pager = pager;
+			this.appliedKey = item.key;
+			this.appliedTarget = "h";
+			try {
+				await this.opts.ops.openPager(req);
+			} catch (error) {
+				if (this.pager === pager) this.pager = undefined;
+				this.flash(`pi-fleet: ${(error as Error).message}`);
+				this.lastFrame = "";
+				this.scheduleApply(0);
+			}
+			this.opts.requestRender();
+		})();
+	}
+
+	/** Give the holder back its `sleep` (the pager is killed); the next frame is written in full. */
+	private async closePager(): Promise<void> {
+		if (!this.pager) return;
+		this.pager = undefined;
+		this.lastFrame = "";
+		await this.opts.ops.closePager().catch(() => {});
+	}
+
+	/** The pager may have ended (SIGUSR2): q/C-h-less exits back to the card; Enter (PAGER_RESUME) is Enter on the row. */
+	async checkPager(): Promise<void> {
+		const pager = this.pager;
+		if (!pager) return;
+		const exit = await this.opts.ops.pagerExit().catch(() => undefined);
+		if (!exit || exit.token !== pager.token || this.pager !== pager) return;
+		this.pager = undefined;
+		this.lastFrame = "";
+		if (exit.status === PAGER_RESUME && this.selectedKey === pager.key) this.activate();
+		else {
+			if (exit.status !== 0) this.flash(exit.status === 127 ? "pi-fleet: less not found" : `pi-fleet: less exited with ${exit.status}`);
+			this.appliedKey = undefined;
+			this.scheduleApply(0);
+		}
+		this.opts.requestRender();
+	}
+
+	/** The pager shown (tests). */
+	pagerKey(): string | undefined {
+		return this.pager?.key;
 	}
 
 	// ------------------------------------------------------------ input
@@ -935,7 +1066,8 @@ export class DeckView implements Component {
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) this.mode = "normal";
 		else if (matchesKey(data, "enter") || matchesKey(data, "ctrl+l")) {
 			this.mode = "normal";
-			this.activate();
+			if (matchesKey(data, "ctrl+l")) this.focusOrRead();
+			else this.activate();
 		} else if (matchesKey(data, "backspace")) {
 			this.query = this.query.slice(0, -1);
 			this.rebuild();
@@ -957,7 +1089,8 @@ export class DeckView implements Component {
 
 	private handleNormal(data: string): void {
 		if (this.navigate(data)) return;
-		if (matchesKey(data, "enter") || matchesKey(data, "ctrl+l")) return this.activate();
+		if (matchesKey(data, "enter")) return this.activate();
+		if (matchesKey(data, "ctrl+l")) return this.focusOrRead();
 		if (matchesKey(data, "space")) return this.toggle();
 		if (matchesKey(data, "escape")) {
 			if (this.help) this.help = false;
@@ -1083,6 +1216,13 @@ export class DeckView implements Component {
 		}
 	}
 
+	/** C-l: closed/crashed/subagent rows read their transcript (the pager); every other row is Enter. */
+	private focusOrRead(): void {
+		const item = this.items[this.selected];
+		if ((item?.kind === "main" || item?.kind === "sub") && (item.kind === "sub" || item.rowKind === "closed" || item.rowKind === "crashed")) return this.openPager(item);
+		this.activate();
+	}
+
 	private activate(): void {
 		const item = this.items[this.selected];
 		if (!item || item.kind === "note") return;
@@ -1115,6 +1255,8 @@ export class DeckView implements Component {
 			default:
 				this.flash(`resuming ${row.name}…`);
 				void this.run(async () => {
+					// Its pager (if open) goes: the holder leaves the slot for the pi.
+					await this.closePager();
 					try {
 						return (await this.opts.ops.open({ session: row.file || row.id, focus: true })).session;
 					} catch (error) {
@@ -1226,6 +1368,14 @@ export class DeckView implements Component {
 		return [top, mid, bottom];
 	}
 
+	/** What Enter and C-l do on the selected row, for the hints. */
+	private openHints(): string[] {
+		const item = this.items[this.selected];
+		if (item?.kind === "sub") return ["⏎ its session", "C-l read"];
+		if (item?.kind === "main" && (item.rowKind === "closed" || item.rowKind === "crashed")) return ["⏎ resume", "C-l read"];
+		return ["⏎/C-l open"];
+	}
+
 	private hintLine(width: number): string {
 		const style = this.opts.style;
 		if (this.confirm) {
@@ -1236,7 +1386,7 @@ export class DeckView implements Component {
 		const chunks =
 			this.mode === "insert"
 				? ["type to search", "⏎ open", "C-n/C-p move", "Esc normal"]
-				: ["j/k move", "⏎/C-l open", "a new", "d kill", "i / search", "? help", "q detach", "␣ subagents"];
+				: ["j/k move", ...this.openHints(), "a new", "d kill", "i / search", "? help", "q detach", "␣ subagents"];
 		// As many hints as fit, in order (q detach before the rarer ones).
 		let hint = "";
 		for (const c of chunks) {
@@ -1419,7 +1569,7 @@ export class DeckView implements Component {
 			}
 			case "closed":
 			case "crashed":
-				lines.push(style.fg("dim", " ⏎ resume it in the deck"));
+				lines.push(style.fg("dim", " ⏎ resume it in the deck · C-l read the transcript"));
 				break;
 			case "remote":
 				lines.push(style.fg("dim", ` runs on ${oneLine(s?.host ?? "?")}: no preview from this node`));
@@ -1446,6 +1596,13 @@ export class DeckView implements Component {
 				lines.push(...c.lines.slice(-room).map((l) => `${l}\x1b[0m`));
 				return lines;
 			} else lines.push(style.fg("dim", " capturing…"));
+		}
+		const turns = kind === "closed" || kind === "crashed" ? this.conversations.get(row.id) : undefined;
+		if (turns?.length) {
+			// The end of the conversation under the card (deck-pager.ts previewLines).
+			lines.push("", rule("transcript"));
+			lines.push(...previewLines(turns, width, Math.max(0, height - lines.length), style));
+			return lines;
 		}
 		if (row.lastAssistant) {
 			lines.push("", style.fg("dim", " last message:"));
@@ -1711,6 +1868,13 @@ export function tmuxOps(env: NodeJS.ProcessEnv, list: Pick<DeckList, "serial">):
 	let holder: { tty: string; fh: FileHandle } | undefined;
 	let holderTty: string | undefined;
 	const tails = new TranscriptTails();
+	const conversations = new ConversationTails();
+	/** The holder was respawned (pager in or out): it has a new tty. */
+	const holderRespawned = async () => {
+		await holder?.fh.close().catch(() => {});
+		holder = undefined;
+		holderTty = undefined;
+	};
 	const notePanes = (panes: DeckPane[]) => {
 		holderTty = panes.find((p) => p.role === "preview" && !p.gone)?.tty || holderTty;
 	};
@@ -1816,6 +1980,26 @@ export function tmuxOps(env: NodeJS.ProcessEnv, list: Pick<DeckList, "serial">):
 		transcript(file) {
 			return tails.get(file);
 		},
+		conversation(file) {
+			return conversations.get(file);
+		},
+		openPager(req) {
+			return list.serial(async () => {
+				await openPagerPane(req, ansiStyle, env);
+				await holderRespawned();
+			});
+		},
+		closePager() {
+			return list.serial(async () => {
+				if (await closePagerPane(env)) await holderRespawned();
+			});
+		},
+		pagerExit() {
+			return readPagerExit(env);
+		},
+		async focusSlot() {
+			await focusSlot(env);
+		},
 		watchFile(file, onChange) {
 			let w: FSWatcher | undefined;
 			try {
@@ -1872,6 +2056,8 @@ export async function runDeckView(env: NodeJS.ProcessEnv = process.env): Promise
 			view.resized();
 			controller?.scheduleBar(true);
 		}
+		// A transcript pager that ended signals like pane-died (deck-pager.ts PAGER_SH).
+		if (what === "reconcile") await view.checkPager();
 		tui.requestRender();
 	};
 	const list = await startDeckList(
@@ -1928,6 +2114,8 @@ export async function runDeckView(env: NodeJS.ProcessEnv = process.env): Promise
 	controller.start();
 	const slot = panes.find((p) => p.inSlot);
 	if (slot?.session && (slot.role === "pi" || slot.role === "nvim")) view.selectSession(slot.session);
+	// A pager left by the previous list (a restart) gives the holder back.
+	await ops.closePager().catch(() => {});
 	view.scheduleApply(0);
 	tui.requestRender();
 	const code = await finished;
@@ -1936,6 +2124,7 @@ export async function runDeckView(env: NodeJS.ProcessEnv = process.env): Promise
 	view.dispose();
 	await controller.stop();
 	await ops.close();
+	await removePagerFiles(env);
 	await list.close();
 	tui.stop();
 	process.stdout.write("\x1b[?1049l");
