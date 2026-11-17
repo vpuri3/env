@@ -4,10 +4,12 @@
   "tui.altScreen.searchPrevious": "ctrl+shift+g",
   "tui.select.up": ["up", "ctrl+p"],
   "tui.select.down": ["down", "ctrl+n"],
-  "app.message.followUp": ["alt+enter", "ctrl+q"],
-  "app.message.dequeue": ["alt+up", "shift+up"],
-  "app.thinking.toggle": ["ctrl+t", "alt+o"],
-  "app.session.togglePath": "alt+p",
-  "app.session.toggleNamedFilter": "alt+n",
-  "app.models.toggleProvider": "alt+p"
+  "app.message.followUp": "ctrl+q",
+  "app.message.dequeue": "shift+up",
+  "app.thinking.toggle": "ctrl+t",
+  "app.session.togglePath": "ctrl+o",
+  "app.session.toggleNamedFilter": "ctrl+x",
+  "app.models.toggleProvider": "ctrl+o",
+  "app.models.reorderUp": "shift+up",
+  "app.models.reorderDown": "shift+down"
 }
