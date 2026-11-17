@@ -15,7 +15,6 @@
  * Selection and copy (same keys as ~/env/tmux.conf):
  *   v                start a selection at the cursor
  *   V                select whole lines
- *   (Space is reserved as the leader key, see the fleet design)
  *   o                jump to the other end of the selection
  *   y / Enter        copy to the system clipboard (and the tmux buffer inside tmux),
  *                    then leave NORMAL mode and jump to the bottom, like copy-pipe-and-cancel
@@ -24,6 +23,12 @@
  *   p                paste the last copy into the prompt (INSERT mode)
  *   i a I A          enter INSERT mode
  *   Enter (no selection) and other ctrl/alt/arrow keys pass through to pi as usual
+ * Leader (Space, NORMAL mode only), run by the pi-fleet extension (docs/pi-fleet-design.md §12):
+ *   Space e          /sessions
+ *   Space f f/g/b    file picker: all / git files / files touched in this session
+ *   Space f s        grep;  Space f h  slash commands (inserted into the prompt)
+ *   Space g s        :Git (fugitive) in the paired nvim;  Space t  tool output picker
+ *   The mode line shows ␣… while pending; any other key, Esc or 1 s without a key cancels.
  *
  * INSERT mode: everything goes to the prompt. Esc -> NORMAL.
  *   ctrl+p / ctrl+n act as up / down (previous/next line, history, autocomplete menu).
@@ -79,6 +84,23 @@ let currentEditor: any;
 // True while the agent is working (set from the extension context in session_start).
 let agentBusy: () => boolean = () => false;
 let hasQueued: () => boolean = () => false;
+// Runs a leader action (set in session_start: emits pi-fleet:action on pi.events).
+let leaderAction: (name: string) => void = () => {};
+
+/** Leader key sequences (after Space) and the pi-fleet action each one emits. */
+export const LEADER_MAPS: Readonly<Record<string, string>> = {
+	e: "sessions",
+	ff: "files",
+	fg: "git-files",
+	fb: "session-files",
+	fs: "grep",
+	fh: "commands",
+	gs: "git-status",
+	t: "tool-output",
+};
+export const LEADER_TIMEOUT_MS = 1000;
+/** pi.events channel; the handler sets `handled = true` synchronously when it takes the action. */
+export const FLEET_ACTION_EVENT = "pi-fleet:action";
 
 function findBox(box: any, scrollView: any): any {
 	if (!box) return undefined;
@@ -131,6 +153,8 @@ function withVim(Base: any) {
 	declare lineSelect: boolean;
 	declare pendingSearchJump: boolean;
 	declare pendingG: boolean;
+	declare leader: string | undefined; // keys typed after Space; undefined = no leader pending
+	declare leaderTimer: ReturnType<typeof setTimeout> | undefined;
 	declare count: string;
 	declare wantCol: number;
 	declare lastCopy: string;
@@ -145,6 +169,8 @@ function withVim(Base: any) {
 		this.lineSelect = false;
 		this.pendingSearchJump = false;
 		this.pendingG = false;
+		this.leader = undefined;
+		this.leaderTimer = undefined;
 		this.count = "";
 		this.wantCol = 0;
 		this.lastCopy = currentEditor?.lastCopy ?? "";
@@ -356,6 +382,7 @@ function withVim(Base: any) {
 	setMode(mode: Mode): void {
 		this.mode = mode;
 		this.pendingG = false;
+		this.cancelLeader();
 		this.count = "";
 		if (mode === "insert") this.clearSelection();
 		if (mode === "normal" && this.canScroll()) {
@@ -400,8 +427,58 @@ function withVim(Base: any) {
 		this.normalKey(data);
 	}
 
+	// ---- leader (Space) ----
+
+	private cancelLeader(): void {
+		if (this.leaderTimer) clearTimeout(this.leaderTimer);
+		this.leaderTimer = undefined;
+		if (this.leader === undefined) return;
+		this.leader = undefined;
+		this.invalidate?.();
+		this.screen?.requestRender?.();
+	}
+
+	// (Re)arm the timeout and redraw the mode line.
+	private armLeader(keys: string): void {
+		if (this.leaderTimer) clearTimeout(this.leaderTimer);
+		this.leader = keys;
+		this.leaderTimer = setTimeout(() => {
+			this.leaderTimer = undefined;
+			this.cancelLeader();
+		}, LEADER_TIMEOUT_MS);
+		this.leaderTimer.unref?.();
+		this.invalidate?.();
+		this.screen?.requestRender?.();
+	}
+
+	// A key while the leader is pending: run a complete mapping, wait for more keys on a
+	// prefix of one, and drop anything else (Esc included) without replaying it.
+	private leaderKey(data: string): void {
+		const keys = this.leader + data;
+		const action = data.length === 1 ? LEADER_MAPS[keys] : undefined;
+		if (action) {
+			this.cancelLeader();
+			leaderAction(action);
+			return;
+		}
+		if (data.length === 1 && Object.keys(LEADER_MAPS).some((k) => k.startsWith(keys))) {
+			this.armLeader(keys);
+			return;
+		}
+		this.cancelLeader();
+	}
+
 	private normalKey(data: string): void {
 		const s = this.screen;
+
+		if (this.leader !== undefined) return this.leaderKey(data);
+		if (data === " " || matchesKey(data, "space")) {
+			// Counts are not applied to leader maps.
+			this.pendingG = false;
+			this.count = "";
+			this.armLeader("");
+			return;
+		}
 
 		if (matchesKey(data, "escape")) {
 			this.pendingG = false;
@@ -587,7 +664,7 @@ function withVim(Base: any) {
 		if (this.mode === "normal") lines = lines.map((l) => l.split(FAKE_CURSOR_START).join("").split(FAKE_CURSOR_END).join(""));
 		let label = " INSERT ";
 		if (this.mode === "normal") {
-			label = !this.anchor ? " NORMAL " : this.lineSelect ? " V-LINE " : " VISUAL ";
+			label = this.leader !== undefined ? ` ␣${this.leader}… ` : !this.anchor ? " NORMAL " : this.lineSelect ? " V-LINE " : " VISUAL ";
 		}
 		const last = lines.length - 1;
 		if (visibleWidth(lines[last]!) >= label.length) {
@@ -718,6 +795,11 @@ export default function (pi: ExtensionAPI) {
 
 		agentBusy = () => !ctx.isIdle();
 		hasQueued = () => ctx.hasPendingMessages();
+		leaderAction = (name) => {
+			const event = { name, handled: false };
+			pi.events.emit(FLEET_ACTION_EVENT, event);
+			if (!event.handled) ctx.ui.notify("pi-fleet not loaded", "warning");
+		};
 
 		hookEditorSlot(ctx.ui, (base) => (tui: any, theme: any, keybindings: any) => {
 			const editor = vimify(base ? base(tui, theme, keybindings) : new CustomEditor(tui, theme, keybindings), tui);
