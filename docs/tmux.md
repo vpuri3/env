@@ -47,8 +47,9 @@ on the right (see the README's pi-fleet section). These keys run
 | Keys | Does |
 | --- | --- |
 | `prefix e` | jump between pi and its paired nvim. Pairing is by pane id, so panes you add or swap don't matter. From a pi whose nvim is gone, it pairs a new one |
-| `prefix g` | the `fleet` dashboard window; from the dashboard, back to the last window |
-| `prefix G` | the dashboard as a popup (95% × 90%); `q` closes it |
+| `prefix g` | the `fleet` dashboard window; from the dashboard, back to the last window (in pi: `Space e`, `/sessions`) |
+| `prefix G` | the dashboard as a popup (95% × 90%); `q` closes it (in pi: `Space E`) |
+| `Ctrl+h` | in a pi pane joined into the dashboard window (dashboard `ctrl+l`): back to the list on its left. Everywhere else `Ctrl+h` goes to the program as usual |
 | `prefix 0`..`9` | the numbers in the status bar are real window indices, so they jump straight there |
 
 - **Bell.** A pi that stops (waiting ◐, question ?, error ✕) rings the bell.
