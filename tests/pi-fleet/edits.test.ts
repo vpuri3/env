@@ -12,6 +12,8 @@ import {
 	combine,
 	CUSTOM_TYPE,
 	deliveryFor,
+	displayPath,
+	fence,
 	formatEdit,
 	formatMessage,
 	guardBlocks,
@@ -167,12 +169,29 @@ test("formatEdit: exact text, cap at MAX_DIFF_LINES, truncated summary", () => {
 
 // ---------------------------------------------------------------- wiring (fake pi)
 
+test("fence: longer than any backtick run in the diff; odd paths are JSON-quoted", () => {
+	assert.equal(fence("@@ -1 +1 @@\n-a\n+b"), "```");
+	assert.equal(fence(" x `code` y"), "```");
+	// a README whose diff holds ``` lines (and a ```` one)
+	const readme = "@@ -1,4 +1,5 @@\n # Title\n ```sh\n-make\n+make all\n ```\n+````\n";
+	const out = formatEdit("README.md", { diffs: [readme], added: 2, removed: 1, created: false, truncated: false });
+	assert.equal(out, "The user edited README.md in their editor (+2 −1):\n`````diff\n" + readme.trimEnd() + "\n`````");
+	const two = formatEdit("README.md", { diffs: ["@@ -1 +1 @@\n-a\n+```\n", "@@ -1 +1 @@\n-```\n+b\n"], added: 2, removed: 2, created: false, truncated: false });
+	assert.match(two, /^.*\nSave 1 of 2:\n````diff\n@@ -1 \+1 @@\n-a\n\+```\n````\nSave 2 of 2:\n````diff\n/);
+	assert.equal(displayPath("/w/a\nb.md", "/w"), '"a\\nb.md"');
+	assert.equal(displayPath("/w/a`b.md", "/w"), '"a`b.md"');
+	assert.equal(displayPath("/w/src/a b.md", "/w"), "src/a b.md");
+	assert.equal(displayPath("/x/y.md", "/w"), "/x/y.md");
+});
+
 function fakePi() {
 	const handlers = new Map<string, ((event: any, ctx: any) => any)[]>();
 	const listeners = new Map<string, ((data: unknown) => void)[]>();
 	const sent: { message: any; options: any }[] = [];
 	const widgets: (string[] | undefined)[] = [];
+	const notes: { text: string; level: string }[] = [];
 	let idle = true;
+	let sendFails = false;
 	const pi: any = {
 		on(name: string, fn: any) {
 			handlers.set(name, [...(handlers.get(name) ?? []), fn]);
@@ -187,6 +206,7 @@ function fakePi() {
 			},
 		},
 		sendMessage(message: any, options: any) {
+			if (sendFails) throw new Error("This extension ctx is stale after session replacement or reload.");
 			sent.push({ message, options });
 		},
 	};
@@ -195,7 +215,10 @@ function fakePi() {
 		cwd: root,
 		hasUI: true,
 		isIdle: () => idle,
-		ui: { setWidget: (key: string, lines: string[] | undefined) => key === WIDGET_KEY && widgets.push(lines) },
+		ui: {
+			setWidget: (key: string, lines: string[] | undefined) => key === WIDGET_KEY && widgets.push(lines),
+			notify: (text: string, level: string) => notes.push({ text, level }),
+		},
 	};
 	const fire = async (name: string, event: any = {}) => {
 		let result: any;
@@ -203,8 +226,9 @@ function fakePi() {
 		return result;
 	};
 	return {
-		pi, ctx, root, sent, widgets, fire,
+		pi, ctx, root, sent, widgets, notes, fire,
 		setIdle: (v: boolean) => (idle = v),
+		setSendFails: (v: boolean) => (sendFails = v),
 		edit: (path: string, mode: "note" | "steer", diff: string, extra: object = {}) => {
 			const s = save(diff);
 			pi.events.emit(USER_EDIT_EVENT, { type: "user_edit", v: 1, mode, path, diff, added: s.added, removed: s.removed, created: false, truncated: false, session: "", time: Date.now(), ...extra });
@@ -212,10 +236,10 @@ function fakePi() {
 	};
 }
 
-async function setup() {
+async function setup(opts: { now?: () => number } = {}) {
 	const f = fakePi();
 	fleetOf(f.pi).main = true;
-	registerEdits(f.pi, { noteMs: 60, steerMs: 30 });
+	registerEdits(f.pi, { noteMs: 60, steerMs: 30, ...opts });
 	await f.fire("session_start", { reason: "startup" });
 	return f;
 }
@@ -368,4 +392,162 @@ test("wiring: nothing in a non-main session", async () => {
 	assert.equal(await f.fire("tool_call", { toolName: "write", toolCallId: "w", input: { path: a } }), undefined);
 	assert.equal(await f.fire("before_agent_start", {}), undefined);
 	rmSync(f.root, { recursive: true, force: true });
+});
+
+/** The id pi would see on a sent steer, and its message as pi's message_start/message_end carry it. */
+const asPi = (sent: { message: any }) => ({ role: "custom", ...sent.message, timestamp: 1 });
+
+test("wiring: a steer dropped from pi's queue (Esc, clear_queue) comes back as a note", async () => {
+	const f = await setup();
+	try {
+		const a = join(f.root, "a.py");
+		writeFileSync(a, "new\n");
+		f.setIdle(false);
+		await f.fire("agent_start");
+		f.edit(a, "steer", D1);
+		await sleep(60);
+		assert.equal(f.sent.length, 1);
+		assert.equal(typeof f.sent[0].message.details.id, "string");
+		assert.equal(f.widgets.at(-1), undefined);
+		// the queue is cleared: the steer never shows up in the transcript; the run settles
+		f.setIdle(true);
+		await f.fire("agent_settled", {});
+		assert.deepEqual(f.widgets.at(-1), ["✎ a.py (+1 −1) goes with your next message"]);
+		const r = await f.fire("before_agent_start", { messageType: "user", prompt: "next" });
+		assert.match(r.message.content, /^The user edited a\.py in their editor \(\+1 −1\):\n```diff\n@@ -1,1 \+1,1 @@\n-old\n\+new\n```/);
+		assert.equal(f.widgets.at(-1), undefined);
+		// pi's queue held the original after all (abort without clear): it is hidden and left out of the context
+		const orig = asPi(f.sent[0]);
+		await f.fire("message_start", { message: orig });
+		const end = await f.fire("message_end", { message: orig });
+		assert.equal(end.message.display, false);
+		assert.equal(end.message.details.superseded, true);
+		const note = { role: "custom", ...r.message, timestamp: 2 };
+		const user = { role: "user", content: "next", timestamp: 1 };
+		const c = await f.fire("context", { messages: [user, note, end.message] });
+		assert.deepEqual(c.messages, [user, note]);
+		assert.equal(await f.fire("context", { messages: [user, note] }), undefined);
+		// settling again restores nothing
+		await f.fire("agent_settled", {});
+		assert.equal(await f.fire("before_agent_start", { messageType: "user", prompt: "x" }), undefined);
+	} finally {
+		rmSync(f.root, { recursive: true, force: true });
+	}
+});
+
+test("wiring: a delivered steer is not restored; an original surfacing first drops its restored note", async () => {
+	const f = await setup();
+	try {
+		const a = join(f.root, "a.py");
+		const b = join(f.root, "b.py");
+		writeFileSync(a, "new\n");
+		f.setIdle(false);
+		await f.fire("agent_start");
+		f.edit(a, "steer", D1);
+		await sleep(60);
+		const m = asPi(f.sent[0]);
+		await f.fire("message_start", { message: m });
+		assert.equal(await f.fire("message_end", { message: m }), undefined, "delivered as is");
+		f.setIdle(true);
+		await f.fire("agent_settled", {});
+		assert.equal(await f.fire("before_agent_start", { messageType: "user", prompt: "x" }), undefined, "nothing came back");
+		// undelivered at settle → restored; the original then starts the next run itself
+		f.setIdle(false);
+		await f.fire("agent_start");
+		f.edit(b, "steer", D1);
+		await sleep(60);
+		f.setIdle(true);
+		await f.fire("agent_settled", {});
+		assert.deepEqual(f.widgets.at(-1), ["✎ b.py (+1 −1) goes with your next message"]);
+		const orig = asPi(f.sent[1]);
+		await f.fire("message_start", { message: orig });
+		assert.equal(f.widgets.at(-1), undefined, "restored note dropped: the original is being delivered");
+		assert.equal(await f.fire("message_end", { message: orig }), undefined);
+		assert.equal(await f.fire("before_agent_start", { messageType: "user", prompt: "x" }), undefined);
+	} finally {
+		rmSync(f.root, { recursive: true, force: true });
+	}
+});
+
+test("wiring: session_shutdown warns about dropped notes (not on quit); saves after it are ignored", async () => {
+	for (const reason of ["reload", "new", "quit"]) {
+		const f = await setup();
+		try {
+			const a = join(f.root, "a.py");
+			f.edit(a, "note", D1);
+			await f.fire("session_shutdown", { reason });
+			if (reason === "quit") assert.deepEqual(f.notes, []);
+			else assert.deepEqual(f.notes, [{ text: "pi-fleet: dropped unsent edit notes for a.py", level: "warning" }]);
+			// not live: a late save is ignored
+			f.edit(a, "steer", D1);
+			await sleep(60);
+			assert.equal(f.sent.length, 0);
+			assert.equal(await f.fire("before_agent_start", {}), undefined);
+		} finally {
+			rmSync(f.root, { recursive: true, force: true });
+		}
+	}
+	// nothing pending: no warning
+	const f = await setup();
+	await f.fire("session_shutdown", { reason: "reload" });
+	assert.deepEqual(f.notes, []);
+	rmSync(f.root, { recursive: true, force: true });
+});
+
+test("wiring: a failing sendMessage keeps the steer pending", async () => {
+	const f = await setup();
+	try {
+		const a = join(f.root, "a.py");
+		writeFileSync(a, "new\n");
+		f.setSendFails(true);
+		f.edit(a, "steer", D1);
+		await sleep(60);
+		assert.equal(f.sent.length, 0);
+		assert.deepEqual(f.widgets.at(-1), ["✎ a.py (+1 −1) goes with your next message"]);
+		f.setSendFails(false);
+		const r = await f.fire("before_agent_start", { messageType: "user", prompt: "x" });
+		assert.match(r.message.content, /^The user edited a\.py/);
+	} finally {
+		rmSync(f.root, { recursive: true, force: true });
+	}
+});
+
+test("wiring: a /command typed while working does not take the notes", async () => {
+	const f = await setup();
+	try {
+		const a = join(f.root, "a.py");
+		f.setIdle(false);
+		await f.fire("agent_start");
+		f.edit(a, "note", D1);
+		await sleep(80);
+		assert.equal(await f.fire("input", { text: "/view a.py", source: "interactive", streamingBehavior: "steer" }), undefined);
+		assert.deepEqual(f.widgets.at(-1), ["✎ a.py (+1 −1) goes with your next message"]);
+		const r = await f.fire("input", { text: "go on", source: "interactive", streamingBehavior: "followUp" });
+		assert.match(r.text, /^go on\n\nThe user edited a\.py/);
+	} finally {
+		rmSync(f.root, { recursive: true, force: true });
+	}
+});
+
+test("wiring: guard ordering does not depend on the wall clock", async () => {
+	// a frozen clock: save, read, save all in the same millisecond
+	const f = await setup({ now: () => new Date(2026, 0, 1, 9, 8, 7).getTime() });
+	try {
+		const a = join(f.root, "a.py");
+		f.edit(a, "note", D1);
+		await f.fire("tool_call", { toolName: "read", toolCallId: "r1", input: { path: a } });
+		await f.fire("tool_result", { toolName: "read", toolCallId: "r1", isError: false });
+		assert.equal(await f.fire("tool_call", { toolName: "edit", toolCallId: "e1", input: { path: a } }), undefined, "read after the save");
+		f.edit(a, "note", D1);
+		const b = await f.fire("tool_call", { toolName: "edit", toolCallId: "e2", input: { path: a } });
+		assert.equal(b.block, true, "save after the read");
+		assert.match(b.reason, / at 09:08:07, /);
+		// a save landing between a read's call and its result still blocks
+		await f.fire("tool_call", { toolName: "read", toolCallId: "r2", input: { path: a } });
+		f.edit(a, "note", D1);
+		await f.fire("tool_result", { toolName: "read", toolCallId: "r2", isError: false });
+		assert.equal((await f.fire("tool_call", { toolName: "write", toolCallId: "w1", input: { path: a } })).block, true);
+	} finally {
+		rmSync(f.root, { recursive: true, force: true });
+	}
 });

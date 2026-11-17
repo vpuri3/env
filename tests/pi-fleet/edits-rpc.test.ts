@@ -75,7 +75,7 @@ function texts(messages: any[]): { role: string; text: string }[] {
 
 const lines = (n: number, f = (i: number) => `line ${i}`) => Array.from({ length: n }, (_, i) => f(i + 1)).join("\n") + "\n";
 
-test("rpc pi + paired nvim: :w! notes, same-file steer, :w!! steer, write guard, coalescing, cap", { skip, timeout: 180_000 }, async () => {
+test("rpc pi + paired nvim: :w! notes, same-file steer, :w!! steer, write guard, coalescing, cap, cleared/aborted steers", { skip, timeout: 180_000 }, async () => {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), "pfe-")));
 	const work = join(root, "work");
 	const script = join(root, "script");
@@ -244,6 +244,9 @@ test("rpc pi + paired nvim: :w! notes, same-file steer, :w!! steer, write guard,
 		assert.ok(aNote > slept, "the :w!! steer lands after the tool call");
 		reply({ text: "done 3" });
 		await waitFor("settle 3", () => count("agent_settled") >= 3);
+		// edits.ts saw the steer reach the transcript (message_start): nothing comes back at settle
+		await sleep(200);
+		assert.equal(widget(), undefined, "a delivered steer is not restored");
 
 		// ---- 4. :w!! while idle starts a turn
 		const starts = count("agent_start");
@@ -268,6 +271,78 @@ test("rpc pi + paired nvim: :w! notes, same-file steer, :w!! steer, write guard,
 		);
 		reply({ text: "done 5" });
 		await waitFor("settle 5", () => count("agent_settled") >= 5);
+
+		/** :w!! on a.txt while a long bash runs; resolves once the steer is in pi's queue. */
+		const steerDuringBash = async (ex: string) => {
+			reply({ tool: "bash", args: { command: "sleep 3; echo slept" } });
+			await waitFor("bash running", () => events.some((e) => e.type === "tool_execution_start" && e.toolCallId === `t${call}`));
+			await save("a.txt", ex, ":w!!");
+			await waitFor("steer widget", () => widget()?.[0]?.startsWith("✎ a.txt"));
+			await waitFor("steer sent", () => widget() === undefined);
+		};
+		const notesIn = (c: { text: string }[], added: string) => c.filter((m) => m.text.startsWith("The user edited a.txt") && m.text.includes(`\n+${added}\n`));
+
+		// ---- 6. clear_queue drops the queued steer: it comes back as a note with the next prompt
+		send({ id: "p6", type: "prompt", message: "p6" });
+		await nextCall();
+		await steerDuringBash("7s/.*/SEVEN/");
+		send({ id: "cq", type: "clear_queue" });
+		await waitFor("clear_queue", () => events.find((e) => e.type === "response" && e.command === "clear_queue"));
+		ctx = await nextCall();
+		assert.equal(notesIn(ctx, "SEVEN").length, 0, "the cleared steer is not delivered");
+		reply({ text: "done 6" });
+		await waitFor("settle 6", () => count("agent_settled") >= 6);
+		await waitFor("restored note", () => widget()?.[0] === "✎ a.txt (+1 −1) goes with your next message");
+		send({ id: "p7", type: "prompt", message: "p7" });
+		ctx = await nextCall();
+		assert.equal(notesIn(ctx, "SEVEN").length, 1);
+		assert.ok(ctx.indexOf(notesIn(ctx, "SEVEN")[0]) > ctx.findIndex((m) => m.text === "p7"), "the note follows the prompt");
+		assert.match(notesIn(ctx, "SEVEN")[0].text, /^The user edited a\.txt in their editor \(\+1 −1\):\n```diff\n@@ -4,7 \+4,7 @@\n/);
+		assert.match(notesIn(ctx, "SEVEN")[0].text, /\n-line 7\n\+SEVEN\n/);
+		reply({ text: "done 7" });
+		await waitFor("settle 7", () => count("agent_settled") >= 7);
+
+		// ---- 7. abort while a tool runs with the steer queued: pi ends the tool, then moves the
+		// steer into the transcript before the aborted call
+		send({ id: "p8", type: "prompt", message: "p8" });
+		await nextCall();
+		await steerDuringBash("8s/.*/EIGHT/");
+		send({ id: "ab", type: "abort" });
+		await waitFor("settle 8", () => count("agent_settled") >= 8);
+		// the steer reached the transcript (not lost), so nothing comes back as a note
+		await sleep(200);
+		assert.equal(widget(), undefined, "delivered into the transcript on abort");
+		send({ id: "p9", type: "prompt", message: "p9" });
+		ctx = await nextCall();
+		assert.equal(notesIn(ctx, "EIGHT").length, 1, "delivered exactly once");
+		assert.ok(ctx.indexOf(notesIn(ctx, "EIGHT")[0]) < ctx.findIndex((m) => m.text === "p9"));
+		reply({ text: "done 9" });
+		await waitFor("settle 9", () => count("agent_settled") >= 9);
+
+		// ---- 8. abort while the LLM call is pending: the steer stays in pi's queue, so it comes
+		// back as a note; the stale queued copy that surfaces with the next prompt is hidden
+		send({ id: "p10", type: "prompt", message: "p10" });
+		await nextCall();
+		const mark = events.length;
+		await save("a.txt", "9s/.*/NINE/", ":w!!");
+		await waitFor("steer sent 2", () => events.slice(mark).some((e) => e.type === "extension_ui_request" && e.widgetLines?.[0]?.startsWith("✎ a.txt")) && widget() === undefined);
+		send({ id: "ab2", type: "abort" });
+		await sleep(300); // the abort response waits for idle, i.e. for the reply below
+		reply({ text: "late" }); // the faux provider only sees the abort once it replies
+		await waitFor("settle 10", () => count("agent_settled") >= 10);
+		await waitFor("restored note", () => widget()?.[0] === "✎ a.txt (+1 −1) goes with your next message");
+		const mark2 = events.length;
+		send({ id: "p11", type: "prompt", message: "p11" });
+		ctx = await nextCall();
+		assert.equal(notesIn(ctx, "NINE").length, 1, "delivered exactly once");
+		assert.ok(ctx.indexOf(notesIn(ctx, "NINE")[0]) > ctx.findIndex((m) => m.text === "p11"), "with the next prompt");
+		const ends = events.slice(mark2).filter((e) => e.type === "message_end" && e.message?.customType === "pi-fleet:user-edit");
+		assert.equal(ends.length, 2, "the restored note and the stale queued steer");
+		assert.deepEqual(ends.map((e) => e.message.display), [true, false], "the stale copy is hidden");
+		reply({ text: "done 11" });
+		await waitFor("settle 11", () => count("agent_settled") >= 11);
+		await sleep(200);
+		assert.equal(widget(), undefined);
 
 		pi.stdin.end();
 		await waitFor("pi exit", () => pi.exitCode !== null, 10_000);

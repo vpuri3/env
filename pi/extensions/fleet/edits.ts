@@ -34,7 +34,16 @@
  *   - Steers use pi.sendMessage(…, {deliverAs:"steer", triggerTurn:true}): while streaming it is
  *     queued on the agent and lands after the running tool calls, before the next LLM call (a
  *     running tool is never aborted); while idle it starts a run.
- *   - The guard is a `tool_call` handler returning {block, reason}.
+ *   - pi's steering queue can be cleared before a steer lands (Esc and dequeue in the TUI,
+ *     RPC clear_queue), which drops custom messages silently. Each steer carries details.id and
+ *     stays "inflight" until its message_start (emitted to extensions when the agent loop moves
+ *     it into the transcript; checked at runtime in edits-rpc.test.ts). Whatever is inflight at
+ *     agent_settled goes back to the pending notes. If pi's queue still held it (an abort while
+ *     the LLM call was pending keeps the queue), the original surfaces with the next run after
+ *     its saves went out again: message_end then hides it (display:false, details.superseded)
+ *     and a `context` handler keeps it out of the LLM context.
+ *   - The guard is a `tool_call` handler returning {block, reason}. Ordering uses a counter;
+ *     the wall clock is only shown in the reason.
  *
  * No module-level mutable state (fleetOf(pi) / register()'s closure only): subagents load this
  * extension in the same process.
@@ -88,10 +97,11 @@ export function guardReason(display: string, changedAt: number, toolName: string
 	);
 }
 
-/** `path` relative to cwd when inside it, else absolute. */
+/** `path` relative to cwd when inside it, else absolute; JSON-quoted when it holds a newline, backtick or control character. */
 export function displayPath(path: string, cwd: string): string {
 	const rel = relative(cwd, path);
-	return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : path;
+	const shown = rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : path;
+	return /[`\u0000-\u001f\u007f]/.test(shown) ? JSON.stringify(shown) : shown;
 }
 
 // ---------------------------------------------------------------- diffs (pure)
@@ -320,6 +330,19 @@ export function changedRanges(diffs: string[], max = SUMMARY_MAX_RANGES): string
 	return ranges.join(", ");
 }
 
+/** A markdown code fence longer than any backtick run in `body` (at least ```). */
+export function fence(body: string): string {
+	let longest = 0;
+	for (const run of body.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
+	return "`".repeat(Math.max(3, longest + 1));
+}
+
+function fenced(diff: string): string {
+	const body = trimEnd(diff);
+	const f = fence(body);
+	return `${f}diff\n${body}\n${f}`;
+}
+
 /** The paragraph for one file in the message the agent gets. */
 export function formatEdit(display: string, c: Combined, maxLines = MAX_DIFF_LINES): string {
 	const head = `The user ${c.created ? "created" : "edited"} ${display} in their editor (+${c.added} −${c.removed})`;
@@ -330,8 +353,8 @@ export function formatEdit(display: string, c: Combined, maxLines = MAX_DIFF_LIN
 		const where = ranges ? `; changed lines${c.truncated ? " include" : ""}: ${ranges}` : "";
 		return `${head}. ${why}${where}. Read the file before you continue working on it.`;
 	}
-	if (c.diffs.length === 1) return `${head}:\n\`\`\`diff\n${trimEnd(c.diffs[0])}\n\`\`\``;
-	const parts = c.diffs.map((d, i) => `Save ${i + 1} of ${c.diffs.length}:\n\`\`\`diff\n${trimEnd(d)}\n\`\`\``);
+	if (c.diffs.length === 1) return `${head}:\n${fenced(c.diffs[0])}`;
+	const parts = c.diffs.map((d, i) => `Save ${i + 1} of ${c.diffs.length}:\n${fenced(d)}`);
 	return `${head}, over ${c.diffs.length} saves:\n${parts.join("\n")}`;
 }
 
@@ -369,6 +392,7 @@ export function widgetLines(entries: WidgetEntry[]): string[] | undefined {
 export interface EditsOptions {
 	noteMs?: number;
 	steerMs?: number;
+	/** Wall clock, for the time shown in guard reasons only (ordering uses a counter). */
 	now?: () => number;
 }
 
@@ -388,6 +412,19 @@ function canon(path: string): string {
 	}
 }
 
+interface CustomLike {
+	role?: string;
+	customType?: string;
+	details?: { id?: unknown; superseded?: unknown } & Record<string, unknown>;
+}
+
+/** details.id of one of our messages, else undefined. */
+function ourId(message: unknown): string | undefined {
+	const m = message as CustomLike | undefined;
+	if (m?.role !== "custom" || m.customType !== CUSTOM_TYPE) return undefined;
+	return typeof m.details?.id === "string" ? m.details.id : undefined;
+}
+
 export function register(pi: ExtensionAPI): void {
 	registerEdits(pi);
 }
@@ -401,13 +438,35 @@ export function registerEdits(pi: ExtensionAPI, opts: EditsOptions = {}): void {
 	let ctx: ExtensionContext | undefined;
 	let cwd = process.cwd();
 	let running = false;
+	/** False outside a session (before session_start, after session_shutdown): saves are ignored. */
+	let live = false;
 	const pending = new Map<string, Pending>();
 	/** Paths the agent called read/edit/write on in the current run (until agent_settled). */
 	const touched = new Set<string>();
-	/** Write guard: when the user last saved a path, and when the agent's last successful read began. */
-	const changedAt = new Map<string, number>();
+	/**
+	 * Write guard. Ordering uses `seq`, a counter (wall-clock ms can tie or step back); the
+	 * wall-clock time of the user's last save is kept for the guard reason only.
+	 */
+	let seq = 0;
+	const changedAt = new Map<string, { seq: number; at: number }>();
 	const readAt = new Map<string, number>();
-	const readCalls = new Map<string, { path: string; at: number }>();
+	const readCalls = new Map<string, { path: string; seq: number }>();
+	/**
+	 * Steers handed to pi but not yet seen in the transcript (message_start), by details.id.
+	 * pi's steering queue can be cleared (Esc, dequeue, clear_queue) and drops custom messages
+	 * silently, so whatever is still here when the run settles goes back to `pending` as a note.
+	 */
+	const inflight = new Map<string, Pending[]>();
+	/** The message a restored save was first sent in. */
+	const sentIn = new WeakMap<Save, string>();
+	/**
+	 * Messages restored from `inflight` whose saves were delivered again: if pi's queue still
+	 * held the original after all (abort without clearing it), it is hidden and kept out of
+	 * the LLM context when it surfaces.
+	 */
+	const superseded = new Set<string>();
+	let nextId = 0;
+	const idPrefix = `${process.pid.toString(36)}-${Date.now().toString(36)}-`;
 
 	const isRunning = (): boolean => {
 		try {
@@ -418,7 +477,7 @@ export function registerEdits(pi: ExtensionAPI, opts: EditsOptions = {}): void {
 		return running;
 	};
 
-	const guarded = (path: string) => guardBlocks("write", changedAt.get(path), readAt.get(path));
+	const guarded = (path: string) => guardBlocks("write", changedAt.get(path)?.seq, readAt.get(path));
 
 	const updateWidget = () => {
 		if (!ctx?.hasUI) return;
@@ -440,8 +499,11 @@ export function registerEdits(pi: ExtensionAPI, opts: EditsOptions = {}): void {
 		const parts: string[] = [];
 		const files: { path: string; added: number; removed: number; saves: number; mode: UserEditMode }[] = [];
 		const guardedDisplays: string[] = [];
+		const sent: Pending[] = [];
+		const resent = new Set<string>();
 		for (const p of entries) {
 			if (p.timer) clearTimeout(p.timer);
+			p.timer = undefined;
 			pending.delete(p.path);
 			let text: string | undefined;
 			if (p.saves.length > 1) {
@@ -453,23 +515,53 @@ export function registerEdits(pi: ExtensionAPI, opts: EditsOptions = {}): void {
 			}
 			const c = combine(p.saves, text);
 			if (!c) continue;
+			for (const s of p.saves) {
+				const old = sentIn.get(s);
+				if (old) resent.add(old);
+			}
 			const display = displayPath(p.path, cwd);
 			parts.push(formatEdit(display, c));
 			files.push({ path: p.path, added: c.added, removed: c.removed, saves: p.saves.length, mode: p.mode });
+			sent.push(p);
 			if (guarded(p.path)) guardedDisplays.push(display);
 		}
 		updateWidget();
 		if (!parts.length) return undefined;
-		return { text: formatMessage(parts, guardedDisplays), files };
+		return { text: formatMessage(parts, guardedDisplays), files, sent, resent, id: idPrefix + ++nextId };
+	};
+
+	/** Put entries taken by take() back into `pending` as notes (before any newer saves of the path). */
+	const putBack = (entries: Pending[], id?: string) => {
+		for (const e of entries) {
+			if (id) for (const s of e.saves) sentIn.set(s, id);
+			const p = pending.get(e.path);
+			if (p) p.saves = [...e.saves, ...p.saves];
+			else pending.set(e.path, { path: e.path, mode: "note", saves: e.saves, timer: undefined });
+		}
+		updateWidget();
 	};
 
 	const steer = (entries: Pending[]) => {
 		const msg = take(entries);
 		if (!msg) return;
-		pi.sendMessage(
-			{ customType: CUSTOM_TYPE, content: msg.text, display: true, details: { files: msg.files } },
-			{ deliverAs: "steer", triggerTurn: true },
-		);
+		try {
+			pi.sendMessage(
+				{ customType: CUSTOM_TYPE, content: msg.text, display: true, details: { files: msg.files, id: msg.id } },
+				{ deliverAs: "steer", triggerTurn: true },
+			);
+		} catch {
+			putBack(msg.sent); // stale API (session ending): keep them for the next message
+			return;
+		}
+		for (const old of msg.resent) superseded.add(old);
+		inflight.set(msg.id, msg.sent);
+	};
+
+	/** Notes attached to a message by before_agent_start or the input transform. */
+	const takeNotes = () => {
+		const msg = take([...pending.values()]);
+		if (msg) for (const old of msg.resent) superseded.add(old);
+		return msg;
 	};
 
 	const flush = (p: Pending) => {
@@ -480,14 +572,14 @@ export function registerEdits(pi: ExtensionAPI, opts: EditsOptions = {}): void {
 	};
 
 	const onUserEdit = (raw: unknown) => {
-		if (!shared.main) return;
+		if (!shared.main || !live) return;
 		const msg = raw as UserEditMessage;
 		if (!msg || typeof msg.path !== "string" || typeof msg.diff !== "string") return;
 		const path = canon(msg.path);
 		// truncated with an empty diff = too large to diff in nvim (>4 MiB): still a change.
 		const empty = !msg.diff.trim() && !msg.created && !msg.truncated;
 		if (empty && !pending.has(path)) return; // nothing changed: no note, no guard
-		changedAt.set(path, now());
+		changedAt.set(path, { seq: ++seq, at: now() });
 		let p = pending.get(path);
 		if (!p) {
 			p = { path, mode: msg.mode, saves: [], timer: undefined };
@@ -507,6 +599,8 @@ export function registerEdits(pi: ExtensionAPI, opts: EditsOptions = {}): void {
 	const reset = () => {
 		for (const p of pending.values()) if (p.timer) clearTimeout(p.timer);
 		pending.clear();
+		inflight.clear();
+		superseded.clear();
 		touched.clear();
 		changedAt.clear();
 		readAt.clear();
@@ -518,10 +612,21 @@ export function registerEdits(pi: ExtensionAPI, opts: EditsOptions = {}): void {
 		reset();
 		ctx = c;
 		cwd = c.cwd;
+		live = true;
 		if (shared.main) updateWidget();
 	});
 
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (event, c) => {
+		live = false;
+		const lost = new Set([...pending.keys(), ...[...inflight.values()].flat().map((p) => p.path)]);
+		if (shared.main && lost.size && event?.reason !== "quit") {
+			const files = [...lost].map((p) => displayPath(p, cwd)).join(", ");
+			try {
+				(c ?? ctx)?.ui.notify(`pi-fleet: dropped unsent edit notes for ${files}`, "warning");
+			} catch {
+				// UI gone
+			}
+		}
 		reset();
 		ctx = undefined;
 	});
@@ -533,21 +638,62 @@ export function registerEdits(pi: ExtensionAPI, opts: EditsOptions = {}): void {
 	pi.on("agent_settled", async () => {
 		running = false;
 		touched.clear();
+		// Steers that never reached the transcript were dropped from pi's queue (or are still
+		// in it after an abort): they become notes for the next message.
+		const lost = [...inflight];
+		inflight.clear();
+		for (const [id, entries] of lost) putBack(entries, id);
+	});
+
+	// A steer reached the transcript: it is delivered. A restored one that was delivered again
+	// meanwhile is hidden (message_end) and kept out of the LLM context (context).
+	pi.on("message_start", async (event) => {
+		const id = ourId(event.message);
+		if (!id) return;
+		inflight.delete(id);
+		if (superseded.has(id)) return;
+		// The original of a restored steer surfaced before its saves went out again: drop them.
+		let changed = false;
+		for (const p of [...pending.values()]) {
+			const keep = p.saves.filter((s) => sentIn.get(s) !== id);
+			if (keep.length === p.saves.length) continue;
+			changed = true;
+			p.saves = keep;
+			if (!keep.length) {
+				if (p.timer) clearTimeout(p.timer);
+				pending.delete(p.path);
+			}
+		}
+		if (changed) updateWidget();
+	});
+
+	pi.on("message_end", async (event) => {
+		const id = ourId(event.message);
+		if (!id || !superseded.has(id)) return;
+		superseded.delete(id);
+		const m = event.message as CustomLike;
+		return { message: { ...event.message, display: false, details: { ...m.details, superseded: true } } as typeof event.message };
+	});
+
+	pi.on("context", async (event) => {
+		const keep = event.messages.filter((m) => !(ourId(m) && (m as CustomLike).details?.superseded === true));
+		return keep.length === event.messages.length ? undefined : { messages: keep };
 	});
 
 	// Notes go with the next run, whatever started it (a user prompt, sendUserMessage, a custom
 	// message with triggerTurn). Placed right after the run's starting message.
 	pi.on("before_agent_start", async () => {
 		if (!shared.main || !pending.size) return;
-		const msg = take([...pending.values()]);
+		const msg = takeNotes();
 		if (!msg) return;
-		return { message: { customType: CUSTOM_TYPE, content: msg.text, display: true, details: { files: msg.files } } };
+		return { message: { customType: CUSTOM_TYPE, content: msg.text, display: true, details: { files: msg.files, id: msg.id } } };
 	});
 
 	// A message typed while the agent works (steer or follow-up) carries the notes itself.
+	// Not a /command: those are not sent to the agent as typed (the notes stay pending).
 	pi.on("input", async (event) => {
-		if (!shared.main || !event.streamingBehavior || !pending.size) return;
-		const msg = take([...pending.values()]);
+		if (!shared.main || !event.streamingBehavior || !pending.size || event.text.startsWith("/")) return;
+		const msg = takeNotes();
 		if (!msg) return;
 		return { action: "transform", text: `${event.text}\n\n${msg.text}`, images: event.images };
 	});
@@ -561,12 +707,13 @@ export function registerEdits(pi: ExtensionAPI, opts: EditsOptions = {}): void {
 		if (!abs) return;
 		const path = canon(abs);
 		touched.add(path);
-		if (name === "read") readCalls.set(event.toolCallId, { path, at: now() });
+		if (name === "read") readCalls.set(event.toolCallId, { path, seq: ++seq });
 		// The agent works on a file with an undelivered note: tell it before its next step.
 		const p = pending.get(path);
 		if (p && !p.timer) steer([p]);
-		if (guardBlocks(name, changedAt.get(path), readAt.get(path)))
-			return { block: true, reason: guardReason(displayPath(path, c.cwd), changedAt.get(path)!, name) };
+		const changed = changedAt.get(path);
+		if (changed && guardBlocks(name, changed.seq, readAt.get(path)))
+			return { block: true, reason: guardReason(displayPath(path, c.cwd), changed.at, name) };
 		return undefined;
 	});
 
@@ -574,6 +721,6 @@ export function registerEdits(pi: ExtensionAPI, opts: EditsOptions = {}): void {
 		if (!shared.main || event.toolName !== "read") return;
 		const call = readCalls.get(event.toolCallId);
 		readCalls.delete(event.toolCallId);
-		if (call && !event.isError) readAt.set(call.path, Math.max(readAt.get(call.path) ?? 0, call.at));
+		if (call && !event.isError) readAt.set(call.path, Math.max(readAt.get(call.path) ?? 0, call.seq));
 	});
 }
