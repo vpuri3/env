@@ -9,6 +9,8 @@
 #                                           a log file whose path is printed last. PI_FLEET_TEST_QUIET=1 too.
 #   tests/pi_fleet_test.sh -t REGEX [names] only tests whose name matches (node --test-name-pattern)
 #   tests/pi_fleet_test.sh -n 5 -q deck     run 5 times in a row (telling a flake from a failure)
+#   tests/pi_fleet_test.sh -p 3 -q deck     run 3 copies at once: a flake check under load in the
+#                                           time of one run (with -n: N rounds of P copies)
 #   tests/pi_fleet_test.sh -j 4             at most 4 files at once (default: one per CPU)
 #
 # Needs node >= 22.18 (runs .ts by type stripping). The RPC tests need `pi` on PATH
@@ -24,6 +26,7 @@ usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
 repo=$(cd "$(dirname "$0")/.." && pwd -P)
 quiet=${PI_FLEET_TEST_QUIET:-}
 repeat=1
+copies=1
 jobs=
 node_args=()
 while [ "$#" -gt 0 ]; do
@@ -35,6 +38,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         -n | --repeat)
             repeat=$2
+            shift
+            ;;
+        -p | --parallel)
+            copies=$2
             shift
             ;;
         -j | --jobs)
@@ -59,6 +66,7 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 case "$repeat" in '' | *[!0-9]* | 0) echo "pi_fleet_test.sh: -n needs a positive count" >&2 && exit 2 ;; esac
+case "$copies" in '' | *[!0-9]* | 0) echo "pi_fleet_test.sh: -p needs a positive count" >&2 && exit 2 ;; esac
 [ -n "$jobs" ] && node_args+=("--test-concurrency=$jobs")
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/pi-fleet-test.XXXXXX")
@@ -103,13 +111,43 @@ run_once() {
 
 logs=${TMPDIR:-/tmp}/pi-fleet-test-logs
 [ -z "$quiet" ] || mkdir -p "$logs"
+# -p: the copies run at once, each with its own state dir and output file, printed in order
+# after the round (interleaved output would be unreadable).
+run_copies() {
+    local stamp="$1" j status=0 pids=()
+    for ((j = 1; j <= copies; j++)); do
+        (
+            export PI_FLEET_STATE_DIR="$work/state-$j"
+            run_once "$logs/$stamp-$$-c$j.log" >"$work/out-$j" 2>&1
+            echo $? >"$work/rc-$j"
+        ) &
+        pids+=($!)
+    done
+    wait "${pids[@]}"
+    for ((j = 1; j <= copies; j++)); do
+        echo "-- copy $j/$copies"
+        cat "$work/out-$j"
+        [ "$(cat "$work/rc-$j")" = 0 ] || status=1
+        [ "$(cat "$work/rc-$j")" = 0 ] || copies_failed=$((copies_failed + 1))
+    done
+    return "$status"
+}
+
 failed=0
+copies_failed=0
+total=$((repeat * copies))
+[ "$copies" -eq 1 ] || mkdir -p "$logs"
 for ((i = 1; i <= repeat; i++)); do
     [ "$repeat" -eq 1 ] || echo "== run $i/$repeat"
-    log="$logs/$(date +%Y%m%d-%H%M%S)-$$-$i.log"
-    run_once "$log" || failed=$((failed + 1))
+    stamp=$(date +%Y%m%d-%H%M%S)
+    if [ "$copies" -gt 1 ]; then
+        run_copies "$stamp-r$i" || true
+    else
+        run_once "$logs/$stamp-$$-$i.log" || failed=$((failed + 1))
+    fi
 done
-if [ "$repeat" -gt 1 ]; then
-    echo "== $failed of $repeat runs failed"
+[ "$copies" -eq 1 ] || failed=$copies_failed
+if [ "$total" -gt 1 ]; then
+    echo "== $failed of $total runs failed"
 fi
 [ "$failed" -eq 0 ]

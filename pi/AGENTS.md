@@ -60,15 +60,20 @@ for 20+ minutes on one Opus coder. Fan out the search instead:
    some under load) and 2-4 `scout`s that each check one hypothesis by reading code
    (timing/fixed sleeps, shared state, product race, cleanup/ordering), all read-only,
    each told to report `file:line` evidence within ~4 minutes.
-2. You (Opus) decide the root causes from the reports, then brief one `coder-fast` per
-   group of fixes with disjoint files.
-3. Prove it with one short run: the touched test files a few times (`-n 3`) plus the
-   full suite once. Don't loop proof runs; a remaining failure gets one more targeted
+2. Brief fixers as soon as a hypothesis has `file:line` evidence; don't wait for the
+   slower repro scouts (they confirm or add causes, which become more briefs). One
+   `coder-fast` per group of fixes with disjoint files.
+3. Each fixer proves its own fix under load in its lane: its test files as parallel
+   copies (e.g. `tests/pi_fleet_test.sh -q -p 3 <files>`), not runs in a row.
+4. After the merges, one short proof: the full suite once plus one parallel round of the
+   touched files. Don't loop proof runs; a remaining failure gets one more targeted
    round or goes in the report.
 
 Measured on the pi-fleet flaky deck tests (same brief, same base commit): one Opus coder
 had nothing merged after 21 min ($3.3); Opus supervisor + 7 Sonnet scouts + 4 Sonnet
-fixers had all fixes merged at 12 min ($1.8), 23 min with proof runs ($2.1).
+fixers had all fixes merged at 12 min ($1.8), 23 min with proof runs ($2.1). Most of the rest was
+waiting on tests (one fixer: 1 min of model time, 7 min of test runs; proofs run in a row),
+which steps 2-4 cut.
 
 **Merging as workers finish.** In an interactive session, each completion wakes you:
 merge that lane right away. Headless (`pi -p`), ending your turn kills the workers, so

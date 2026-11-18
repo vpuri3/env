@@ -20,15 +20,17 @@ lead: you plan, brief, merge and verify; workers write the code.
    **Debugging** (failures or flakes with no known cause): first, in one turn, 2-4
    `scout`s that reproduce (subsets of the failing tests, some under load) and 2-4
    `scout`s that each check one hypothesis by reading code (timing, shared state,
-   product race, cleanup), read-only, `file:line` evidence, ~4 minutes. You decide the
-   root causes, then brief one `coder-fast` per group of fixes.
+   product race, cleanup), read-only, `file:line` evidence, ~4 minutes. Brief a
+   `coder-fast` as soon as a cause has evidence (don't wait for the repro scouts), one
+   per group of fixes; each proves its fix under load in its lane with parallel copies
+   of its test files (e.g. `-p 3`), not runs in a row.
 4. **Merge as they finish**, not after the last one. For each finished worker: `agent-lane merge <part>` from
    your checkout, then `agent-lane rm <part>`. On a rebase conflict, resume that worker
    (`agent_steer`) to resolve it in its lane. A worker that failed or went off-brief:
    steer it once with the concrete problem; don't redo its work yourself.
-5. **Verify once.** After the last merge, run the full checks once, plus the touched
-   test files a few times if flakes were the issue (or have a `scout` run them and report
-   only failures). Don't loop proof runs. Fix failures by resuming the worker that owns the
+5. **Verify once.** After the last merge, run the full checks once, plus one parallel
+   round of the touched test files if flakes were the issue (or have a `scout` run them
+   and report only failures). Don't loop proof runs. Fix failures by resuming the worker that owns the
    file. Review only if the change is risky (one fresh `reviewer`, findings go back to
    the owning worker).
 6. **Report:** parts and who did them, commits, check results, anything flagged.

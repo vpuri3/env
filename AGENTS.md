@@ -84,6 +84,7 @@ line; the full output is in the log whose path it prints, so don't grep it.
 tests/pi_fleet_test.sh -q deck deck-view          # tests/pi-fleet/{deck,deck-view}.test.ts
 tests/pi_fleet_test.sh -q -t 'C-d in the list' deck-view-tmux   # tests by name (regex)
 tests/pi_fleet_test.sh -q -n 3 deck               # 3 runs in a row: flake or failure?
+tests/pi_fleet_test.sh -q -p 3 deck deck-view     # 3 copies at once: flake check under load, one run's time
 tests/pi_fleet_test.sh -q                         # everything, once, before claiming done
 ```
 
