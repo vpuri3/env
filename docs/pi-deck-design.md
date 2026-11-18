@@ -45,7 +45,7 @@ For comparison, one tmux client call is ~2 ms (20 `display -p` calls: 37 ms).
    nvim never redraw (verified: zero SIGWINCH across three swaps; §5).
 6. **Per-session nvim lives in the pool too**, created **lazily** (first `prefix e`, `Space v`,
    `/view` or `Space f …`) and toggled with the session's pi in the right slot.
-7. **One entry story**: in the user's tmux `prefix g`, `prefix G`, `Space e`, `Space E` and
+7. **One entry story**: in the user's tmux `prefix g`, `Space e`, `Space E` and
    `/sessions` all open the same popup; `prefix g` (or `prefix d`, or `C-c` in the list) inside the deck closes it. A
    persistent outer "deck window" is rejected: it is exactly the nesting and clutter we remove,
    and the popup opens instantly because the list TUI is already running.
@@ -90,7 +90,7 @@ treats raw `0x08` as backspace. Backspace from cmux is `0x7f`, so stealing `C-h`
 Mac cmux ──ssh──► login node (pinned)
  ├─ user tmux (default socket, prefix C-s, ~/env/tmux.conf)
  │   status-left '… #{@pi_deck_bar}'   ◄─────────── set-option by the list TUI on change
- │   prefix g/G, Space e/E, /sessions ─► display-popup -E -w95% -h90% pi-deck-attach
+ │   prefix g, Space e/E, /sessions ─► display-popup -E -B -w100% -h100% pi-deck-attach
  │   windows: shells, pis started by hand ("outside" sessions)
  └─ deck tmux  tmux -L pifleet -f ~/env/pi/deck.tmux.conf   (status off, prefix C-s)
      session deck ─ window deck
@@ -279,7 +279,7 @@ popup (direct attach) the row flashes "runs in your tmux (window N)".
 | | `g`, `d` | detach (closes the popup; `prefix g` opens and closes the deck) |
 | | `C-h` | send a literal `C-h` (backspace-by-C-h in nvim insert mode, telescope's which_key) |
 | | `[`, PgUp | copy mode (as in the user's tmux) |
-| user tmux | `prefix g`, `prefix G` | open the deck popup |
+| user tmux | `prefix g` | open the deck popup |
 | | `prefix e` | unchanged: pi ↔ nvim of an outside session |
 | pi (vim-mode NORMAL) | `Space e`, `Space E` | in the deck: back to the list. Outside: open the deck popup |
 | | `Space v` (new) | toggle the slot to this session's nvim (outside: focus the peer pane) |
@@ -301,7 +301,7 @@ for the toggle: pi uses it (line end, vim-mode scroll) and so does nvim (scroll,
 |---|---|
 | `pf` outside tmux | ensure the deck; `exec tmux -L pifleet attach -t deck` |
 | `pf DIR [-- ARGS]` outside tmux | ensure the deck; `open {cwd}` over deck.sock (selected, focused); attach |
-| `pf [DIR]` inside tmux | same, then `display-popup -E -w 95% -h 90% pi-deck-attach` instead of attach |
+| `pf [DIR]` inside tmux | same, then `display-popup -E -B -w 100% -h 100% pi-deck-attach` (no `-B` before tmux 3.3) instead of attach |
 | `bin/pi-deck-attach` (POSIX sh, no node) | in a popup: `tmux -L pifleet set -g @deck_outer "$(tmux display -p '#{socket_path}|#{client_name}')"`; `env -u TMUX tmux -L pifleet -f CONF new-session -A -s deck -n deck 'pi-fleet deck'`; afterwards handle `@deck_jump` |
 | `/new` in a deck pi | `{cancel:true}`; `open {cwd}`; the new session is shown and focused; the old one keeps running in the pool |
 | `/resume` in a deck pi | `{cancel:true}`; `open {session}`: live in the deck → select; live outside → notify "runs in your tmux, window N"; remote → refused; else a new pool pane |
@@ -475,7 +475,7 @@ window in the user's tmux and no `fleet` session.
    visible. `/sessions` stays.
 7. **Entry.** `pf` outside tmux: ensure the deck and attach directly (no new session; `a` in the
    list makes one). `pf DIR [-- ARGS]` / `pf -- ARGS` (cwd): also `open` a new session, selected.
-   Inside tmux: same, in the 95% popup (`prefix g`/`G` too); `prefix d`/`prefix g` detach.
+   Inside tmux: same, in the full-window popup (`prefix g` too); `prefix d`/`prefix g` detach.
 8. **Leaving the list** (user, 2026-11-17): `q` no longer detaches (too easy to hit); `C-c` in the
    list and `prefix d` anywhere do. `C-d` in the list (NORMAL and INSERT) kills everything: an inline
    confirm, then deck.ts `killDeck` (every pi asked to quit, then `kill-server`, the list going with

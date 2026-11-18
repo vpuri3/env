@@ -231,8 +231,8 @@ test("tmux.conf loads on this tmux: bell, the deck bar (no polling), prefix g/G 
 		const key = (k: string) => keys.split("\n").find((l) => new RegExp(`-T prefix +${k} `).test(l)) ?? "";
 		assert.match(key("e"), /@pi_fleet_peer/);
 		assert.match(key("e"), /pi-fleet peer --select [^|]*\|\| true\\*"/, "a failure must not put the pane in view mode");
-		assert.match(key("g"), /display-popup -E -h 90% -w 95% pi-deck-attach/);
-		assert.match(key("G"), /display-popup -E -h 90% -w 95% pi-deck-attach/);
+		assert.match(key("g"), /display-popup -B?E -h "?100%"? -w "?100%"? pi-deck-attach/);
+		assert.equal(key("G"), "", "no prefix G");
 		for (const [k, cmd] of [["h", "select-pane -L"], ["j", "select-pane -D"], ["k", "select-pane -U"], ["l", "select-pane -R"],
 			["H", "resize-pane -L 10"], ["J", "resize-pane -D 10"], ["K", "resize-pane -U 10"], ["L", "resize-pane -R 10"],
 			["v", "split-window -h"], ["s", "split-window -v"], ["r", "source-file"]]) {

@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmuxBaseArgs } from "../../pi/extensions/fleet/cli.ts";
-import { LIST_LOOP, deckSizesFor, deckSockPath, deckTmuxArgs, inDeck, slotArgs, slotSizeFor, type DeckPane } from "../../pi/extensions/fleet/deck.ts";
+import { LIST_LOOP, deckSizesFor, deckSockPath, deckTmuxArgs, inDeck, popupBorderless, slotArgs, slotSizeFor, type DeckPane } from "../../pi/extensions/fleet/deck.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = join(here, "../..");
@@ -793,8 +793,9 @@ test("popup: attach, C-h/j/k/l between the panes, prefix C-<key>, Shift+Enter, p
 		const outerClient = d.tmux(["list-clients", "-F", "#{client_name}"], "outer");
 		assert.equal(d.tmux(["show", "-gv", "@deck_outer"]), `${h.outerSocket}|${outerClient}`);
 		const deckClientSize = d.tmux(["list-clients", "-F", "#{client_width}x#{client_height}"]);
-		assert.equal(deckClientSize, "150x41", "95%x90% of 160x48, minus the popup border");
-		const sizes = deckSizesFor(150, 41, 50);
+		const [cw, ch] = popupBorderless() ? [160, 48] : [158, 46];
+		assert.equal(deckClientSize, `${cw}x${ch}`, "the whole 160x48 client, minus the popup border if any");
+		const sizes = deckSizesFor(cw, ch, 50);
 		const at = (p: Pane, z: { width: number; height: number }) => p.width === z.width && p.height === z.height;
 		const pool = (p: Pane, ...roles: string[]) => p.where.startsWith("pool:") && roles.includes(p.role);
 		await waitFor("slots and pool at the popup's slot sizes", () =>

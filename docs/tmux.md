@@ -50,7 +50,7 @@ inside tmux in a popup). These keys run `~/env/bin/pi-fleet` and
 
 | Keys (your tmux) | Does |
 | --- | --- |
-| `prefix g`, `prefix G` | the deck in a popup (95% × 90%); `prefix g`, `prefix d` or `Ctrl+c` in the list closes it (in pi: `/sessions`) |
+| `prefix g` | the deck in a popup over the whole window (borderless on tmux ≥ 3.3); `prefix g`, `prefix d` or `Ctrl+c` in the list closes it (in pi: `/sessions`) |
 | `prefix e` | for a pi started by hand here: jump between it and its nvim split (made by `/view`). Pairing is by pane id, so panes you add or swap don't matter |
 
 | Keys (in the deck, prefix `Ctrl+s` too) | Does |

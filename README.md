@@ -107,7 +107,7 @@ and the tmux keys in [docs/tmux.md](docs/tmux.md). The design is in
 [docs/pi-fleet-design.md](docs/pi-fleet-design.md).
 
 From a shell, `pf` opens the deck: outside tmux in this terminal, inside tmux
-in a 95% popup (also `prefix g`). `pf DIR [-- PI_ARGS]` (or `pf -- PI_ARGS`
+in a borderless popup over the whole window (also `prefix g`). `pf DIR [-- PI_ARGS]` (or `pf -- PI_ARGS`
 for here) first starts a new session in DIR. `prefix d` (or `C-c` in the list)
 detaches; the deck keeps running. `pi-fleet open --session FILE|ID` resumes
 a session in the deck; one live on another login node is refused.

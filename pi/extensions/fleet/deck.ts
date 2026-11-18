@@ -36,7 +36,7 @@
  * `pifleet`), plus cli.ts's PI_FLEET_* (runtime dir, state dir, pi/nvim commands).
  */
 
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, realpathSync, renameSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
@@ -1418,11 +1418,23 @@ export async function startDeckList(hooks: DeckListHooks = {}, env: NodeJS.Proce
 
 // ---------------------------------------------------------------- start, attach, kill
 
+let borderlessCache: boolean | undefined;
+/** tmux ≥ 3.3 has `display-popup -B` (no border); 3.2a draws one. `tmux next-3.4`, `tmux master`: yes. */
+export function popupBorderless(): boolean {
+	if (borderlessCache === undefined) {
+		const out = spawnSync("tmux", ["-V"], { encoding: "utf8", timeout: 2000 }).stdout ?? "";
+		const m = /(\d+)\.(\d+)/.exec(out);
+		borderlessCache = m ? Number(m[1]) > 3 || (Number(m[1]) === 3 && Number(m[2]) >= 3) : /master/.test(out);
+	}
+	return borderlessCache;
+}
+
 /** The deck window size for a new server: the popup's inner size over the outer client, else the terminal. */
 export async function initialDeckSize(env: NodeJS.ProcessEnv, outerClientSize?: SlotSize): Promise<SlotSize> {
 	if (outerClientSize) {
-		// display-popup -w 95% -h 90% with a border on each side (tmux 3.2a: 160x48 → 150x41).
-		return { width: Math.max(20, Math.floor(outerClientSize.width * 0.95) - 2), height: Math.max(5, Math.floor(outerClientSize.height * 0.9) - 2) };
+		// display-popup -w 100% -h 100% covers the whole client; without -B (tmux 3.2a) its border takes 2 off each.
+		const b = popupBorderless() ? 0 : 2;
+		return { width: Math.max(20, outerClientSize.width - b), height: Math.max(5, outerClientSize.height - b) };
 	}
 	if (process.stdout.isTTY && process.stdout.columns && process.stdout.rows) return { width: process.stdout.columns, height: process.stdout.rows };
 	return { width: 200, height: 50 };
@@ -1599,9 +1611,9 @@ export function deckPopupCommand(env: NodeJS.ProcessEnv = process.env): string {
 	return `${vars.length ? `env ${vars.join(" ")} ` : ""}${shQuote(deckAttachBin(env))}`;
 }
 
-/** display-popup argv (outer server) that attaches the deck over the client showing `pane`. */
+/** display-popup argv (outer server) that attaches the deck over the whole client showing `pane` (as tmux.conf's prefix g). */
 export function deckPopupArgs(pane: string | undefined, env: NodeJS.ProcessEnv = process.env): string[] {
-	return ["display-popup", "-E", "-w", "95%", "-h", "90%", ...(pane ? ["-t", pane] : []), deckPopupCommand(env)];
+	return ["display-popup", "-E", ...(popupBorderless() ? ["-B"] : []), "-w", "100%", "-h", "100%", ...(pane ? ["-t", pane] : []), deckPopupCommand(env)];
 }
 
 export interface KillDeckResult {
