@@ -376,7 +376,7 @@ test("run-pi: SIGTERM is forwarded to pi and exits 143 without the crash prompt"
 		process.kill(Number(f.opt(s.pi, "pane_pid")), "SIGTERM");
 		await waitFor("run-pi exited", () => f.opt(s.pi, "pane_dead") === "1");
 		// pane_dead can flip (pty EOF) before tmux has reaped the exit status
-		const status = await waitFor("exit status", () => f.opt(s.pi, "pane_dead_status"), 3000).catch(() => "none (killed by a signal?)");
+		const status = await waitFor("exit status", () => f.opt(s.pi, "pane_dead_status") || undefined).catch(() => "none (killed by a signal?)");
 		assert.equal(status, "143");
 		assert.doesNotMatch(f.tmux(["capture-pane", "-p", "-t", s.pi]), /r restart/);
 		assert.equal(f.runs(s.id).length, 1);
