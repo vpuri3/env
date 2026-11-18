@@ -738,7 +738,7 @@ test("select of an exited pi (not yet reconciled) is refused and leaves the slot
 		d.start();
 		const a = await d.open();
 		const b = await d.open();
-		assert.equal(d.slot().pane, b.pane);
+		await waitEq("the slot showing b's pi", () => d.slot().pane, b.pane);
 		// What POOL_WRAP sets when pi exits, without the SIGUSR2 that would reconcile it.
 		d.tmux(["set-option", "-p", "-t", a.pane, "@pi_fleet_exited", "0"]);
 		const r = d.request({ type: "select", session: a.id });
