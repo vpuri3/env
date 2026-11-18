@@ -635,14 +635,35 @@ export function shQuote(s: string): string {
 
 /**
  * The node_modules dir holding pi's `@earendil-works/pi-tui`: $PI_FLEET_PI_PACKAGES, else from
- * `realpath(which pi)`: the managed launcher (<agent>/bin/pi → <agent>/install/current-version
- * → install/releases/<v>/node_modules), or the node_modules above an npm-installed pi.
+ * `realpath(pi)` for each `pi` on PATH in order, then <agent>/bin/pi (agent = $PI_CODING_AGENT_DIR
+ * or ~/.pi/agent). A launcher leads to either the managed install (<agent>/bin/pi →
+ * <agent>/install/current-version → install/releases/<v>/node_modules) or the node_modules above
+ * an npm-installed pi. Every candidate is tried because a wrapper may come first
+ * on PATH (e.g. cmux's `cmux-cli-shims/<id>/pi`, a script that leads to no install).
  */
 export function locatePiPackages(env: NodeJS.ProcessEnv = process.env): string | undefined {
 	const has = (dir: string) => existsSync(join(dir, "@earendil-works", "pi-tui", "package.json"));
 	if (env.PI_FLEET_PI_PACKAGES) return has(env.PI_FLEET_PI_PACKAGES) ? env.PI_FLEET_PI_PACKAGES : undefined;
-	const pi = which("pi", env);
-	if (!pi) return undefined;
+	const candidates: string[] = [];
+	for (const dir of (env.PATH ?? "").split(delimiter)) {
+		if (!dir) continue;
+		const p = join(dir, "pi");
+		try {
+			if (statSync(p).isFile()) candidates.push(p);
+		} catch {
+			// next
+		}
+	}
+	candidates.push(join(env.PI_CODING_AGENT_DIR || join(env.HOME || homedir(), ".pi", "agent"), "bin", "pi"));
+	for (const pi of candidates) {
+		const found = piPackagesFrom(pi, has);
+		if (found) return found;
+	}
+	return undefined;
+}
+
+/** The node_modules dir for one `pi` launcher path, or undefined (see locatePiPackages). */
+function piPackagesFrom(pi: string, has: (dir: string) => boolean): string | undefined {
 	let real: string;
 	try {
 		real = realpathSync(pi);

@@ -7,12 +7,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { ctlSockPath, nvimSockPath, runtimeDir } from "../../pi/extensions/fleet/cli.ts";
+import { ctlSockPath, locatePiPackages, nvimSockPath, runtimeDir } from "../../pi/extensions/fleet/cli.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = join(here, "../..");
@@ -180,6 +180,40 @@ test("harness and CLI refuse the default tmux socket", { skip: skipTmux }, () =>
 	assert.match(r.stderr, /refuses the default tmux server/);
 	const viaTmux = spawnSync(cliBin, ["pair", "%0", "--session", "x"], { env: { ...env, TMUX: `/tmp/tmux-${process.getuid?.()}/default,1,0` }, encoding: "utf8" });
 	assert.match(viaTmux.stderr, /refuses the default tmux server/);
+});
+
+test("locatePiPackages: skips a wrapper pi first on PATH (cmux shim), falls back to <agent>/bin/pi", () => {
+	const tmp = realpathSync(mkdtempSync(join(tmpdir(), "pft-pkgs-")));
+	try {
+		// managed install: <agent>/bin/pi -> install/current-version -> releases/<v>/node_modules
+		const agent = join(tmp, "agent");
+		const modules = join(agent, "install", "releases", "9.9.9", "node_modules");
+		mkdirSync(join(modules, "@earendil-works", "pi-tui"), { recursive: true });
+		writeFileSync(join(modules, "@earendil-works", "pi-tui", "package.json"), "{}");
+		writeFileSync(join(agent, "install", "current-version"), "9.9.9\n");
+		mkdirSync(join(agent, "bin"));
+		writeFileSync(join(agent, "bin", "pi"), "#!/bin/sh\n");
+		chmodSync(join(agent, "bin", "pi"), 0o755);
+		// a symlink to the launcher (like ~/.local/bin/pi) and a wrapper script that leads nowhere
+		const local = join(tmp, "local");
+		mkdirSync(local);
+		symlinkSync(join(agent, "bin", "pi"), join(local, "pi"));
+		const shim = join(tmp, "shim");
+		mkdirSync(shim);
+		writeFileSync(join(shim, "pi"), "#!/bin/bash\nexec wrapper \"$@\"\n");
+		chmodSync(join(shim, "pi"), 0o755);
+		const home = join(tmp, "home");
+		mkdirSync(home);
+
+		assert.equal(locatePiPackages({ PATH: [shim, local].join(":"), HOME: home }), modules, "wrapper first: next pi on PATH");
+		assert.equal(locatePiPackages({ PATH: shim, PI_CODING_AGENT_DIR: agent, HOME: home }), modules, "only the wrapper: <agent>/bin/pi");
+		mkdirSync(join(home, ".pi"));
+		symlinkSync(agent, join(home, ".pi", "agent"));
+		assert.equal(locatePiPackages({ PATH: shim, HOME: home }), modules, "only the wrapper: ~/.pi/agent/bin/pi");
+		assert.equal(locatePiPackages({ PATH: shim, HOME: join(tmp, "nohome") }), undefined, "no install anywhere");
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
 });
 
 test("runtimeDir: a bad default dir falls back to one mkdtemp dir, cached for every socket path", () => {
