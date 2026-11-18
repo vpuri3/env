@@ -48,6 +48,20 @@ async function waitList<T>(d: Deck, what: string, probe: () => T | undefined | f
 	}
 }
 
+/** Resolves once `probe` is unchanged over 3 polls 100 ms apart (a burst of work has drained); reports the last value on timeout. */
+async function quiet<T>(probe: () => T, timeoutMs = 15_000): Promise<void> {
+	let last = probe();
+	let same = 0;
+	const end = Date.now() + timeoutMs;
+	while (same < 3) {
+		if (Date.now() > end) throw new Error(`timed out waiting for a quiet state; last observed: ${String(last)}`);
+		await sleep(100);
+		const now = probe();
+		same = now === last ? same + 1 : 0;
+		last = now;
+	}
+}
+
 /** List rows of the stub sessions (no status files: "new session"), the status line not counted. */
 const rowCount = (d: Deck) => (d.listScreen().match(/^. ⟳ new session/gm) ?? []).length;
 
@@ -66,12 +80,14 @@ test("j/k swap the real slot (a burst is one swap-pane), Enter focuses it, a dea
 		assert.match(d.listScreen().split("\n")[3]!, /^› ⟳ new session/);
 		d.keys("k");
 		await waitFor("s2 in the slot", () => d.slot().session === s2.id);
-		await sleep(300);
+		await waitFor("s2's nvim in the slot", () => d.nvimSlot().session === s2.id);
+		await quiet(() => logger.calls(d.label).length);
 		logger.clear();
 		// Five moves in one burst: s1 s2 s1 s2 s1 → one swap.
 		d.keys("k", "j", "k", "j", "k");
 		await waitFor("s1 in the slot", () => d.slot().session === s1.id);
-		await sleep(400);
+		await waitFor("s1's nvim in the slot", () => d.nvimSlot().session === s1.id);
+		await quiet(() => logger.calls(d.label).length);
 		// Its nvim (made on its first show) came along in the same call.
 		assert.equal(d.nvimSlot().role, "nvim");
 		assert.equal(d.nvimSlot().session, s1.id);
@@ -96,7 +112,7 @@ test("j/k swap the real slot (a burst is one swap-pane), Enter focuses it, a dea
 	}
 });
 
-test("status writes reach the list within 300 ms (fs.watch); the outer @pi_deck_bar follows and is cleared on exit; 1 s watched acks", { skip, timeout: 90_000 }, async () => {
+test("status writes reach the list within 1 s (fs.watch, not the 15 s poll); the outer @pi_deck_bar follows and is cleared on exit; 1 s watched acks", { skip, timeout: 90_000 }, async () => {
 	const d = deck();
 	try {
 		d.start();
@@ -105,28 +121,31 @@ test("status writes reach the list within 300 ms (fs.watch); the outer @pi_deck_
 		d.tmux(["-f", "/dev/null", "new-session", "-d", "-s", "main", "/bin/sh"], "outer");
 		const outer = d.tmux(["display-message", "-p", "#{socket_path}"], "outer");
 		d.tmux(["set", "-g", "@deck_outer", `${outer}|/dev/fake`]);
-		await sleep(300);
+		await waitFor("@deck_outer set", () => d.tryTmux(["show", "-gv", "@deck_outer"]) === `${outer}|/dev/fake`);
 		const t0 = Date.now();
 		d.writeStatus(s.id, { name: "bar test", state: "running", sub: "tool:bash", pid: d.stubPid(s.id) });
-		await waitFor("the row renamed", () => d.listScreen().includes("bar test"), 3000, 10);
+		await waitFor("the row renamed", () => d.listScreen().includes("bar test"), 10_000, 10);
 		const ms = Date.now() - t0;
-		assert.ok(ms < 300, `list updated after ${ms} ms`);
+		// What this proves: the fs.watch path (STATUS_DEBOUNCE_MS = 100) delivered it. Without the watch the only
+		// refreshes are LIVENESS_MS (15 s) and RESCAN_MS (60 s), so anything well under 15 s is the watch; 1 s keeps
+		// 10x headroom over the debounce for a loaded machine.
+		assert.ok(ms < 1000, `list updated after ${ms} ms`);
 		assert.equal(d.tryTmux(["show", "-gv", "@pi_deck_bar"], "outer") ?? "", "", "nothing needs the user yet");
 		// It finishes (waiting, run r1): the bar shows it. Nobody is attached: no ack.
 		d.writeStatus(s.id, { name: "bar test", state: "waiting", acked: false, runId: "r1", pid: d.stubPid(s.id) });
-		await waitFor("the outer bar", () => d.tryTmux(["show", "-gv", "@pi_deck_bar"], "outer") === "π #[fg=colour78]1◐#[default] ", 3000);
-		await sleep(1300);
+		await waitFor("the outer bar", () => d.tryTmux(["show", "-gv", "@pi_deck_bar"], "outer") === "π #[fg=colour78]1◐#[default] ", 10_000);
+		await sleep(1200); // negative check, anchored after the bar showed the finished run
 		assert.equal(existsSync(join(d.statusDir, `${s.id}.seen`)), false, "no client attached: not seen");
 		// A client attaches (resize → the ack re-arms): after 1 s shown, acknowledged.
 		d.tmux(["-f", "/dev/null", "new-session", "-d", "-s", "h", "-x", "150", "-y", "40", `env -u TMUX ${realTmux} -L ${d.label} attach -t deck`], "h");
 		await waitFor("the deck client", () => d.tmux(["list-clients", "-F", "#{client_name}"]) !== "");
 		const attached = Date.now();
-		const seen = await waitFor("the .seen file", () => (existsSync(join(d.statusDir, `${s.id}.seen`)) ? Date.now() : undefined), 5000, 20);
+		const seen = await waitFor("the .seen file", () => (existsSync(join(d.statusDir, `${s.id}.seen`)) ? Date.now() : undefined), 10_000, 20);
 		assert.ok(seen - attached >= 900, `acked after ${seen - attached} ms`);
 		assert.deepEqual(JSON.parse(readFileSync(join(d.statusDir, `${s.id}.seen`), "utf8")), { runId: "r1" });
 		// The list exits with the server: the bar is cleared.
 		d.tmux(["kill-server"]);
-		await waitFor("bar cleared", () => (d.tryTmux(["show", "-gv", "@pi_deck_bar"], "outer") ?? "") === "", 5000);
+		await waitFor("bar cleared", () => (d.tryTmux(["show", "-gv", "@pi_deck_bar"], "outer") ?? "") === "", 10_000);
 	} finally {
 		d.close();
 	}
@@ -162,7 +181,7 @@ test("a subagent row previews its transcript in the holder (fs.watch on its JSON
 		assert.match(d.slotScreen(), /loss 0\.12/);
 		// The subagent writes on: the holder follows (fs.watch on its JSONL, no timer).
 		appendFileSync(sub, line({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "fresh tail line" }] }, id: "t9", parentId: "t0000004" }));
-		await waitList(d, "the new tail", () => /fresh tail line/.test(d.slotScreen()), 3000);
+		await waitList(d, "the new tail", () => /fresh tail line/.test(d.slotScreen()), 10_000);
 	} finally {
 		d.close();
 	}
@@ -253,7 +272,6 @@ async function harness(d: Deck): Promise<{ keys: (...k: string[]) => void; outer
 	d.tmux(["-f", "/dev/null", "new-session", "-d", "-s", "h", "-x", "160", "-y", "48", `env -u TMUX ${realTmux} -L ${d.label}-outer attach -t main`], "h");
 	d.tmux(["set", "-g", "escape-time", "0"], "h");
 	await waitList(d, "the outer client", () => d.tmux(["list-clients", "-F", "#{client_name}"], "outer") !== "");
-	await sleep(300);
 	return { keys: (...k: string[]) => void d.tmux(["send-keys", "-t", "h", ...k], "h"), outerSocket };
 }
 
@@ -282,7 +300,6 @@ test("popup: C-c detaches (q does not); an outside row previews its pane in the 
 		h.keys("C-c");
 		await waitList(d, "deck client gone", () => d.tmux(["list-clients", "-F", "#{client_name}"]) === "");
 		assert.ok(d.tryTmux(["has-session", "-t", "=deck"]) !== undefined, "detaching never stops the deck");
-		await sleep(300);
 		h.keys("pi-fleet attach", "Enter");
 		await waitList(d, "the popup again", () => d.tmux(["list-clients", "-F", "#{client_name}"]) !== "", 15_000);
 		// Search the outside row: the holder shows its card and one capture of its pane.
