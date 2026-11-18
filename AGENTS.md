@@ -34,6 +34,7 @@ docs and skills use placeholders (`mycluster`, `/project/me`).
 | `skills/` | agent skills, linked into `~/.agents/skills/` |
 | `docs/` | cheat sheets: `tmux.md`, `nvim.md`, `vscode.md` |
 | `tests/bootstrap_test.sh` | bootstraps throwaway homes and checks the result |
+| `tests/pi_fleet_test.sh` | runs the pi-fleet tests (`tests/pi-fleet/*.test.ts`, node's test runner) |
 
 ## Rules for `bootstrap.sh`
 
@@ -67,11 +68,27 @@ docs and skills use placeholders (`mycluster`, `/project/me`).
 ## Verify before claiming done
 
 ```bash
-SHELL=/bin/zsh  tests/bootstrap_test.sh
-SHELL=/bin/bash tests/bootstrap_test.sh
-shellcheck -x bootstrap.sh shellrc vars.sh aliases.sh tests/bootstrap_test.sh   # if installed
+SHELL=/bin/zsh  tests/bootstrap_test.sh -q    # macOS only; on Linux it says unsupported
+SHELL=/bin/bash tests/bootstrap_test.sh -q    # ~15 s
+shellcheck -x bootstrap.sh shellrc vars.sh aliases.sh tests/*.sh   # if installed
 for f in shellrc vars.sh aliases.sh; do zsh -n "$f"; done
 ```
+
+For `pi/extensions/fleet/` and `bin/pi-*`, run the pi-fleet tests: the narrow
+files while iterating, the full suite once at the end (~40 s; the files run in
+parallel). `-q` prints only failures (file:line, name, message) and a summary
+line; the full output is in the log whose path it prints, so don't grep it.
+
+```bash
+tests/pi_fleet_test.sh -q deck deck-view          # tests/pi-fleet/{deck,deck-view}.test.ts
+tests/pi_fleet_test.sh -q -t 'C-d in the list' deck-view-tmux   # tests by name (regex)
+tests/pi_fleet_test.sh -q -n 3 deck               # 3 runs in a row: flake or failure?
+tests/pi_fleet_test.sh -q                         # everything, once, before claiming done
+```
+
+Tests use their own temp dirs and tmux sockets, so parallel runs (other
+worktrees) are safe. A test that fails only sometimes is a bug to fix with a
+proper wait (`waitFor` on the condition), not a longer `sleep` or a retry loop.
 
 Add a `check` to `tests/bootstrap_test.sh` for every new bootstrap step. For
 `tmux.conf`, load it in a throwaway server: `tmux -L envtest -f tmux.conf
