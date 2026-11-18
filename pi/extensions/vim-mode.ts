@@ -12,8 +12,10 @@
  *   / and ?          search forward / backward; Enter confirms, cursor jumps to the match
  *   n / N            next / previous match
  *   counts           5j, 3w, ...
- * Selection and copy (same keys as ~/env/tmux.conf):
- *   v                start a selection at the cursor
+ * Selection and copy (as in ~/env/tmux.conf's copy-mode-vi, where Space begins a selection):
+ *   Space            start a (character) selection at the cursor
+ *   v                toggle the selection between characters and whole lines (no selection:
+ *                    start a character selection)
  *   V                select whole lines
  *   o                jump to the other end of the selection
  *   y / Enter        copy to the system clipboard (and the tmux buffer inside tmux),
@@ -23,13 +25,12 @@
  *   p                paste the last copy into the prompt (INSERT mode)
  *   i a I A          enter INSERT mode
  *   Enter (no selection) and other ctrl/alt/arrow keys pass through to pi as usual
- * Leader (Space, NORMAL mode only), run by the pi-fleet extension (docs/pi-fleet-design.md §12):
- *   Space e / E      the pi deck: back to its list in a deck pi, else the deck popup (prefix g)
- *   Space v          this session's nvim (created on first use; in the deck it takes the pi's slot)
- *   Space f f/g/b    file picker: all / git files / files touched in this session
- *   Space f s        grep;  Space f h  slash commands (inserted into the prompt)
- *   Space g s        :Git (fugitive) in the paired nvim;  Space t  tool output picker
- *   The mode line shows ␣… while pending; any other key, Esc or 1 s without a key cancels.
+ * Leader (`,`, NORMAL mode only), run by the pi-fleet extension (docs/pi-fleet-design.md §12,
+ * docs/pi-deck-design.md §15):
+ *   , f f/g/b        file picker: all / git files / files touched in this session
+ *   , f s            grep;  , f h  slash commands (inserted into the prompt)
+ *   , g s            :Git (fugitive) in the paired nvim;  , t  tool output picker
+ *   The mode line shows ,… while pending; any other key, Esc or 1 s without a key cancels.
  *
  * INSERT mode: everything goes to the prompt. Esc -> NORMAL.
  *   ctrl+p / ctrl+n act as up / down (previous/next line, history, autocomplete menu).
@@ -88,11 +89,10 @@ let hasQueued: () => boolean = () => false;
 // Runs a leader action (set in session_start: emits pi-fleet:action on pi.events).
 let leaderAction: (name: string) => void = () => {};
 
-/** Leader key sequences (after Space) and the pi-fleet action each one emits. */
+/** The leader key (NORMAL mode). */
+export const LEADER_KEY = ",";
+/** Leader key sequences (after `,`) and the pi-fleet action each one emits. */
 export const LEADER_MAPS: Readonly<Record<string, string>> = {
-	e: "sessions",
-	E: "sessions-popup",
-	v: "nvim",
 	ff: "files",
 	fg: "git-files",
 	fb: "session-files",
@@ -156,7 +156,7 @@ function withVim(Base: any) {
 	declare lineSelect: boolean;
 	declare pendingSearchJump: boolean;
 	declare pendingG: boolean;
-	declare leader: string | undefined; // keys typed after Space; undefined = no leader pending
+	declare leader: string | undefined; // keys typed after the leader (,); undefined = no leader pending
 	declare leaderTimer: ReturnType<typeof setTimeout> | undefined;
 	declare count: string;
 	declare wantCol: number;
@@ -430,7 +430,7 @@ function withVim(Base: any) {
 		this.normalKey(data);
 	}
 
-	// ---- leader (Space) ----
+	// ---- leader (,) ----
 
 	private cancelLeader(): void {
 		if (this.leaderTimer) clearTimeout(this.leaderTimer);
@@ -475,7 +475,7 @@ function withVim(Base: any) {
 		const s = this.screen;
 
 		if (this.leader !== undefined) return this.leaderKey(data);
-		if (data === " " || matchesKey(data, "space")) {
+		if (data === LEADER_KEY) {
 			// Counts are not applied to leader maps.
 			this.pendingG = false;
 			this.count = "";
@@ -609,6 +609,15 @@ function withVim(Base: any) {
 				for (let k = 0; k < n; k++) s.scrollToPrompt(data === "{" ? -1 : 1);
 				return this.moveTo(this.view().scrollTop, 0);
 			case "v":
+				// With a selection: characters <-> whole lines, same anchor; else start one.
+				if (this.anchor) this.lineSelect = !this.lineSelect;
+				else {
+					this.anchor = { ...c };
+					this.lineSelect = false;
+				}
+				s.requestRender?.();
+				return;
+			case " ":
 			case "V":
 				this.anchor = { ...c };
 				this.lineSelect = data === "V";
@@ -639,6 +648,8 @@ function withVim(Base: any) {
 				return;
 		}
 
+		// Space as a CSI-u sequence (kitty keyboard protocol): the same as " ".
+		if (matchesKey(data, "space")) return this.normalKey(" ");
 		if (matchesKey(data, "enter") && this.anchor) return this.copySelection();
 		if (matchesKey(data, "ctrl+e")) return this.scrollKeepCursor(n);
 		if (matchesKey(data, "ctrl+y")) return this.scrollKeepCursor(-n);
@@ -667,7 +678,7 @@ function withVim(Base: any) {
 		if (this.mode === "normal") lines = lines.map((l) => l.split(FAKE_CURSOR_START).join("").split(FAKE_CURSOR_END).join(""));
 		let label = " INSERT ";
 		if (this.mode === "normal") {
-			label = this.leader !== undefined ? ` ␣${this.leader}… ` : !this.anchor ? " NORMAL " : this.lineSelect ? " V-LINE " : " VISUAL ";
+			label = this.leader !== undefined ? ` ${LEADER_KEY}${this.leader}… ` : !this.anchor ? " NORMAL " : this.lineSelect ? " V-LINE " : " VISUAL ";
 		}
 		const last = lines.length - 1;
 		if (visibleWidth(lines[last]!) >= label.length) {

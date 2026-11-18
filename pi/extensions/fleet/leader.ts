@@ -1,23 +1,20 @@
 /**
- * fleet/leader: runs vim-mode's Space leader maps (design §12; phase 8).
+ * fleet/leader: runs vim-mode's `,` leader maps (design §12; phase 8; pi-deck-design.md §15).
  *
  * vim-mode (NORMAL mode only) emits `pi.events.emit("pi-fleet:action", { name, handled })`; this
  * module sets `handled = true` synchronously when it takes the action (vim-mode shows
  * "pi-fleet not loaded" otherwise) and runs it with the UI context saved at session_start.
  *
- *   sessions        Space e     the deck (pi-deck-design.md §7, deck-client.ts openDeck): in a deck
- *   sessions-popup  Space E     pi back to the list, elsewhere the deck popup; both keys, /sessions
- *                               and prefix g/G are one entry story
- *   nvim            Space v     this session's nvim (created on first use): in the deck the slot
- *                               toggles pi → nvim (`prefix e`/`:PiFocus` go back), elsewhere its
- *                               pane is focused
- *   files           Space f f   file picker: session files, then the repo
- *   git-files       Space f g   repo (git) files only
- *   session-files   Space f b   files touched in this session only
- *   grep            Space f s   `Grep >` input, then rg hits
- *   commands        Space f h   select a slash command; it goes into the prompt
- *   git-status      Space g s   :Git (fugitive) in the paired nvim, then focus it (deck: show it)
- *   tool-output     Space t     tool output picker
+ *   files           , f f   file picker: session files, then the repo
+ *   git-files       , f g   repo (git) files only
+ *   session-files   , f b   files touched in this session only
+ *   grep            , f s   `Grep >` input, then rg hits
+ *   commands        , f h   select a slash command; it goes into the prompt
+ *   git-status      , g s   :Git (fugitive) in the paired nvim, then focus it
+ *   tool-output     , t     tool output picker
+ *
+ * The deck list and the session's nvim are always on screen in the deck (§15), so there are no
+ * leader maps for them; `/sessions` (sessions-view.ts) still opens the deck.
  *
  * Main sessions only (fleetOf(pi).main). No module-level mutable state: the context lives in
  * register()'s closure.
@@ -25,7 +22,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { inTmux } from "./cli.ts";
-import { focusNvim, openDeck } from "./deck-client.ts";
+import { focusNvim } from "./deck-client.ts";
 import { NvimUnreachable, nvimRequest, resolveNvim, type NvimPeer } from "./nvim.ts";
 import { fleetOf, ownPrompt } from "./shared.ts";
 import { openFilePicker, openGrepPicker, openToolPicker, pairNew } from "./view.ts";
@@ -69,7 +66,7 @@ export const BUILTIN_COMMANDS: ReadonlyArray<{ name: string; description: string
 	{ name: "quit", description: "Quit pi" },
 ];
 
-/** Select-list entries for `Space f h`: extension commands, prompts and skills, then built-ins (first name wins). */
+/** Select-list entries for `, f h`: extension commands, prompts and skills, then built-ins (first name wins). */
 export function commandChoices(commands: ReadonlyArray<{ name: string; description?: string }>): { label: string; name: string }[] {
 	const seen = new Set<string>();
 	const out: { label: string; name: string }[] = [];
@@ -130,20 +127,9 @@ export async function gitStatus(pi: ExtensionAPI, ctx: ExtensionContext): Promis
 	if (peer.pane && inTmux()) await focusNvim(process.env.TMUX_PANE, peer.pane).catch(() => {});
 }
 
-/**
- * `Space v`: show this session's nvim, creating it on first use. In the deck it replaces the pi in
- * the slot (`prefix e`, `:PiFocus` or `C-h` leave it); elsewhere its pane (split beside the pi) is
- * focused.
- */
-export async function showNvimPane(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-	const found = await pairedNvim(pi, ctx);
-	if (!found?.peer.pane) return ctx.ui.notify("pi-fleet: no nvim for this session (needs a TUI pi in tmux)", "warning");
-	await focusNvim(process.env.TMUX_PANE, found.peer.pane);
-}
-
 // ---------------------------------------------------------------- actions
 
-/** `Space f h`: pick a slash command and put it into the prompt. */
+/** `, f h`: pick a slash command and put it into the prompt. */
 export async function pickCommand(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	const choices = commandChoices(pi.getCommands());
 	const label = await ownPrompt(pi, () => ctx.ui.select("Slash command", choices.map((c) => c.label)));
@@ -154,11 +140,6 @@ export async function pickCommand(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 export type Action = (pi: ExtensionAPI, ctx: ExtensionContext) => unknown;
 
 export const ACTIONS: Readonly<Record<string, Action>> = {
-	// Space e / Space E: the deck (list in the deck, popup elsewhere), opened directly (even
-	// while the agent works; never a prompt).
-	sessions: (_pi, ctx) => openDeck(ctx),
-	"sessions-popup": (_pi, ctx) => openDeck(ctx),
-	nvim: showNvimPane,
 	files: (pi, ctx) => openFilePicker(pi, ctx, { scope: "all" }),
 	"git-files": (pi, ctx) => openFilePicker(pi, ctx, { scope: "git" }),
 	"session-files": (pi, ctx) => openFilePicker(pi, ctx, { scope: "session" }),

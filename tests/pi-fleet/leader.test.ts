@@ -1,7 +1,7 @@
 // fleet/leader.ts (design §12, phase 8): the pi-fleet:action handler. Stubbed openers check the
 // dispatch (main sessions only, the session_start UI context, handled flag, errors); the real
-// ACTIONS are checked to reach the right view.ts opener through a fake ui; `Space g s` runs :Git
-// in a headless nvim; `Space f h`'s command list and prompt insertion. Resolves
+// ACTIONS are checked to reach the right view.ts opener through a fake ui; `, g s` runs :Git
+// in a headless nvim; `, f h`'s command list and prompt insertion. Resolves
 // `@earendil-works/*` from pi's install (skipped when pi is not on PATH).
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
@@ -179,12 +179,18 @@ test("files / git-files list their scope (non-TUI select path of the picker)", {
 	assert.deepEqual(f.calls, ["select:Open repo file", "select:Open file (session, then repo)"]);
 });
 
-test("Space e / Space E / /sessions open the deck directly (never a prompt): its list in a deck pi, a notice outside tmux", { skip: skip || (!hasTmux && "tmux not found") }, async () => {
+test("no leader maps for the deck or nvim (always on screen); /sessions opens the deck directly: its list in a deck pi, a notice outside tmux", { skip: skip || (!hasTmux && "tmux not found") }, async () => {
+	for (const gone of ["sessions", "sessions-popup", "nvim"]) assert.equal(Object.hasOwn(leader.ACTIONS, gone), false, gone);
+	const register = (f: ReturnType<typeof fakePi>) => {
+		const commands: Record<string, { description: string; handler: (args: string, ctx: unknown) => Promise<void> }> = {};
+		const svPi = { registerCommand: (name: string, c: any) => (commands[name] = c) } as any;
+		fleetOf(svPi).main = true;
+		sv.register(svPi);
+		return commands;
+	};
 	// Outside tmux: say so.
 	const out = fakePi();
-	leader.registerLeader(out.pi);
-	await out.start();
-	assert.equal(out.emit("sessions"), true);
+	await register(out).sessions!.handler("", out.ctx);
 	for (let i = 0; i < 100 && !out.notes.length; i++) await sleep(10);
 	assert.deepEqual(out.notes, [["pi-fleet: deck: the deck needs tmux here (outside tmux run `pf`)", "error"]]);
 	assert.deepEqual(out.sent, []);
@@ -199,20 +205,13 @@ test("Space e / Space E / /sessions open the deck directly (never a prompt): its
 		const active = () => t("display-message", "-p", "-t", "=deck:=deck", "#{pane_index}");
 		Object.assign(process.env, { PI_FLEET_DECK: "1", PI_FLEET_DECK_SOCKET: label, PI_FLEET_TMUX_GUARD: "1", TMUX_PANE: "%1" });
 		const f = fakePi();
-		leader.registerLeader(f.pi);
-		await f.start();
-		const commands: Record<string, { description: string; handler: (args: string, ctx: unknown) => Promise<void> }> = {};
-		const svPi = { registerCommand: (name: string, c: any) => (commands[name] = c) } as any;
-		fleetOf(svPi).main = true;
-		sv.register(svPi);
+		const commands = register(f);
 		assert.match(commands.sessions!.description, /pi deck/);
-		for (const enter of [() => f.emit("sessions"), () => f.emit("sessions-popup"), () => commands.sessions!.handler("", f.ctx)]) {
-			t("select-pane", "-t", "=deck:=deck.1");
-			assert.equal(active(), "1");
-			await enter();
-			for (let i = 0; i < 100 && active() !== "0"; i++) await sleep(20);
-			assert.equal(active(), "0");
-		}
+		t("select-pane", "-t", "=deck:=deck.1");
+		assert.equal(active(), "1");
+		await commands.sessions!.handler("", f.ctx);
+		for (let i = 0; i < 100 && active() !== "0"; i++) await sleep(20);
+		assert.equal(active(), "0");
 		assert.deepEqual(f.notes, []);
 		assert.deepEqual(f.sent, []);
 	} finally {
@@ -225,7 +224,7 @@ test("Space e / Space E / /sessions open the deck directly (never a prompt): its
 	}
 });
 
-test("Space f h: commands then built-ins; the choice goes into the prompt", { skip }, async () => {
+test(", f h: commands then built-ins; the choice goes into the prompt", { skip }, async () => {
 	assert.deepEqual(leader.BUILTIN_COMMANDS, builtins.map((b) => ({ name: b.name, description: b.description })), "BUILTIN_COMMANDS out of date with the installed pi");
 	const choices = leader.commandChoices([
 		{ name: "sessions", description: "pi-fleet: sessions\n  on this node" },
@@ -263,7 +262,7 @@ test("Space f h: commands then built-ins; the choice goes into the prompt", { sk
 
 const hasNvim = spawnSync("nvim", ["--version"], { stdio: "ignore" }).status === 0;
 
-test("Space g s: :Git runs in the paired nvim (args as data); a missing :Git is reported", { skip: skip || (!hasNvim && "nvim not on PATH") }, async () => {
+test(", g s: :Git runs in the paired nvim (args as data); a missing :Git is reported", { skip: skip || (!hasNvim && "nvim not on PATH") }, async () => {
 	const f = fakePi();
 	leader.registerLeader(f.pi);
 	await f.start();
