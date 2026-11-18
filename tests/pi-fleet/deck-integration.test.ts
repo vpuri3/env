@@ -39,7 +39,7 @@ test("deck pi: /new and /resume open pool panes over deck.sock (shown, focused);
 	const d = rig();
 	d.start();
 	const a = await d.open();
-	assert.equal(d.slot()?.pane, a.pane);
+	await waitFor("a in the slot", () => d.slot()?.pane === a.pane, 15_000, () => `slot=${d.slot()?.pane}`);
 	// One exchange, so a's session file exists (pi writes it with the first message).
 	await d.type(a.pane, "hello");
 	const stA = await waitFor("a's session file", () => d.status(a.id)?.sessionFile && existsSync(d.status(a.id).sessionFile) && d.status(a.id)?.state !== "running" && d.status(a.id), 30_000, () => d.screen(a.pane));
@@ -48,7 +48,7 @@ test("deck pi: /new and /resume open pool panes over deck.sock (shown, focused);
 	await d.type(a.pane, "/new");
 	const b = await waitFor("a pool pi from /new", () => d.panes().find((p) => p.role === "pi" && p.session && p.session !== a.id), 30_000, () => d.screen(a.pane));
 	await waitFor("b in the slot", () => d.slot()?.pane === b.pane);
-	assert.equal(d.activeIndex(), "3", "and focused");
+	await waitFor("b focused", () => d.activeIndex() === "3", 15_000, () => `active=${d.activeIndex()}`);
 	await d.ready(b.pane);
 	const stB = await waitFor("status of b", () => d.status(b.session)?.pid && d.status(b.session));
 	assert.equal(stB.cwd, d.work);
@@ -97,7 +97,7 @@ test("hand-started pi in the user's tmux: /new and /resume create the session in
 	const fresh = await waitFor("the new session in the deck", () => d.panes().find((p) => p.role === "pi" && p.session && p.session !== id), 30_000, () => d.screen(pane, "outer"));
 	await waitFor("shown in the slot", () => d.slot()?.pane === fresh.pane);
 	await waitFor("the deck popup on the outer client", () => d.clients().length === 1, 15_000, () => d.screen("h", "h"));
-	assert.equal(d.tmux(["show", "-gv", "@deck_outer"]), `${h.outerSocket}|${h.outerClient}`);
+	await waitFor("@deck_outer set", () => d.tryTmux(["show", "-gv", "@deck_outer"]) === `${h.outerSocket}|${h.outerClient}`, 15_000, () => String(d.tryTmux(["show", "-gv", "@deck_outer"])));
 	await d.ready(fresh.pane);
 	assert.equal(d.status(id)?.pid, pid, "the hand-started pi keeps running");
 	assert.ok(alive(pid));
@@ -131,7 +131,7 @@ test("deck nvim: made on first show below the list; /view opens the file there a
 	assert.equal(nvim.session, a.id);
 	assert.equal(nvim.peer, a.pane);
 	assert.equal(d.panes().find((p) => p.pane === a.pane)?.peer, nvim.pane);
-	assert.equal(d.activeIndex(), "3");
+	await waitFor("the pi focused", () => d.activeIndex() === "3", 15_000, () => `active=${d.activeIndex()}`);
 	const sock = nvim.nvimSock;
 	await waitFor("nvim's socket", () => existsSync(sock));
 

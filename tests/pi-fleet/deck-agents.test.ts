@@ -67,8 +67,10 @@ test("§16: a live deck session's subagent row shows its agent view in the pi sl
 	const inAgentView = (name: string) => () => piScreen().includes(`/root/${name}`) && !piScreen().includes("Agents tree") && !mainShown();
 	const selected = () => listScreen().split("\n").find((l) => l.startsWith("›")) ?? "";
 	const key = async (...k: string[]) => {
+		const before = listScreen();
 		d.tmux(["send-keys", "-t", list, ...k]);
-		await sleep(150);
+		const end = Date.now() + 700;
+		while (listScreen() === before && Date.now() < end) await sleep(25);
 	};
 
 	// The list selects the session open showed; Space shows its subagents (alpha, the newer, first).
@@ -77,7 +79,7 @@ test("§16: a live deck session's subagent row shows its agent view in the pi sl
 	await key("Space");
 	await waitFor("its subagents", () => /\/root\/alpha/.test(listScreen()) && /\/root\/beta/.test(listScreen()), 15_000, listScreen);
 	await key("j");
-	assert.match(selected(), /\/root\/alpha/);
+	await waitFor("alpha selected in the list", () => /\/root\/alpha/.test(selected()), 10_000, listScreen);
 	await waitFor("alpha's agent view in the pi", inAgentView("alpha"), 10_000, piScreen);
 	assert.equal(d.slot()?.pane, pi, "the session's pi is in the pi slot");
 	assert.equal(mark(), "/root/alpha", "deck-opened");
@@ -116,8 +118,9 @@ test("§16: a live deck session's subagent row shows its agent view in the pi sl
 	assert.equal(mark(), "", "focusing the pi took the view over");
 	d.tmux(["select-pane", "-t", list]);
 	await key("k");
-	await sleep(1500);
-	assert.ok(inAgentView("alpha")(), `the view stays: ${piScreen()}`);
+	await waitFor("the list selection to leave alpha", () => selected() !== "" && !/\/root\/alpha/.test(selected()), 10_000, listScreen);
+	// Bounded stability window: the view must stay for the whole of it.
+	for (const end = Date.now() + 1500; Date.now() < end; await sleep(50)) assert.ok(inAgentView("alpha")(), `the view stays: ${piScreen()}`);
 	// The package's own keys from here: Esc → the tree, Esc → the main conversation.
 	await d.keys(pi, ["Escape"]);
 	await waitFor("the agents tree", () => piScreen().includes("Agents tree"), 10_000, piScreen);

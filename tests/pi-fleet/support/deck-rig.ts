@@ -23,7 +23,12 @@ export const piCmd = process.env.PI_FLEET_TEST_PI ?? "pi";
 const socketDir = `${process.env.TMUX_TMPDIR || "/tmp"}/tmux-${process.getuid?.() ?? 0}`;
 
 function ok(cmd: string, args: string[]): boolean {
-	return spawnSync(cmd, args, { stdio: "ignore", timeout: 20_000, env: { ...process.env, PI_CODING_AGENT_DIR: tmpdir() } }).status === 0;
+	const dir = mkdtempSync(join(tmpdir(), "pdk3-probe-"));
+	try {
+		return spawnSync(cmd, args, { stdio: "ignore", timeout: 20_000, env: { ...process.env, PI_CODING_AGENT_DIR: dir } }).status === 0;
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 }
 export const haveTmux = ok("tmux", ["-V"]);
 export const haveNvim = ok("nvim", ["--version"]);
@@ -212,7 +217,15 @@ export class DeckRig {
 	/** A pi (vim-mode) is ready when it shows its INSERT mode line. */
 	async ready(pane: string, suffix = ""): Promise<void> {
 		await waitFor(`pi in ${pane} to start`, () => / INSERT\s*$/m.test(this.screen(pane, suffix)), 60_000, () => this.screen(pane, suffix));
-		await sleep(300);
+		// Input is live once the screen has stopped redrawing (startup renders settle).
+		let prev = "";
+		let same = 0;
+		await waitFor(`pi in ${pane} to settle`, () => {
+			const now = this.screen(pane, suffix);
+			same = now === prev ? same + 1 : 0;
+			prev = now;
+			return same >= 3 && / INSERT\s*$/m.test(now);
+		}, 15_000, () => this.screen(pane, suffix));
 	}
 	/** pi's prompt editor: the text between its two borders (the last two `─` rules), or undefined. */
 	editor(pane: string, suffix = ""): string | undefined {
@@ -234,14 +247,22 @@ export class DeckRig {
 		await waitFor(`"${text}" in the editor`, holds, 10_000, () => this.screen(pane, suffix));
 		for (let i = 0; i < 3; i++) {
 			this.tmux(["send-keys", "-t", pane, "Enter"], suffix);
-			await sleep(600);
-			if (!holds()) return;
+			// Enter either submits (the editor empties) or only accepted a suggestion (it still holds the line).
+			try {
+				await waitFor(`"${text}" to leave the editor`, () => !holds(), 3_000);
+				return;
+			} catch {
+				// still there: Enter again
+			}
 		}
 	}
 	async keys(pane: string, keys: string[], suffix = ""): Promise<void> {
 		for (const k of keys) {
+			const before = this.screen(pane, suffix);
 			this.tmux(["send-keys", "-t", pane, k], suffix);
-			await sleep(150);
+			// Pace on the screen reflecting the key; a key with no visible effect costs at most the bound.
+			const end = Date.now() + 700;
+			while (this.screen(pane, suffix) === before && Date.now() < end) await sleep(25);
 		}
 	}
 	/** A stored session file (header + one user message), for /resume. */
@@ -270,8 +291,10 @@ export class DeckRig {
 		this.tmux(["-f", conf, "new-session", "-d", "-s", "main", "-x", "160", "-y", "48", "/bin/sh"], "outer");
 		const outerSocket = this.tmux(["display-message", "-p", "#{socket_path}"], "outer");
 		this.tmux(["-f", "/dev/null", "new-session", "-d", "-s", "h", "-x", "160", "-y", "48", `env -u TMUX ${realTmux} -L ${this.label}-outer attach -t main`], "h");
-		const outerClient = await waitFor("the outer client", () => this.tmux(["list-clients", "-F", "#{client_name}"], "outer") || undefined);
-		await sleep(300);
+		const outerClient = await waitFor("the outer client (attached, sized)", () => {
+			const [name, w, h, sess] = (this.tmux(["list-clients", "-F", "#{client_name}\t#{client_width}\t#{client_height}\t#{client_session}"], "outer").split("\n")[0] ?? "").split("\t");
+			return name && Number(w) > 0 && Number(h) > 0 && sess === "main" ? name : undefined;
+		}, 15_000);
 		return { outerSocket, outerClient };
 	}
 

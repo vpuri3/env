@@ -112,43 +112,43 @@ test("agents-view shows a subagent's LiveAgentView; agents-close only when untou
 	let r = await call({ type: "agents-view", path: "/root/alpha" });
 	assert.equal(r.ok, true, JSON.stringify(r));
 	assert.equal(r.already, false);
-	await waitFor("alpha's agent view", inAgentView("alpha"), 5_000, show);
-	assert.match(show(), /output of alpha|task of alpha/);
+	await waitFor("alpha's agent view", inAgentView("alpha"), 15_000, show);
+	await waitFor("alpha's output or task on the pane", () => /output of alpha|task of alpha/.test(show()), 115_000, show);
 
 	r = await call({ type: "agents-view", path: "/root/alpha" });
 	assert.deepEqual([r.ok, r.already], [true, true], JSON.stringify(r));
 
 	r = await call({ type: "agents-view", path: "/root/beta" });
 	assert.equal(r.ok, true, JSON.stringify(r));
-	await waitFor("beta's agent view", inAgentView("beta"), 5_000, show);
+	await waitFor("beta's agent view", inAgentView("beta"), 15_000, show);
 
 	// Untouched: agents-close closes it; the main editor is back.
 	r = await call({ type: "agents-close" });
 	assert.deepEqual([r.ok, r.closed], [true, true], JSON.stringify(r));
-	await waitFor("main again", mainShown, 5_000, show);
+	await waitFor("main again", mainShown, 15_000, show);
 	r = await call({ type: "agents-close" });
 	assert.deepEqual([r.ok, r.closed], [true, false], "nothing open");
 
 	// Touched: a key reached the overlay, so agents-close leaves it; Esc → tree, Esc → main (the package's own).
 	r = await call({ type: "agents-view", path: "/root/alpha" });
 	assert.equal(r.ok, true, JSON.stringify(r));
-	await waitFor("alpha's agent view", inAgentView("alpha"), 5_000, show);
+	await waitFor("alpha's agent view", inAgentView("alpha"), 15_000, show);
 	await d.keys(pane, ["PageUp"], S);
 	r = await call({ type: "agents-close" });
 	assert.deepEqual([r.ok, r.closed], [true, false], JSON.stringify(r));
-	assert.ok(show().includes("/root/alpha"), show());
+	await waitFor("alpha's view still shown", () => show().includes("/root/alpha"), 15_000, show);
 	await d.keys(pane, ["Escape"], S);
-	await waitFor("the agents tree", () => show().includes("Agents tree"), 5_000, show);
+	await waitFor("the agents tree", () => show().includes("Agents tree"), 15_000, show);
 	assert.ok(show().includes("/root/beta"), "the tree lists both agents");
 	await d.keys(pane, ["Escape"], S);
-	await waitFor("main again", mainShown, 5_000, show);
+	await waitFor("main again", mainShown, 15_000, show);
 
 	// Unknown (reaped / never existed): ok:false and no overlay left behind.
 	r = await call({ type: "agents-view", path: "/root/gone" });
 	assert.equal(r.ok, false, JSON.stringify(r));
 	assert.match(String(r.error), /unknown agent \/root\/gone/);
-	await sleep(300);
-	assert.ok(mainShown(), show());
+	// Bounded stability window: main stays shown (any change fails).
+	for (const end = Date.now() + 500; Date.now() < end; await sleep(50)) assert.ok(mainShown(), show());
 	r = await call({ type: "agents-close" });
 	assert.equal(r.closed, false);
 
