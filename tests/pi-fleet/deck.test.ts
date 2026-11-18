@@ -817,7 +817,8 @@ test("popup: attach, C-h/j/k/l between the panes, prefix C-<key>, Shift+Enter, p
 		const outerClient = d.tmux(["list-clients", "-F", "#{client_name}"], "outer");
 		assert.equal(d.tmux(["show", "-gv", "@deck_outer"]), `${h.outerSocket}|${outerClient}`);
 		const deckClientSize = d.tmux(["list-clients", "-F", "#{client_width}x#{client_height}"]);
-		const [cw, ch] = popupBorderless() ? [160, 48] : [158, 46];
+		// tmux 3.2a (no -B) caps a 100% popup at the client less one column and one row, and draws its border inside.
+		const [cw, ch] = popupBorderless() ? [160, 48] : [157, 45];
 		assert.equal(deckClientSize, `${cw}x${ch}`, "the whole 160x48 client, minus the popup border if any");
 		const sizes = deckSizesFor(cw, ch, 50);
 		const at = (p: Pane, z: { width: number; height: number }) => p.width === z.width && p.height === z.height;

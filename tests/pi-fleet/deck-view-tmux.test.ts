@@ -308,7 +308,7 @@ test("C-d in the list: the inline question, then y kills the deck sessions and t
 		await d.open();
 		d.tmux(["select-pane", "-t", "=deck:=deck.0"]);
 		d.keys("C-d");
-		await waitList(d, "the question", () => /Kill all 2 deck sessions and the deck\?/.test(d.listScreen()) && /y\/⏎ kill · n\/Esc cancel/.test(d.listScreen()));
+		await waitList(d, "the question", () => /Kill all 2 deck sessions and the deck\?/.test(d.listScreen()) && /y\/⏎\/C-d kill · n\/Esc cancel/.test(d.listScreen()));
 		d.keys("n");
 		await waitList(d, "cancelled", () => !/Kill all/.test(d.listScreen()));
 		d.keys("C-d");
