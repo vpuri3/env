@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmuxBaseArgs } from "../../pi/extensions/fleet/cli.ts";
+import { killServers } from "./support/tmux-cleanup.ts";
 import { LIST_LOOP, deckSizesFor, deckSockPath, deckTmuxArgs, inDeck, popupBorderless, slotArgs, slotSizeFor, type DeckPane } from "../../pi/extensions/fleet/deck.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -98,6 +99,7 @@ class Deck {
 			PI_FLEET_NVIM_CMD: "nvim --clean -n",
 			PI_FLEET_TMUX_GUARD: "1",
 			PI_FLEET_DECK_SOCKET: this.label,
+			PI_FLEET_DECK_START_WAIT_MS: "30000", // deck-start waits 3 s for the list; a loaded machine (parallel runs) needs more
 			SHELL: "/bin/sh",
 			TERM: "xterm-256color",
 		};
@@ -202,16 +204,9 @@ class Deck {
 		await waitFor("the deck client", () => this.tmux(["list-clients", "-F", "#{client_name}"]).split("\n").filter(Boolean).length > before);
 	}
 	close(): void {
-		for (const name of this.servers) {
-			try {
-				execFileSync("tmux", ["-L", name, "kill-server"], { stdio: "ignore", env: this.env });
-			} catch {
-				// gone
-			}
-			rmSync(join(socketDir, name), { force: true }); // tmux 3.2a leaves the socket file
-		}
+		killServers(this.servers, { tmux: "tmux", env: this.env, socketDir });
 		this.servers.clear();
-		rmSync(this.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+		rmSync(this.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 }
 

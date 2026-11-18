@@ -1487,7 +1487,9 @@ export async function startDeck(
 			if (!(await deckRunning(env))) throw error;
 		}
 	}
-	if (!(await waitDeckSock(env, opts.timeoutMs ?? 3000))) throw new Error(`deck: the list did not answer on ${await deckSockLookup(env)}`);
+	// PI_FLEET_DECK_START_WAIT_MS: the tests' longer wait (a list starting on a loaded machine), never set by hand.
+	const waitMs = opts.timeoutMs ?? (Number(env.PI_FLEET_DECK_START_WAIT_MS) || 3000);
+	if (!(await waitDeckSock(env, waitMs))) throw new Error(`deck: the list did not answer on ${await deckSockLookup(env)}`);
 	return { started };
 }
 

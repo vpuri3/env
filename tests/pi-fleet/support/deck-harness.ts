@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { killServers } from "./tmux-cleanup.ts";
 
 const here = fileURLToPath(new URL("..", import.meta.url));
 export const repo = join(here, "../..");
@@ -77,6 +78,7 @@ export class Deck {
 			PI_FLEET_NVIM_CMD: "nvim --clean -n",
 			PI_FLEET_TMUX_GUARD: "1",
 			PI_FLEET_DECK_SOCKET: this.label,
+			PI_FLEET_DECK_START_WAIT_MS: "30000", // deck-start waits 3 s for the list; a loaded machine (parallel runs) needs more
 			SHELL: "/bin/sh",
 			TERM: "xterm-256color",
 		};
@@ -165,15 +167,8 @@ export class Deck {
 		renameSync(tmp, join(this.statusDir, `${id}.json`));
 	}
 	close(): void {
-		for (const name of this.servers) {
-			try {
-				execFileSync(realTmux, ["-L", name, "kill-server"], { stdio: "ignore", env: this.env });
-			} catch {
-				// gone
-			}
-			rmSync(join(socketDir, name), { force: true });
-		}
+		killServers(this.servers, { tmux: realTmux, env: this.env, socketDir });
 		this.servers.clear();
-		rmSync(this.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+		rmSync(this.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 }

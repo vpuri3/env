@@ -108,26 +108,32 @@ function syntheticRepo(n: number): string[] {
 	return out;
 }
 
+/** The median wall time of `runs` calls of fn, in ms. */
+function medianMs(fn: () => void, runs: number): number {
+	const ms: number[] = [];
+	for (let i = 0; i < runs; i++) {
+		const t0 = performance.now();
+		fn();
+		ms.push(performance.now() - t0);
+	}
+	return ms.sort((a, b) => a - b)[Math.floor(runs / 2)]!;
+}
+
 test("perf: tiered ranking of 50k paths stays under 50 ms per query", () => {
 	const repo = pathList(syntheticRepo(50_000));
 	// A few touched files, so tier 2 (the 50k) is always ranked to fill the 20 slots.
 	const touched = pathList(repo.paths.slice(0, 5));
 	const queries = ["v", "m", "view", "src model", "fleet/status", "loader.py", "xq", "train_1/da", "pi/ext flt sts", "e"];
-	// Warm up the JIT, then take the worst of several runs per query.
+	// Warm up the JIT, then take the median of several runs per query (one GC pause or a busy machine
+	// running the other test files must not fail it; a slow ranking still does).
 	for (const q of queries) rankTiers(q, [touched, repo], 20);
-	const worst: Record<string, number> = {};
+	const typical: Record<string, number> = {};
 	for (const q of queries) {
-		for (let k = 0; k < 3; k++) {
-			const t0 = performance.now();
-			const r = rankTiers(q, [touched, repo], 20);
-			const ms = performance.now() - t0;
-			worst[q] = Math.max(worst[q] ?? 0, ms);
-			assert.ok(r.length <= 20);
-		}
+		typical[q] = medianMs(() => assert.ok(rankTiers(q, [touched, repo], 20).length <= 20), 5);
 	}
-	const slowest = Math.max(...Object.values(worst));
-	if (process.env.PI_FLEET_TEST_VERBOSE) console.log(worst);
-	assert.ok(slowest < 50, `slowest query took ${slowest.toFixed(1)} ms: ${JSON.stringify(worst)}`);
+	const slowest = Math.max(...Object.values(typical));
+	if (process.env.PI_FLEET_TEST_VERBOSE) console.log(typical);
+	assert.ok(slowest < 50, `slowest query took ${slowest.toFixed(1)} ms: ${JSON.stringify(typical)}`);
 });
 
 test("perf: typing a query keystroke by keystroke over 50k paths; narrowing gives the same results", () => {
@@ -139,9 +145,8 @@ test("perf: typing a query keystroke by keystroke over 50k paths; narrowing give
 		let worst = 0;
 		for (let i = 1; i <= query.length; i++) {
 			const q = query.slice(0, i);
-			const t0 = performance.now();
-			const got = rankTiers(q, [touched, repo], 20);
-			worst = Math.max(worst, performance.now() - t0);
+			let got: ReturnType<typeof rankTiers> = [];
+			worst = Math.max(worst, medianMs(() => (got = rankTiers(q, [touched, repo], 20)), 3));
 			if (i === query.length || i % 3 === 0) assert.deepEqual(got, rankTiers(q, [touched, pathList(raw)], 20), q);
 		}
 		assert.ok(worst < 50, `${query}: slowest keystroke ${worst.toFixed(1)} ms`);

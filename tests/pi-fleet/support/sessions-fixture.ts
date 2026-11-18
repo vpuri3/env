@@ -16,7 +16,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 export const IDS = {
 	sweep: "00000000-0000-7000-8000-00000000a001",
@@ -81,7 +81,13 @@ const registry = (root: string, threads: unknown[]) => ({
 });
 
 export function buildFixture(): Fixture {
-	const root = mkdtempSync(join(tmpdir(), "pfs-"));
+	// Searches match cwd and repo paths too: a random suffix with a digit (e.g. `…6h…`) made the list's
+	// "closed 6h" search match every closed row now and then. No digits, then.
+	let root = mkdtempSync(join(tmpdir(), "pfs-"));
+	while (/\d/.test(basename(root))) {
+		rmSync(root, { recursive: true, force: true });
+		root = mkdtempSync(join(tmpdir(), "pfs-"));
+	}
 	const now = Date.now();
 	const work = join(root, "work");
 	const alpha = join(work, "alpha");
