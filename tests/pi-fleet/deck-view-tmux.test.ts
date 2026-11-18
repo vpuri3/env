@@ -59,17 +59,17 @@ test("j/k swap the real slot (a burst is one swap-pane), Enter focuses it, a dea
 		const s1 = await d.open();
 		const s2 = await d.open();
 		const s3 = await d.open();
-		// The list selects what `open` showed; three rows without status files yet ("new session"),
-		// newest first: s3 s2 s1.
+		// The list selects what `open` showed; three rows without status files yet ("new session"), in the
+		// order they came (the order is fixed; new sessions go last): s1 s2 s3.
 		await waitFor("three rows", () => rowCount(d) === 3);
 		assert.equal(d.slot().session, s3.id);
-		assert.match(d.listScreen().split("\n")[1]!, /^› ⟳ new session/);
-		d.keys("j");
+		assert.match(d.listScreen().split("\n")[3]!, /^› ⟳ new session/);
+		d.keys("k");
 		await waitFor("s2 in the slot", () => d.slot().session === s2.id);
 		await sleep(300);
 		logger.clear();
 		// Five moves in one burst: s1 s2 s1 s2 s1 → one swap.
-		d.keys("j", "k", "j", "k", "j");
+		d.keys("k", "j", "k", "j", "k");
 		await waitFor("s1 in the slot", () => d.slot().session === s1.id);
 		await sleep(400);
 		// Its nvim (made on its first show) came along in the same call.
@@ -81,14 +81,14 @@ test("j/k swap the real slot (a burst is one swap-pane), Enter focuses it, a dea
 		assert.ok(logger.calls(d.label).length <= 3, logger.calls(d.label).join("\n"));
 		d.tmux(["select-pane", "-t", "=deck:=deck.0"]);
 		d.keys("Enter");
-		await waitFor("slot focused", () => d.activeIndex() === "2");
-		// s2 shown, then its pi exits: the slot shows the next row's pi (s1), s2's pane goes.
-		d.keys("k");
+		await waitFor("slot focused", () => d.activeIndex() === "3");
+		// s2 shown, then its pi exits: the slot shows the next row's pi (s3), s2's pane goes.
+		d.keys("j");
 		await waitFor("s2 in the slot", () => d.slot().session === s2.id);
 		writeFileSync(join(d.stub, `${s2.id}.exit`), "0\n");
-		await waitFor("s1 replaces s2", () => d.slot().session === s1.id && !d.panes().some((p) => p.pane === s2.pane));
+		await waitFor("s3 replaces s2", () => d.slot().session === s3.id && !d.panes().some((p) => p.pane === s2.pane));
 		await waitFor("two rows left", () => rowCount(d) === 2);
-		// The selection follows the replacement: the second of the two rows (s3 s1).
+		// The selection follows the replacement: the second of the two rows (s1 s3).
 		assert.match(d.listScreen().split("\n")[2]!, /^› ⟳ new session/);
 	} finally {
 		d.close();
@@ -200,41 +200,41 @@ test("a closed row: the holder previews its conversation; C-l opens it in less i
 		// C-l: less in the slot (the same holder pane), focused, at the end of the transcript.
 		const t0 = Date.now();
 		d.keys("C-l");
-		await waitList(d, "less in the slot", () => d.activeIndex() === "2" && /q\/C-h back · ⏎ resume/.test(d.slotScreen()) && /MARKER-LAST-ANSWER/.test(d.slotScreen()));
+		await waitList(d, "less in the slot", () => d.activeIndex() === "3" && /q\/C-h back · ⏎ resume/.test(d.slotScreen()) && /MARKER-LAST-ANSWER/.test(d.slotScreen()));
 		assert.ok(Date.now() - t0 < 3000, `pager after ${Date.now() - t0} ms`);
 		assert.equal(d.slot().pane, holder);
-		assert.equal(deckWindow().length, 3);
+		assert.equal(deckWindow().length, 4);
 		assert.notEqual(pagerOn(), "");
 		assert.match(d.slotScreen(), /│ TOOL-OUTPUT-MARK/);
 		// less keys: g to the top, / search.
-		d.tmux(["send-keys", "-t", "=deck:=deck.2", "g"]);
+		d.tmux(["send-keys", "-t", "=deck:=deck.3", "g"]);
 		await waitList(d, "the top", () => /── old chat/.test(d.slotScreen()) && /please read MARKER-USER/.test(d.slotScreen()));
-		d.tmux(["send-keys", "-t", "=deck:=deck.2", "/filler line 42", "Enter"]);
+		d.tmux(["send-keys", "-t", "=deck:=deck.3", "/filler line 42", "Enter"]);
 		await waitList(d, "the search hit on top", () => /^ {2}filler line 42/.test(d.slotScreen()));
 		// q: back to the list, the holder is a holder again (the card redrawn), nothing resumed.
-		d.tmux(["send-keys", "-t", "=deck:=deck.2", "q"]);
+		d.tmux(["send-keys", "-t", "=deck:=deck.3", "q"]);
 		await waitList(d, "back in the list, the card again", () => d.activeIndex() === "0" && /── transcript/.test(d.slotScreen()) && command() === "sleep");
 		assert.equal(pagerOn(), "");
-		assert.deepEqual([d.slot().pane, deckWindow().length, d.slot().dead], [holder, 3, false]);
+		assert.deepEqual([d.slot().pane, deckWindow().length, d.slot().dead], [holder, 4, false]);
 		assert.equal(d.nvimSlot().role, "nvim-holder", "no editor for a closed row");
 		assert.ok(!d.panes().some((p) => p.role === "pi"), "q resumes nothing");
 		// C-l again, C-h (as the root binding does), move on: the holder gets its sleep back and shows the next frame.
 		d.keys("C-l");
-		await waitList(d, "less again", () => d.activeIndex() === "2" && /q\/C-h back/.test(d.slotScreen()));
+		await waitList(d, "less again", () => d.activeIndex() === "3" && /q\/C-h back/.test(d.slotScreen()));
 		d.tmux(["select-pane", "-t", "=deck:=deck.0"]);
 		d.keys("k");
 		await waitList(d, "the holder restored", () => command() === "sleep" && pagerOn() === "" && !/q\/C-h back/.test(d.slotScreen()));
-		assert.deepEqual([d.slot().pane, deckWindow().length], [holder, 3]);
+		assert.deepEqual([d.slot().pane, deckWindow().length], [holder, 4]);
 		// Enter in less: resumed as a pi in the deck, shown and focused.
 		d.keys("j");
 		await waitList(d, "the card", () => /── transcript/.test(d.slotScreen()));
 		d.keys("C-l");
-		await waitList(d, "less again", () => d.activeIndex() === "2" && /q\/C-h back/.test(d.slotScreen()));
-		d.tmux(["send-keys", "-t", "=deck:=deck.2", "Enter"]);
-		await waitList(d, "resumed in the slot", () => d.slot().role === "pi" && d.slot().session === root && d.activeIndex() === "2", 15_000);
+		await waitList(d, "less again", () => d.activeIndex() === "3" && /q\/C-h back/.test(d.slotScreen()));
+		d.tmux(["send-keys", "-t", "=deck:=deck.3", "Enter"]);
+		await waitList(d, "resumed in the slot", () => d.slot().role === "pi" && d.slot().session === root && d.activeIndex() === "3", 15_000);
 		await waitList(d, "the stub pi started on that file", () => /--session .*0000000f0101\.jsonl/.test(d.file(root, "runs")));
 		await waitList(d, "its nvim below the list", () => d.nvimSlot().role === "nvim" && d.nvimSlot().session === root);
-		assert.equal(deckWindow().length, 3);
+		assert.equal(deckWindow().length, 4);
 		await waitList(d, "the holder back to sleep in the pool", () => command() === "sleep" && pagerOn() === "");
 	} finally {
 		d.close();

@@ -139,6 +139,10 @@ class Deck {
 	}
 	/** The pi slot (right half). */
 	slot(): Pane {
+		return this.panes().find((p) => p.where === "deck:deck.3")!;
+	}
+	/** The terminal slot (bottom-left). */
+	termSlot(): Pane {
 		return this.panes().find((p) => p.where === "deck:deck.2")!;
 	}
 	/** The nvim slot (below the list). */
@@ -257,17 +261,28 @@ test("slotSizeFor: list at pct% (rounded down), one border column", () => {
 	assert.deepEqual(slotSizeFor(151, 41, 40), { listWidth: 60, slot: { width: 90, height: 41 } });
 });
 
-test("deckSizesFor: left column at pct%, list at hpct% of it; one border column and one border line", () => {
-	assert.deepEqual(deckSizesFor(200, 50, 50, 50), { list: { width: 100, height: 25 }, nvim: { width: 100, height: 24 }, pi: { width: 99, height: 50 } });
-	assert.deepEqual(deckSizesFor(150, 41, 50, 50), { list: { width: 75, height: 20 }, nvim: { width: 75, height: 20 }, pi: { width: 74, height: 41 } });
-	assert.deepEqual(deckSizesFor(100, 30, 40, 35), { list: { width: 40, height: 10 }, nvim: { width: 40, height: 19 }, pi: { width: 59, height: 30 } });
+test("deckSizesFor: left column at pct%; list, nvim at hpct%, npct% of the height, the terminal the rest; one border column and two border lines", () => {
+	assert.deepEqual(deckSizesFor(200, 50, 50), { list: { width: 100, height: 20 }, nvim: { width: 100, height: 20 }, term: { width: 100, height: 8 }, pi: { width: 99, height: 50 } });
+	assert.deepEqual(deckSizesFor(150, 41, 50, 40, 40), { list: { width: 75, height: 16 }, nvim: { width: 75, height: 16 }, term: { width: 75, height: 7 }, pi: { width: 74, height: 41 } });
+	assert.deepEqual(deckSizesFor(100, 30, 40, 35, 30), { list: { width: 40, height: 10 }, nvim: { width: 40, height: 9 }, term: { width: 40, height: 9 }, pi: { width: 59, height: 30 } });
+	// Tiny windows keep every pane at least one line.
+	const tiny = deckSizesFor(20, 5, 50);
+	assert.ok(tiny.list.height >= 1 && tiny.nvim.height >= 1 && tiny.term.height >= 1);
+	assert.equal(tiny.list.height + tiny.nvim.height + tiny.term.height + 2, 5);
 });
 
-test("slotArgs: one call puts the pi in the pi slot and the nvim in the nvim slot; nothing if both are there", () => {
-	const pane = (id: string, where: "pi" | "nvim" | "pool"): DeckPane =>
-		({ pane: id, inSlot: where === "pi", inNvimSlot: where === "nvim", role: "" }) as unknown as DeckPane;
-	const swapPi = ["swap-pane", "-d", "-Z", "-s", "%5", "-t", "=deck:=deck.2"];
+test("slotArgs: one call puts the pi, nvim and terminal in their slots; nothing if they are there", () => {
+	const pane = (id: string, where: "pi" | "nvim" | "term" | "pool"): DeckPane =>
+		({ pane: id, inSlot: where === "pi", inNvimSlot: where === "nvim", inTermSlot: where === "term", role: "" }) as unknown as DeckPane;
+	const swapPi = ["swap-pane", "-d", "-Z", "-s", "%5", "-t", "=deck:=deck.3"];
 	const swapNvim = ["swap-pane", "-d", "-Z", "-s", "%6", "-t", "=deck:=deck.1"];
+	const swapTerm = ["swap-pane", "-d", "-Z", "-s", "%7", "-t", "=deck:=deck.2"];
+	assert.deepEqual(
+		slotArgs([pane("%1", "pi"), pane("%2", "nvim"), pane("%3", "term"), pane("%5", "pool"), pane("%6", "pool"), pane("%7", "pool")], { pi: "%5", nvim: "%6", term: "%7" }),
+		[...swapPi, ";", ...swapNvim, ";", ...swapTerm],
+	);
+	assert.equal(slotArgs([pane("%5", "pi"), pane("%6", "nvim"), pane("%7", "term")], { pi: "%5", nvim: "%6", term: "%7" }), undefined);
+	assert.deepEqual(slotArgs([pane("%5", "pi"), pane("%6", "nvim"), pane("%3", "term"), pane("%7", "pool")], { pi: "%5", nvim: "%6", term: "%7" }), swapTerm);
 	assert.deepEqual(slotArgs([pane("%1", "pi"), pane("%2", "nvim"), pane("%5", "pool"), pane("%6", "pool")], { pi: "%5", nvim: "%6" }), [...swapPi, ";", ...swapNvim]);
 	assert.equal(slotArgs([pane("%5", "pi"), pane("%6", "nvim")], { pi: "%5", nvim: "%6" }), undefined);
 	assert.deepEqual(slotArgs([pane("%5", "pi"), pane("%2", "nvim"), pane("%6", "pool")], { pi: "%5", nvim: "%6" }), swapNvim);
@@ -313,14 +328,15 @@ test("deck.tmux.conf: options and keys (list-keys, show -gv)", { skip: skipTmux 
 		assert.equal(d.tmux(["show", "-gv", "bell-action"]), "any");
 		assert.equal(d.tmux(["show", "-wgv", "remain-on-exit"]), "on");
 		assert.equal(d.tmux(["show", "-gv", "@deck_list_pct"]), "50");
-		assert.equal(d.tmux(["show", "-gv", "@deck_list_height_pct"]), "50");
+		assert.equal(d.tmux(["show", "-gv", "@deck_list_height_pct"]), "40");
+		assert.equal(d.tmux(["show", "-gv", "@deck_nvim_height_pct"]), "40");
 		assert.match(d.tmux(["show", "-sv", "terminal-features"]), /tmux\*:extkeys/);
 		assert.match(d.tmux(["show-hooks", "-wg"]), /pane-died\[0\] if-shell -F "#\{==:#\{@pi_fleet_role\},list\}" respawn-pane/);
 		// C-h/j/k/l: the neighbouring pane, else the key itself (pi: C-h always the list; list: C-l its own).
 		assert.match(d.tmux(["list-keys", "-T", "root", "C-h"]), /if-shell -F .*pane_at_left.*@pi_fleet_role\},pi.*send-keys C-h.*select-pane -t =deck:=deck\.0/);
-		assert.match(d.tmux(["list-keys", "-T", "root", "C-j"]), /if-shell -F .*pane_at_bottom.*send-keys C-j.*select-pane -t =deck:=deck\.1/);
-		assert.match(d.tmux(["list-keys", "-T", "root", "C-k"]), /if-shell -F .*pane_at_top.*send-keys C-k.*select-pane -t =deck:=deck\.0/);
-		assert.match(d.tmux(["list-keys", "-T", "root", "C-l"]), /if-shell -F .*pane_at_right.*list.*send-keys C-l.*select-pane -t =deck:=deck\.2/);
+		assert.match(d.tmux(["list-keys", "-T", "root", "C-j"]), /if-shell -F .*pane_at_bottom.*send-keys C-j.*select-pane -D/);
+		assert.match(d.tmux(["list-keys", "-T", "root", "C-k"]), /if-shell -F .*pane_at_top.*send-keys C-k.*select-pane -U/);
+		assert.match(d.tmux(["list-keys", "-T", "root", "C-l"]), /if-shell -F .*pane_at_right.*list.*send-keys C-l.*select-pane -t =deck:=deck\.3/);
 		// No right-click menus (Kill, Respawn, Split, Swap would break a pi or the two-pane layout).
 		const root = d.tmux(["list-keys", "-T", "root"]);
 		assert.doesNotMatch(root, /MouseDown3/);
@@ -337,7 +353,7 @@ test("deck.tmux.conf: options and keys (list-keys, show -gv)", { skip: skipTmux 
 		assert.match(prefix, /prefix\s+d\s+detach-client/);
 		assert.match(prefix, /prefix\s+\[\s+copy-mode/);
 		assert.match(prefix, /prefix\s+PPage\s+copy-mode -u/);
-		assert.match(prefix, /prefix\s+e\s+if-shell -F .*pane_index\},1.*select-pane -t =deck:=deck\.2.*select-pane -t =deck:=deck\.1/);
+		assert.match(prefix, /prefix\s+e\s+if-shell -F .*pane_index\},1.*select-pane -t =deck:=deck\.3.*select-pane -t =deck:=deck\.1/);
 		// No splits, break-pane, kill-pane, new windows, layouts.
 		for (const k of ['"', "%", "!", "x", "&", "c", "Space", "{", "}"]) {
 			assert.doesNotMatch(prefix, new RegExp(`prefix\\s+${k.replace(/[{}"%!&]/g, (c) => `\\${c}`)}\\s`), k);
@@ -347,7 +363,7 @@ test("deck.tmux.conf: options and keys (list-keys, show -gv)", { skip: skipTmux 
 	}
 });
 
-test("deck-start: deck (list / nvim slot | pi slot, quadrants) and pool (manual, each window at its slot's size)", { skip: skipTmux, timeout: 60_000 }, async () => {
+test("deck-start: deck (list / nvim slot / terminal slot | pi slot, 40/40/20) and pool (manual, each window at its slot's size)", { skip: skipTmux, timeout: 60_000 }, async () => {
 	const d = new Deck();
 	try {
 		d.start();
@@ -355,17 +371,20 @@ test("deck-start: deck (list / nvim slot | pi slot, quadrants) and pool (manual,
 		const list = d.list();
 		const slot = d.slot();
 		const nvimSlot = d.nvimSlot();
-		assert.equal(panes.filter((p) => p.where.startsWith("deck:")).length, 3);
+		const termSlot = d.termSlot();
+		assert.equal(panes.filter((p) => p.where.startsWith("deck:")).length, 4);
 		assert.equal(list.role, "list");
 		assert.equal(nvimSlot.role, "nvim-holder");
+		assert.equal(termSlot.role, "term-holder");
 		assert.equal(slot.role, "preview");
 		const [ww, wh] = d.tmux(["display-message", "-p", "-t", "=deck:=deck", "#{window_width} #{window_height}"]).split(" ").map(Number);
-		const want = deckSizesFor(ww, wh, 50, 50);
+		const want = deckSizesFor(ww, wh, 50);
 		assert.deepEqual([list.width, list.height], [want.list.width, want.list.height]);
 		assert.deepEqual([nvimSlot.width, nvimSlot.height], [want.nvim.width, want.nvim.height]);
+		assert.deepEqual([termSlot.width, termSlot.height], [want.term.width, want.term.height]);
 		assert.deepEqual([slot.width, slot.height], [want.pi.width, want.pi.height]);
 		assert.equal(list.width + 1 + slot.width, ww);
-		assert.equal(list.height + 1 + nvimSlot.height, wh);
+		assert.equal(list.height + 1 + nvimSlot.height + 1 + termSlot.height, wh);
 		assert.equal(d.tmux(["show", "-v", "-t", "=pool:", "default-size"]), `${slot.width}x${slot.height}`);
 		for (const p of panes.filter((p) => p.where.startsWith("pool:"))) {
 			assert.equal(p.windowSize, "manual", p.where);
@@ -386,7 +405,7 @@ test("deck-start: deck (list / nvim slot | pi slot, quadrants) and pool (manual,
 	}
 });
 
-test("open ×3: pool pis at the pi-slot size, nvims (made on first show) at the nvim-slot size; swaps send no SIGWINCH", { skip: skipNvim, timeout: 90_000 }, async () => {
+test("open ×3: pool pis at the pi-slot size, nvims and shells (made on first show) at their slots' sizes; swaps send no SIGWINCH", { skip: skipNvim, timeout: 90_000 }, async () => {
 	const d = new Deck();
 	try {
 		d.start();
@@ -396,7 +415,9 @@ test("open ×3: pool pis at the pi-slot size, nvims (made on first show) at the 
 		assert.equal(slot.session, sessions[2].id, "the last opened is shown");
 		assert.equal(nvimSlot.role, "nvim");
 		assert.equal(nvimSlot.session, sessions[2].id, "with its nvim");
-		assert.equal(d.activeIndex(), "2", "and its pi focused");
+		assert.equal(d.activeIndex(), "3", "and its pi focused");
+		const termSlot = d.termSlot();
+		assert.deepEqual([termSlot.role, termSlot.session], ["term", sessions[2].id], "and its shell");
 		for (const s of sessions) {
 			const p = d.panes().find((q) => q.pane === s.pane)!;
 			assert.equal(p.role, "pi");
@@ -406,6 +427,10 @@ test("open ×3: pool pis at the pi-slot size, nvims (made on first show) at the 
 			assert.equal(nvim.role, "nvim", "every shown session has its nvim");
 			assert.equal(nvim.peer, s.pane);
 			assert.deepEqual([nvim.width, nvim.height], [nvimSlot.width, nvimSlot.height]);
+			const terms = d.panes().filter((q) => q.role === "term" && q.session === s.id);
+			assert.equal(terms.length, 1, "one shell per session");
+			assert.deepEqual([terms[0]!.width, terms[0]!.height], [termSlot.width, termSlot.height]);
+			assert.equal(d.tmux(["display-message", "-p", "-t", terms[0]!.pane, "#{pane_current_path}"]), d.work, "in the session's cwd");
 			const [, pane, deckFlag, ...args] = d.file(s.id, "runs").trim().split(" ");
 			assert.equal(pane, s.pane);
 			assert.equal(deckFlag, "1");
@@ -419,7 +444,9 @@ test("open ×3: pool pis at the pi-slot size, nvims (made on first show) at the 
 			assert.equal(d.slot().session, s.id);
 			assert.equal(d.nvimSlot().session, s.id);
 			assert.equal(d.nvimSlot().role, "nvim");
+			assert.deepEqual([d.termSlot().role, d.termSlot().session], ["term", s.id]);
 		}
+		assert.equal(d.panes().filter((p) => p.role === "term").length, 3, "no second shell for a session");
 		assert.equal(d.panes().filter((p) => p.role === "nvim").length, 3, "no second nvim for a session");
 		await sleep(500);
 		assert.deepEqual(sessions.map((s) => d.file(s.id, "winch")), before, "no SIGWINCH from swaps");
@@ -445,11 +472,11 @@ test("layout repair and zoom: a vanished pi slot comes back on the right; swaps 
 		await waitFor("b and its nvim shown", () => d.slot().pane === b.pane && d.nvimSlot().role === "nvim");
 
 		// Zoomed pi slot: selecting another session keeps the zoom (swap-pane -Z).
-		d.tmux(["resize-pane", "-Z", "-t", "=deck:=deck.2"]);
+		d.tmux(["resize-pane", "-Z", "-t", "=deck:=deck.3"]);
 		assert.equal(d.request({ type: "select", session: a.id }).ok, true);
 		assert.equal(d.slot().pane, a.pane);
 		assert.equal(d.tmux(["display-message", "-p", "-t", "=deck:=deck", "#{window_zoomed_flag}"]), "1");
-		d.tmux(["resize-pane", "-Z", "-t", "=deck:=deck.2"]);
+		d.tmux(["resize-pane", "-Z", "-t", "=deck:=deck.3"]);
 
 		// A dead nvim still in the nvim slot (POOL_WRAP marked it, no reconcile yet): showing its session makes
 		// a new one, swaps it in, then kills the old one; the window keeps its three panes.
@@ -463,19 +490,31 @@ test("layout repair and zoom: a vanished pi slot comes back on the right; swaps 
 		assert.deepEqual([fresh.role, fresh.session], ["nvim", b.id]);
 		assert.equal(d.slot().pane, b.pane);
 		assert.ok(!d.panes().some((p) => p.pane === old.pane), "the dead nvim is gone");
-		assert.equal(right().length, 3);
+		assert.equal(right().length, 4);
 
-		// The pi slot vanishes (list / nvim slot left): the list's reconcile puts a full-height right pane back.
+		// The pi slot vanishes (the left column left): the list's reconcile puts a full-height right pane back.
+		const reconcile = () => process.kill(Number(d.tmux(["show", "-gv", "@deck_tui_pid"])), "SIGUSR2");
+		const shape = async () => {
+			await waitFor("four panes again", () => right().length === 4);
+			const panes = d.panes().filter((p) => p.where.startsWith("deck:"));
+			const [lw, nw, tw, pw] = panes.map((p) => p.width);
+			assert.ok(lw === nw && nw === tw, "list, nvim and terminal slots share the left column");
+			assert.equal(panes[3]!.height, Number(d.tmux(["display-message", "-p", "-t", "=deck:=deck", "#{window_height}"])), "the right pane is full height");
+			assert.equal(d.tmux(["display-message", "-p", "-t", "=deck:=deck.3", "#{pane_at_right} #{pane_at_left}"]), "1 0");
+			assert.equal(d.tmux(["display-message", "-p", "-t", "=deck:=deck.2", "#{pane_at_left} #{pane_at_bottom}"]), "1 1");
+			assert.ok(pw! > 1);
+			assert.equal(d.list().role, "list");
+		};
+		d.tmux(["kill-pane", "-t", "=deck:=deck.3"]);
+		reconcile();
+		await shape();
+		// The terminal slot vanishes: back under the nvim slot. Both: both back.
 		d.tmux(["kill-pane", "-t", "=deck:=deck.2"]);
-		process.kill(Number(d.tmux(["show", "-gv", "@deck_tui_pid"])), "SIGUSR2");
-		await waitFor("three panes again", () => right().length === 3);
-		const panes = d.panes().filter((p) => p.where.startsWith("deck:"));
-		const [lw, nw, pw] = panes.map((p) => p.width);
-		assert.equal(lw, nw, "list and nvim slot share the left column");
-		assert.equal(panes[2]!.height, Number(d.tmux(["display-message", "-p", "-t", "=deck:=deck", "#{window_height}"])), "the right pane is full height");
-		assert.equal(d.tmux(["display-message", "-p", "-t", "=deck:=deck.2", "#{pane_at_right} #{pane_at_left}"]), "1 0");
-		assert.ok(pw > 1);
-		assert.deepEqual([d.list().role, d.nvimSlot().role === "nvim" || d.nvimSlot().role === "nvim-holder"], ["list", true]);
+		reconcile();
+		await shape();
+		d.tmux(["kill-pane", "-t", "=deck:=deck.3", ";", "kill-pane", "-t", "=deck:=deck.2"]);
+		reconcile();
+		await shape();
 	} finally {
 		d.close();
 	}
@@ -525,11 +564,10 @@ test("resizing the deck client resizes every pool window in one tmux call", { sk
 				const slot = d.slot();
 				const nvimSlot = d.nvimSlot();
 				const pool = d.panes().filter((p) => p.where.startsWith("pool:"));
+				const termSlot = d.termSlot();
 				const at = (p: Pane, s: Pane) => p.width === s.width && p.height === s.height;
-				return (
-					slot.width === slotSizeFor(w, slot.height, 50).slot.width &&
-					pool.every((p) => at(p, p.role === "nvim" || p.role === "nvim-holder" ? nvimSlot : slot))
-				);
+				const slotOf = (role: string) => (role === "nvim" || role === "nvim-holder" ? nvimSlot : role === "term" || role === "term-holder" ? termSlot : slot);
+				return slot.width === slotSizeFor(w, slot.height, 50).slot.width && pool.every((p) => at(p, slotOf(p.role)));
 			});
 		await settled(180);
 		await sleep(300);
@@ -562,8 +600,14 @@ test("a pi exiting 0 leaves the pool and the slot falls back to the holder; a de
 		await waitFor("b's pane killed", () => !d.panes().some((p) => p.pane === b.pane));
 		assert.equal(d.slot().role, "preview");
 		await waitFor("b's nvim gone, the nvim holder below the list", () => d.nvimSlot().role === "nvim-holder");
+		await waitFor("b's shell gone, the terminal holder in its slot", () => d.termSlot().role === "term-holder" && !d.panes().some((p) => p.role === "term" && p.session === b.id));
+		// a's shell runs a foreground job: it goes with a anyway (killed, never waited for).
+		const aTerm = d.panes().find((p) => p.role === "term" && p.session === a.id)!;
+		d.tmux(["send-keys", "-t", aTerm.pane, "sleep 1000", "Enter"]);
+		await sleep(300);
 		writeFileSync(join(d.stub, `${a.id}.exit`), "0\n");
 		await waitFor("a's pane killed", () => !d.panes().some((p) => p.pane === a.pane));
+		await waitFor("a's shell killed too", () => !d.panes().some((p) => p.pane === aTerm.pane));
 		// The list crashes: restarted in place.
 		const pid = d.tmux(["show", "-gv", "@deck_tui_pid"]);
 		process.kill(Number(pid), "SIGKILL");
@@ -750,13 +794,15 @@ test("popup: attach, C-h/j/k/l between the panes, prefix C-<key>, Shift+Enter, p
 		assert.equal(d.tmux(["show", "-gv", "@deck_outer"]), `${h.outerSocket}|${outerClient}`);
 		const deckClientSize = d.tmux(["list-clients", "-F", "#{client_width}x#{client_height}"]);
 		assert.equal(deckClientSize, "150x41", "95%x90% of 160x48, minus the popup border");
-		const sizes = deckSizesFor(150, 41, 50, 50);
+		const sizes = deckSizesFor(150, 41, 50);
 		const at = (p: Pane, z: { width: number; height: number }) => p.width === z.width && p.height === z.height;
+		const pool = (p: Pane, ...roles: string[]) => p.where.startsWith("pool:") && roles.includes(p.role);
 		await waitFor("slots and pool at the popup's slot sizes", () =>
 			d.panes().every((p) => {
 				if (p.where === "deck:deck.0") return at(p, sizes.list);
-				if (p.where === "deck:deck.1" || (p.where.startsWith("pool:") && (p.role === "nvim" || p.role === "nvim-holder"))) return at(p, sizes.nvim);
-				if (p.where === "deck:deck.2" || p.where.startsWith("pool:")) return at(p, sizes.pi);
+				if (p.where === "deck:deck.1" || pool(p, "nvim", "nvim-holder")) return at(p, sizes.nvim);
+				if (p.where === "deck:deck.2" || pool(p, "term", "term-holder")) return at(p, sizes.term);
+				if (p.where === "deck:deck.3" || p.where.startsWith("pool:")) return at(p, sizes.pi);
 				return true;
 			}),
 		);
@@ -770,7 +816,7 @@ test("popup: attach, C-h/j/k/l between the panes, prefix C-<key>, Shift+Enter, p
 		// Focus the list, then C-l (the list's own: focus the session's pi).
 		d.tmux(["select-pane", "-t", "=deck:=deck.0"]);
 		h.keys("C-l");
-		await waitFor("pi slot focused", () => d.activeIndex() === "2");
+		await waitFor("pi slot focused", () => d.activeIndex() === "3");
 		// Shift+Enter reaches the pool pi byte-exact.
 		h.hex("1b 5b 31 33 3b 32 75");
 		await waitFor("Shift+Enter in the pi", () => d.file(s.id, "keys").includes("\x1b[13;2u"));
@@ -781,7 +827,7 @@ test("popup: attach, C-h/j/k/l between the panes, prefix C-<key>, Shift+Enter, p
 		await waitFor("C-k in the pi", () => d.file(s.id, "keys").endsWith("\x0b"));
 		h.keys("C-l");
 		await waitFor("C-l in the pi", () => d.file(s.id, "keys").endsWith("\x0c"));
-		assert.equal(d.activeIndex(), "2");
+		assert.equal(d.activeIndex(), "3");
 		// C-h: back to the list; the pi gets nothing, the outer root C-h does not fire.
 		const keysBefore = d.file(s.id, "keys");
 		h.keys("C-h");
@@ -798,21 +844,40 @@ test("popup: attach, C-h/j/k/l between the panes, prefix C-<key>, Shift+Enter, p
 		h.keys("C-h");
 		await sleep(300);
 		assert.equal(d.activeIndex(), "1", "C-h at the left edge goes to nvim");
+		// nvim: C-j down to the shell; the shell: C-h and C-j are its own (left and bottom edges), C-k up to
+		// the nvim, C-l right to the pi.
+		const term = d.termSlot();
+		assert.deepEqual([term.role, term.session], ["term", s.id]);
+		const typed = join(d.root, "term-keys");
+		d.tmux(["send-keys", "-t", term.pane, `stty raw -echo; cat > ${typed}`, "Enter"]);
+		await sleep(500);
+		h.keys("C-j");
+		await waitFor("terminal slot focused (C-j)", () => d.activeIndex() === "2");
+		h.keys("C-h", "C-j");
+		await waitFor("C-h and C-j in the shell", () => existsSync(typed) && readFileSync(typed, "latin1").includes("\x08\n"));
+		assert.equal(d.activeIndex(), "2");
+		h.keys("C-k");
+		await waitFor("nvim slot focused (C-k from the shell)", () => d.activeIndex() === "1");
+		h.keys("C-j");
+		await waitFor("terminal slot focused", () => d.activeIndex() === "2");
 		h.keys("C-l");
-		await waitFor("pi slot focused (C-l)", () => d.activeIndex() === "2");
+		await waitFor("pi slot focused (C-l from the shell)", () => d.activeIndex() === "3");
+		d.tmux(["select-pane", "-t", "=deck:=deck.1"]);
+		h.keys("C-l");
+		await waitFor("pi slot focused (C-l)", () => d.activeIndex() === "3");
 		// prefix C-h / prefix h: a literal C-h to the pi.
 		h.keys("C-s", "C-h");
 		await waitFor("literal C-h in the pi", () => d.file(s.id, "keys").endsWith("\x08"));
 		const n = d.file(s.id, "keys").length;
 		h.keys("C-s", "h");
 		await waitFor("literal C-h in the pi (prefix h)", () => d.file(s.id, "keys").length > n && d.file(s.id, "keys").endsWith("\x08"));
-		assert.equal(d.activeIndex(), "2");
+		assert.equal(d.activeIndex(), "3");
 
 		// prefix e: pi slot <-> nvim slot (from the list: the nvim).
 		h.keys("C-s", "e");
 		await waitFor("nvim focused (prefix e)", () => d.activeIndex() === "1");
 		h.keys("C-s", "e");
-		await waitFor("pi focused (prefix e)", () => d.activeIndex() === "2");
+		await waitFor("pi focused (prefix e)", () => d.activeIndex() === "3");
 		h.keys("C-h");
 		await waitFor("list focused", () => d.activeIndex() === "0");
 		h.keys("C-s", "e");
@@ -830,9 +895,11 @@ test("popup: attach, C-h/j/k/l between the panes, prefix C-<key>, Shift+Enter, p
 		assert.equal(other.ok, true);
 		await waitFor("the other session's nvim", () => d.nvimSlot().session === other.session && d.nvimSlot().role === "nvim");
 		assert.equal(d.slot().session, other.session);
+		assert.deepEqual([d.termSlot().role, d.termSlot().session], ["term", other.session]);
 		d.request({ type: "select", session: s.id });
 		assert.equal(d.slot().pane, s.pane);
 		assert.equal(d.nvimSlot().pane, nvim.pane, "selecting the session shows its nvim again");
+		assert.equal(d.termSlot().pane, term.pane, "and its shell");
 		assert.equal(d.panes().filter((p) => p.role === "nvim").length, 2);
 
 		// prefix g: detach, which closes the popup; the outer client stays, and goes to @deck_jump (an outside pane).

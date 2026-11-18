@@ -143,7 +143,8 @@ deck_conf_loads() {
     command -v tmux >/dev/null 2>&1 || return 0
     if tmux -L "$sock" -f "$1" new-session -d -s t 'sleep 30' 2>/dev/null &&
         [ "$(tmux -L "$sock" show -gv @deck_list_pct 2>/dev/null)" = 50 ] &&
-        [ "$(tmux -L "$sock" show -gv @deck_list_height_pct 2>/dev/null)" = 50 ]; then
+        [ "$(tmux -L "$sock" show -gv @deck_list_height_pct 2>/dev/null)" = 40 ] &&
+        [ "$(tmux -L "$sock" show -gv @deck_nvim_height_pct 2>/dev/null)" = 40 ]; then
         ok=0
     fi
     tmux -L "$sock" kill-server 2>/dev/null || true

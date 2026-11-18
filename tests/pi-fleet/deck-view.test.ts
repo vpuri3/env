@@ -222,7 +222,7 @@ test("layout: repo groups with their closed sessions after the live ones, then o
 	assert.equal(lines.length, 20);
 	assert.deepEqual(lines.slice(0, 13), [
 		" ▾ gamma (1, 1 closed)",
-		"  ? flare refactor                 question 12m       $0.80 1◐",
+		"  ? flare refactor                 question 12m       $0.80           1◐",
 		"  ◌ what does gamma do?            2d ago",
 		" ▾ beta (2, 1 closed)",
 		"  ✕ crashy                         crashed just now         1 interrupt…",
@@ -230,11 +230,26 @@ test("layout: repo groups with their closed sessions after the live ones, then o
 		"  ◌ forked idea                    1d ago",
 		" ▾ alpha (2, 1 closed)",
 		"  ◐ ckpt restart                   done 2m ago        $0.40",
-		"▌› ● physicsnemo sweep              bash 4m            $3.41 2w 1◐ 3✓",
+		"▌› ● physicsnemo sweep              bash 4m            $3.41     2w 1◐ 3✓",
 		"  ◌ start the old run              3h ago                   1✓ 1 interr…",
 		" ▾ outside (your tmux) (1)",
 		"  ◐ notes outside ⇱ win 3          done 5m ago",
 	]);
+	// Rows span the pane: the counts column ends at the right edge (right-aligned, as wide as the widest
+	// counts), the name takes the rest; at 140 columns every count shows in full.
+	for (const w of [100, 140]) {
+		const wide = screen(view, w);
+		const flare = wide.find((l) => l.includes("flare refactor"))!;
+		assert.equal(flare.length, w, `flare ends at the edge (${w})`);
+		assert.ok(flare.endsWith(" 1◐"), flare);
+		const crashy = wide.find((l) => l.includes("crashy"))!;
+		assert.equal(crashy.length, w);
+		if (w === 140) assert.ok(crashy.endsWith("1 interrupted"), crashy);
+		// Columns line up: every detail starts where flare's does.
+		const at = flare.indexOf("question 12m");
+		assert.equal(wide.find((l) => l.includes("ckpt restart"))!.indexOf("done 2m ago"), at);
+		assert.ok(at > 34, "the name column grew with the width");
+	}
 	// The selection is padded to the full width.
 	const sel = view.render(72).find((l) => l.startsWith("\x1b[7m"))!;
 	assert.equal(strip(sel).length, 1 + 72);
@@ -248,6 +263,55 @@ test("layout: repo groups with their closed sessions after the live ones, then o
 	]);
 	assert.equal(lines[15], " physicsnemo sweep · ● working · tool bash · for 4m · $3.41 · subagents…");
 	assert.match(screen(view, 140)[15]!, /^ physicsnemo sweep · ● working · tool bash · for 4m · \$3\.41 · subagents 2w 1◐ 3✓ · \/.*\/work\/alpha$/);
+});
+
+test("stable order: status changes keep rows in place; new sessions go last in their group; a closed one stays; r sorts again and keeps the selection", { skip }, async () => {
+	let patch = (rows: Row[]) => rows;
+	class Source extends dv.DeckSource {
+		override rows() {
+			return patch(super.rows());
+		}
+	}
+	const source = new Source(fx.env);
+	const { view, clock, of } = makeView({ source, height: 30 });
+	const names = () =>
+		screen(view, 90)
+			.slice(0, 22)
+			.map((l) => l.replace(/^▌/, "").replace(/^›/, " "))
+			.filter((l) => /^  [^ ▾▸]/.test(l))
+			.map((l) => l.slice(4, 34).trim());
+	const before = names();
+	assert.deepEqual(before.slice(0, 5), ["flare refactor", "what does gamma do?", "crashy", "notes", "forked idea"]);
+	const alpha = before.indexOf("ckpt restart");
+	assert.deepEqual(before.slice(alpha, alpha + 3), ["ckpt restart", "physicsnemo sweep", "start the old run"]);
+	view.selectSession(IDS.ckpt);
+	await clock.advance(100);
+
+	// sweep asks a question (the rules would put it first in alpha); ckpt closes; a new session starts in alpha.
+	patch = (rows) => [
+		...rows.map((r) =>
+			r.id === IDS.sweep ? ({ ...r, state: "question" } as Row) : r.id === IDS.ckpt ? ({ ...r, state: "closed", live: undefined, status: undefined } as unknown as Row) : r,
+		),
+		{ ...rows.find((r) => r.id === IDS.sweep)!, id: "00000000-0000-7000-8000-0000000000ee", name: "brand new one", state: "idle", at: fx.now, status: undefined } as Row,
+	];
+	view.refresh();
+	const after = names();
+	const a2 = after.indexOf("ckpt restart");
+	assert.ok(a2 >= 0, "the closed session stays in place");
+	assert.deepEqual(after.slice(a2, a2 + 4), ["ckpt restart", "physicsnemo sweep", "brand new one", "start the old run"], "new live row after the known live ones");
+	assert.deepEqual(after.slice(0, a2), before.slice(0, alpha), "the groups above did not move");
+	assert.match(screen(view, 90).find((l) => l.startsWith("▌"))!, /ckpt restart/, "the selection did not move");
+
+	// r: the rules again (question first in alpha, the closed ckpt among alpha's closed rows); same row selected.
+	press(view, "r");
+	await clock.advance(100);
+	const resorted = names();
+	const a3 = resorted.indexOf("physicsnemo sweep");
+	assert.equal(resorted[a3 + 1], "brand new one");
+	assert.ok(resorted.indexOf("ckpt restart") > resorted.indexOf("brand new one"), "closed after live");
+	assert.match(screen(view, 90).find((l) => l.startsWith("▌"))!, /ckpt restart/);
+	assert.match(screen(view, 140).at(-1)!, /r refresh/);
+	assert.equal(of("detach").length, 0);
 });
 
 test("ANSI colors (§6): active blue 75, working purple 141 (autonomous: purple »), done green 78, needs input orange 208 bold, error red 196, closed grey 250, remote grey 244; on glyph, name and detail; 90 only for chrome", { skip }, async () => {
@@ -316,7 +380,7 @@ test("modes: i and / enter INSERT; fuzzy terms filter live; Esc back to NORMAL k
 	assert.match(screen(view)[19]!, /type to search/);
 	press(view, "f", "l", "r"); // a subsequence of "flare refactor"
 	let lines = screen(view).filter((l) => l);
-	assert.deepEqual(lines.slice(0, 2), [" ▾ gamma (1)", "▌› ? flare refactor                 question 12m       $0.80 1◐"]);
+	assert.deepEqual(lines.slice(0, 2), [" ▾ gamma (1)", "▌› ? flare refactor                           question 12m       $0.80 1◐"]);
 	assert.match(screen(view)[16]!, /^╭─ INSERT ─+ 1\/9 ─╮$/);
 	assert.match(screen(view)[17]!, /^│ ⌕ flr▏ +│$/);
 	// Every term must match (name, repo, cwd or last message).
@@ -567,7 +631,7 @@ test("closed sessions: under their repo after its live rows, the newest 3 then `
 	press(view, KEY.space);
 	// A search shows every match, folded or not; Enter resumes it into the deck.
 	press(view, "/", "c", "l", "o", "s", "e", "d", " ", "6", "h");
-	assert.deepEqual(names().slice(0, 2).map((l) => l.trimEnd()), [" ▾ alpha (1 closed)", "▌› ◌ alpha closed 6h                6h ago"]);
+	assert.deepEqual(names().slice(0, 2).map((l) => l.trimEnd()), [" ▾ alpha (1 closed)", "▌› ◌ alpha closed 6h                             6h ago"]);
 	press(view, KEY.esc, KEY.esc, "/", "t", "w", "o");
 	assert.ok(names().some((l) => l.startsWith("▌› ◌ delta two")), names().join("\n"));
 	press(view, KEY.enter);

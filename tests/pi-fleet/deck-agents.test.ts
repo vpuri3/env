@@ -112,7 +112,7 @@ test("§16: a live deck session's subagent row shows its agent view in the pi sl
 	await key("j");
 	await waitFor("alpha's agent view", inAgentView("alpha"), 10_000, piScreen);
 	await key("C-l");
-	await waitFor("the pi slot focused", () => d.activeIndex() === "2");
+	await waitFor("the pi slot focused", () => d.activeIndex() === "3");
 	assert.equal(mark(), "", "focusing the pi took the view over");
 	d.tmux(["select-pane", "-t", list]);
 	await key("k");

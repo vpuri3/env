@@ -1,7 +1,8 @@
 # pi-deck: one deck window, pi sessions in a private tmux server
 
-> **Superseded in part by §15 (three-pane deck, 2026-11-17).** Where §15 and the sections
-> above disagree (layout, `prefix e`, `C-h`, entry from outside tmux, leader keys), §15 wins.
+> **Superseded in part by §15 (three-pane deck) and §17 (four panes, stable order), 2026-11-17.**
+> Where they and the sections above disagree (layout, `prefix e`, `C-h`, entry from outside tmux,
+> leader keys, ordering), §15 and §17 win.
 
 Status: **design, not implemented** (2026-11-17). Replaces the window-per-session part of
 [pi-fleet-design.md](pi-fleet-design.md); everything that design says about status files, the
@@ -263,6 +264,7 @@ popup (direct attach) the row flashes "runs in your tmux (window N)".
 | | `!` `@` `#` `&` / `0` | status filters / clear (unchanged) |
 | | `?` | help (`q` or `Esc` closes it) |
 | | `C-c` | detach (close the popup / back to the shell); `q` is no detach (§15) |
+| | `r` | refresh: sort the list again with the rules above (§17: otherwise the order is fixed); the selection stays on its row |
 | | `C-d` | kill every deck session and the deck: inline confirm (`y`/Enter kill · `n`/Esc cancel), then `killDeck` (also in INSERT) |
 | INSERT | letters | fuzzy terms (space-separated, all must match name/repo/cwd/last message); list filters live |
 | | `C-n`/`C-p`, ↑/↓ | move while typing; `Enter` = NORMAL `Enter` |
@@ -518,3 +520,42 @@ first and swaps after, so a refused view never flashes the pi; rapid j/k is one 
 that stays, a stale reply makes the next apply ask again; `agents-close` is sent only while the pane
 still carries the mark), deck.tmux.conf's `after-select-pane` hook (any focus of that pane, by key,
 click or the list's own Enter/C-l, clears the mark). pi side: fleet/agents-view.ts, subagent-viewer.ts.
+
+## 17. Four panes and a stable list (user, 2026-11-17)
+
+```
+┌──────── list (40%) ──────────────┬──────────── pi slot (right half) ──────────────┐
+│ session list TUI                 │ selected session's pi                         │
+├──────── nvim slot (40%) ─────────┤                                               │
+│ selected session's nvim          │                                               │
+├──────── terminal slot (20%) ─────┤                                               │
+│ selected session's shell         │                                               │
+└──────────────────────────────────┴───────────────────────────────────────────────┘
+```
+
+1. **Terminal slot.** Pane order list `.0`, nvim slot `.1`, terminal slot `.2`, pi slot `.3`
+   (`ensureLayout` builds it in this order and, unless zoomed, checks it against the geometry:
+   list top-left, nvim and terminal below in the left column, the pi slot a full-height right
+   column; a wrong order is rebuilt; a missing slot comes back at its place, so a §15 three-pane
+   deck gains its terminal slot on `deck-reload`). Heights `@deck_list_height_pct` 40 and
+   `@deck_nvim_height_pct` 40 of the window; the terminal gets the rest.
+2. **Per-session shell** (`@pi_fleet_role=term`, `@pi_fleet_session`): the user's `$SHELL -l` in
+   the session's cwd under `POOL_WRAP`, created on the session's first show with its nvim, kept in
+   the pool at the terminal-slot size, swapped in with the pi and nvim in the same tmux call. Rows
+   without a live deck session show the `term-holder` (dim placeholder). A shell goes when it
+   exits or when its session's pi is gone (`/kill`, `d`, an exit; reconcile kills it whatever it
+   runs; never waited for); `kill-deck` takes it with the server.
+3. **Navigation** (root table): `C-j`/`C-k` are `select-pane -D`/`-U` unless the pane is at the
+   bottom/top edge (list → nvim → shell and back), `C-l` from the left column to the pi slot,
+   `C-h` from the pi to the list; at an edge the key goes through (in the shell `C-h` and `C-j`;
+   `prefix C-k`/`prefix C-l` send those literally). `prefix e` still toggles pi ↔ nvim.
+4. **Stable order.** The list fixes its order when it first has rows (the §6 rules). Later status
+   changes update rows in place; a row that was live when the order was fixed stays among the
+   live rows (greyed) after it closes; rows and groups that appear later get the next place the
+   first time they are seen (new live rows last in their group, new groups after the live
+   groups, new closed-only repos at the end). `r` sorts everything again with the current rules
+   and keeps the selection on its row. Searches and filters show the fixed order.
+5. **Rows span the pane.** The subagent-counts column is as wide as the widest counts (aligned
+   across rows) and ends at the pane's right edge; the name column takes the rest (in a narrow
+   list the name keeps ≥ 16–30 columns and the counts are cut). Session titles ask for about
+   6–12 words (clamped to 16 words / 120 chars).

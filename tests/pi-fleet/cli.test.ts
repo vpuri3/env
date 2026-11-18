@@ -403,10 +403,10 @@ test("pf (aliases.sh): plain pf starts the deck only; pf DIR [-- ARGS] opens a s
 		const dir = join(f.work, "proj");
 		mkdirSync(dir);
 
-		// Plain pf: the deck (list, nvim slot, pi slot), no session; the user's tmux is left alone.
+		// Plain pf: the deck (list, nvim slot, terminal slot, pi slot), no session; the user's tmux is left alone.
 		let r = pf([]);
 		assert.equal(r.code, 0, r.err);
-		assert.deepEqual(deckPanes().filter((p) => p[0]!.startsWith("deck:")).map((p) => p[1]), ["list", "nvim-holder", "preview"]);
+		assert.deepEqual(deckPanes().filter((p) => p[0]!.startsWith("deck:")).map((p) => p[1]), ["list", "nvim-holder", "term-holder", "preview"]);
 		assert.equal(pis().length, 0);
 		assert.deepEqual(f.tmux(["list-sessions", "-F", "#{session_name}"]).split("\n"), ["main"]);
 
@@ -414,7 +414,7 @@ test("pf (aliases.sh): plain pf starts the deck only; pf DIR [-- ARGS] opens a s
 		r = pf(["proj", "--", "--model", "x"]);
 		assert.equal(r.code, 0, r.err);
 		const [first] = pis();
-		assert.equal(first![0], "deck:deck.2");
+		assert.equal(first![0], "deck:deck.3");
 		assert.equal(first![3], dir);
 		await waitFor("stub pi to start", () => f.runs(first![2]!).length === 1);
 		assert.match(f.runs(first![2]!)[0]!, /--session-id \S+ --model x$/);

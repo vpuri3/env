@@ -113,6 +113,10 @@ export class Deck {
 	}
 	/** The pi slot (right half). */
 	slot(): Pane {
+		return this.panes().find((p) => p.where === "deck:deck.3")!;
+	}
+	/** The terminal slot (bottom-left). */
+	termSlot(): Pane {
 		return this.panes().find((p) => p.where === "deck:deck.2")!;
 	}
 	/** The nvim slot (below the list). */
@@ -127,7 +131,7 @@ export class Deck {
 		return this.tmux(["capture-pane", "-p", "-t", "=deck:=deck.0"]);
 	}
 	slotScreen(): string {
-		return this.tmux(["capture-pane", "-p", "-t", "=deck:=deck.2"]);
+		return this.tmux(["capture-pane", "-p", "-t", "=deck:=deck.3"]);
 	}
 	/** Keys typed into the list pane. */
 	keys(...k: string[]): void {

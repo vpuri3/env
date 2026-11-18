@@ -181,6 +181,10 @@ export class DeckRig {
 			});
 	}
 	slot(): DeckPaneRow | undefined {
+		return this.panes().find((p) => p.where === "deck:deck.3");
+	}
+	/** The terminal slot (bottom-left). */
+	termSlot(): DeckPaneRow | undefined {
 		return this.panes().find((p) => p.where === "deck:deck.2");
 	}
 	/** The nvim slot (below the list). */

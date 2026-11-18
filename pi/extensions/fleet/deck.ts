@@ -63,15 +63,22 @@ import {
 
 export const DECK_SESSION = "deck";
 export const POOL_SESSION = "pool";
-/** The list pane, the nvim slot (below the list) and the pi slot (right half): exact names, by position. */
+/**
+ * The deck window's panes by position (swap-pane keeps positions; ensureLayout keeps this order and
+ * checks it against the geometry): the list (top-left), the nvim slot and the terminal slot below it,
+ * the pi slot (right half).
+ */
 export const LIST_TARGET = "=deck:=deck.0";
 export const NVIM_SLOT_TARGET = "=deck:=deck.1";
-export const SLOT_TARGET = "=deck:=deck.2";
+export const TERM_SLOT_TARGET = "=deck:=deck.2";
+export const SLOT_TARGET = "=deck:=deck.3";
 export const DECK_WINDOW_TARGET = "=deck:=deck";
 /** The pool session (`=pool:` as a session target; `=pool:=NAME` for one of its windows). */
 export const POOL_TARGET = "=pool:";
 export const DEFAULT_LIST_PCT = 50;
-export const DEFAULT_LIST_HEIGHT_PCT = 50;
+/** The left column's heights: list / nvim (percent of the window), the terminal the rest (§17: 40/40/20). */
+export const DEFAULT_LIST_HEIGHT_PCT = 40;
+export const DEFAULT_NVIM_HEIGHT_PCT = 40;
 export const DECK_SOCK_MAX_LINE = 64 * 1024;
 export const DECK_SOCK_IDLE_MS = 2000;
 
@@ -80,6 +87,8 @@ const SLEEP_FOREVER = "exec sleep 2147483647";
 export const HOLDER_CMD = `stty -echo -icanon 2>/dev/null; printf '\\033[?25l'; ${SLEEP_FOREVER}`;
 /** The nvim holder: what the nvim slot shows for a row without a live deck session. */
 export const NVIM_HOLDER_CMD = `stty -echo -icanon 2>/dev/null; printf '\\033[?25l\\033[2J\\033[H\\033[2m  no editor: not a live deck session\\033[0m'; ${SLEEP_FOREVER}`;
+/** The terminal holder: what the terminal slot shows for a row without a live deck session. */
+export const TERM_HOLDER_CMD = `stty -echo -icanon 2>/dev/null; printf '\\033[?25l\\033[2J\\033[H\\033[2m  no shell: not a live deck session\\033[0m'; ${SLEEP_FOREVER}`;
 const ANCHOR_CMD = SLEEP_FOREVER;
 
 /**
@@ -249,7 +258,7 @@ export function deckRunning(env: NodeJS.ProcessEnv = process.env): Promise<boole
 	return deckTmuxOk(["has-session", "-t", `=${DECK_SESSION}`], env);
 }
 
-export type DeckRole = "list" | "pi" | "nvim" | "preview" | "nvim-holder" | "anchor" | "";
+export type DeckRole = "list" | "pi" | "nvim" | "term" | "preview" | "nvim-holder" | "term-holder" | "anchor" | "";
 
 /** One pane of the deck server. */
 export interface DeckPane {
@@ -276,8 +285,13 @@ export interface DeckPane {
 	gone: boolean;
 	/** In the pi slot (the right half). */
 	inSlot: boolean;
-	/** In the nvim slot (bottom-left). */
+	/** In the nvim slot (left, below the list). */
 	inNvimSlot: boolean;
+	/** In the terminal slot (bottom-left). */
+	inTermSlot: boolean;
+	/** Column of the pane's left edge (the deck window's geometry; a pool pane's is 0). */
+	left: number;
+	top: number;
 	isList: boolean;
 }
 
@@ -299,6 +313,8 @@ const DECK_PANE_FORMAT = [
 	"#{pane_tty}",
 	"#{pane_pid}",
 	"#{@pi_fleet_exited}",
+	"#{pane_left}",
+	"#{pane_top}",
 ].join("\t");
 
 function parseDeckPane(line: string): DeckPane {
@@ -323,8 +339,11 @@ function parseDeckPane(line: string): DeckPane {
 		pid: Number(f[15]),
 		exited: f[16] ?? "",
 		gone: f[9] === "1" || !!f[16],
-		inSlot: inDeckWindow && f[4] === "2",
+		inSlot: inDeckWindow && f[4] === "3",
 		inNvimSlot: inDeckWindow && f[4] === "1",
+		inTermSlot: inDeckWindow && f[4] === "2",
+		left: Number(f[17] ?? 0),
+		top: Number(f[18] ?? 0),
 		isList: inDeckWindow && f[4] === "0",
 	};
 }
@@ -379,24 +398,28 @@ export interface SlotSize {
 	height: number;
 }
 
-/** Every pane's size in a deck window of W×H: the list (top-left), the nvim slot below it, the pi slot on the right. */
+/** Every pane's size in a deck window of W×H: the list, the nvim slot and the terminal slot (left column, top to bottom), the pi slot on the right. */
 export interface DeckSizes {
 	list: SlotSize;
 	nvim: SlotSize;
+	term: SlotSize;
 	pi: SlotSize;
 }
 
 /**
- * Pane sizes for a deck window of W×H with the left column at pct% of the width and the list at hpct%
- * of the left column's height (resize-pane rounds down; one border column and one border line).
+ * Pane sizes for a deck window of W×H with the left column at pct% of the width, the list at hpct% and
+ * the nvim slot at npct% of the height, the terminal the rest (resize-pane rounds down; one border
+ * column, a border line under the list and under the nvim slot).
  */
-export function deckSizesFor(windowWidth: number, windowHeight: number, pct: number, hpct = DEFAULT_LIST_HEIGHT_PCT): DeckSizes {
+export function deckSizesFor(windowWidth: number, windowHeight: number, pct: number, hpct = DEFAULT_LIST_HEIGHT_PCT, npct = DEFAULT_NVIM_HEIGHT_PCT): DeckSizes {
 	const listWidth = Math.max(1, Math.floor((windowWidth * pct) / 100));
 	const height = Math.max(1, windowHeight);
-	const listHeight = Math.max(1, Math.min(height - 2, Math.floor((height * hpct) / 100)));
+	const listHeight = Math.max(1, Math.min(height - 4, Math.floor((height * hpct) / 100)));
+	const nvimHeight = Math.max(1, Math.min(height - listHeight - 3, Math.floor((height * npct) / 100)));
 	return {
-		list: { width: listWidth, height: Math.max(1, listHeight) },
-		nvim: { width: listWidth, height: Math.max(1, height - listHeight - 1) },
+		list: { width: listWidth, height: listHeight },
+		nvim: { width: listWidth, height: nvimHeight },
+		term: { width: listWidth, height: Math.max(1, height - listHeight - nvimHeight - 2) },
 		pi: { width: Math.max(1, windowWidth - listWidth - 1), height },
 	};
 }
@@ -412,9 +435,16 @@ function parsePct(value: string | undefined, fallback = DEFAULT_LIST_PCT): numbe
 	return value && Number.isFinite(n) && n >= 10 && n <= 90 ? Math.round(n) : fallback;
 }
 
-/** Pool windows of these roles are kept at the nvim-slot size; every other one at the pi-slot size. */
+/** The slot a role is shown in (pool windows of that role are kept at its size). */
+export type SlotName = "pi" | "nvim" | "term";
+export function slotOf(role: string): SlotName {
+	if (role === "nvim" || role === "nvim-holder") return "nvim";
+	if (role === "term" || role === "term-holder") return "term";
+	return "pi";
+}
+/** Pool windows of these roles are kept at the nvim-slot size. */
 export function nvimSized(role: string): boolean {
-	return role === "nvim" || role === "nvim-holder";
+	return slotOf(role) === "nvim";
 }
 
 export interface ApplySizesResult {
@@ -423,17 +453,23 @@ export interface ApplySizesResult {
 	/** The pi slot's size. */
 	slot: SlotSize;
 	nvim: SlotSize;
+	term: SlotSize;
 	/** Pool windows resized. */
 	resized: number;
 }
 
-const SIZE_READ = "#{@deck_list_pct}\t#{@deck_list_height_pct}\t#{window_width}\t#{window_height}\t#{pane_width}\t#{pane_height}\t#{window_zoomed_flag}\t#{window_panes}";
+const SIZE_READ = "#{@deck_list_pct}\t#{@deck_list_height_pct}\t#{@deck_nvim_height_pct}\t#{window_width}\t#{window_height}\t#{pane_width}\t#{pane_height}\t#{window_zoomed_flag}\t#{window_panes}";
+
+function sizesOf(pct: string, hpct: string, npct: string, w: string, h: string): DeckSizes {
+	return deckSizesFor(Number(w), Number(h), parsePct(pct), parsePct(hpct, DEFAULT_LIST_HEIGHT_PCT), parsePct(npct, DEFAULT_NVIM_HEIGHT_PCT));
+}
 
 /**
- * Keep the list at @deck_list_pct × @deck_list_height_pct and every pool window at exactly the size of
- * the slot its pane is shown in (nvim/nvim-holder: the nvim slot, the rest: the pi slot): one read, then
- * (only if something differs) ONE tmux call with `resize-pane` + `set default-size` + every
- * `resize-window`. A zoomed deck window keeps its zoom (resize-pane would undo it); pool sizes still follow.
+ * Keep the list at @deck_list_pct × @deck_list_height_pct, the nvim slot at @deck_nvim_height_pct (the
+ * terminal slot gets the rest) and every pool window at exactly the size of the slot its pane is shown
+ * in (slotOf): one read, then (only if something differs) ONE tmux call with `resize-pane` + `set
+ * default-size` + every `resize-window`. A zoomed deck window keeps its zoom (resize-pane would undo it);
+ * pool sizes still follow.
  */
 export async function applySizes(env: NodeJS.ProcessEnv = process.env): Promise<ApplySizesResult | undefined> {
 	let out: string;
@@ -441,6 +477,7 @@ export async function applySizes(env: NodeJS.ProcessEnv = process.env): Promise<
 		out = await deckTmux(
 			[
 				"display-message", "-p", "-t", LIST_TARGET, SIZE_READ, ";",
+				"display-message", "-p", "-t", NVIM_SLOT_TARGET, "#{pane_height}", ";",
 				"show-options", "-v", "-t", POOL_TARGET, "default-size", ";",
 				"list-windows", "-t", POOL_TARGET, "-F", "#{window_id}\t#{window_width}\t#{window_height}\t#{@pi_fleet_role}",
 			],
@@ -449,34 +486,35 @@ export async function applySizes(env: NodeJS.ProcessEnv = process.env): Promise<
 	} catch {
 		return undefined;
 	}
-	const [head, defaultSize, ...windows] = out.split("\n");
-	const [pctS, hpctS, wS, hS, listW, listH, zoomed, count] = head.split("\t");
-	const sizes = deckSizesFor(Number(wS), Number(hS), parsePct(pctS), parsePct(hpctS, DEFAULT_LIST_HEIGHT_PCT));
+	const [head, nvimH, defaultSize, ...windows] = out.split("\n");
+	const [pctS, hpctS, npctS, wS, hS, listW, listH, zoomed, count] = head.split("\t");
+	const sizes = sizesOf(pctS, hpctS, npctS, wS, hS);
 	const cmds: string[][] = [];
-	if (zoomed !== "1" && count === "3") {
+	if (zoomed !== "1" && count === "4") {
 		if (Number(listW) !== sizes.list.width) cmds.push(["resize-pane", "-t", LIST_TARGET, "-x", String(sizes.list.width)]);
 		if (Number(listH) !== sizes.list.height) cmds.push(["resize-pane", "-t", LIST_TARGET, "-y", String(sizes.list.height)]);
+		if (Number(nvimH) !== sizes.nvim.height || Number(listH) !== sizes.list.height) cmds.push(["resize-pane", "-t", NVIM_SLOT_TARGET, "-y", String(sizes.nvim.height)]);
 	}
 	const size = `${sizes.pi.width}x${sizes.pi.height}`;
 	if (defaultSize !== size) cmds.push(["set-option", "-t", POOL_TARGET, "default-size", size]);
 	let resized = 0;
 	for (const line of windows) {
 		const [id, ww, wh, role] = line.split("\t");
-		const want = nvimSized(role ?? "") ? sizes.nvim : sizes.pi;
+		const want = sizes[slotOf(role ?? "")];
 		if (!id || (Number(ww) === want.width && Number(wh) === want.height)) continue;
 		cmds.push(["resize-window", "-t", id, "-x", String(want.width), "-y", String(want.height)]);
 		resized++;
 	}
-	if (!cmds.length) return { changed: false, slot: sizes.pi, nvim: sizes.nvim, resized: 0 };
+	if (!cmds.length) return { changed: false, slot: sizes.pi, nvim: sizes.nvim, term: sizes.term, resized: 0 };
 	await deckTmux(chain(cmds), env);
-	return { changed: true, slot: sizes.pi, nvim: sizes.nvim, resized };
+	return { changed: true, slot: sizes.pi, nvim: sizes.nvim, term: sizes.term, resized };
 }
 
 /** The slot sizes as the layout is now (computed from the deck window). */
 export async function currentSizes(env: NodeJS.ProcessEnv = process.env): Promise<DeckSizes | undefined> {
 	try {
-		const [pct, hpct, w, h] = (await deckTmux(["display-message", "-p", "-t", LIST_TARGET, SIZE_READ], env)).split("\t");
-		return deckSizesFor(Number(w), Number(h), parsePct(pct), parsePct(hpct, DEFAULT_LIST_HEIGHT_PCT));
+		const [pct, hpct, npct, w, h] = (await deckTmux(["display-message", "-p", "-t", LIST_TARGET, SIZE_READ], env)).split("\t");
+		return sizesOf(pct, hpct, npct, w, h);
 	} catch {
 		return undefined;
 	}
@@ -544,10 +582,20 @@ export async function ensurePool(size: SlotSize | undefined, env: NodeJS.Process
 	}
 }
 
+/** Each slot's holder (role, command): what the slot shows for a row without a live deck session. */
+const HOLDERS: Record<SlotName, { role: DeckRole; cmd: string; kind: string }> = {
+	pi: { role: "preview", cmd: HOLDER_CMD, kind: "holder" },
+	nvim: { role: "nvim-holder", cmd: NVIM_HOLDER_CMD, kind: "nvim-holder" },
+	term: { role: "term-holder", cmd: TERM_HOLDER_CMD, kind: "term-holder" },
+};
+
 /**
- * The deck window has exactly the list, the nvim slot and the pi slot (§15): a missing pi slot gets the
- * preview holder, a missing nvim slot the nvim holder (joined back from the pool, or new ones), extra
- * panes go to the pool. A two-pane deck (list | slot, before §15) gets its nvim slot under the list.
+ * The deck window has exactly, in this pane order, the list, the nvim slot, the terminal slot (the left
+ * column, top to bottom) and the pi slot (the right column, full height) (§15, §17). Missing slots get
+ * their holder (joined back from the pool, or new ones) at their place; extra panes go to the pool. So a
+ * two-pane deck (list | slot, before §15) gets its nvim and terminal slots under the list, a three-pane one
+ * (before §17) its terminal slot under the nvim slot, and a deck whose right column went gets it back.
+ * With all four, the order is checked against the geometry (unless zoomed); a wrong one is rebuilt.
  * Run with the pool present.
  */
 export async function ensureLayout(env: NodeJS.ProcessEnv = process.env): Promise<void> {
@@ -558,81 +606,72 @@ export async function ensureLayout(env: NodeJS.ProcessEnv = process.env): Promis
 	};
 	let { panes, inWindow } = await read();
 	if (!inWindow.length) throw new Error("deck: no deck window");
-	const [pctS, hpctS] = (await deckTmux(["show-options", "-gqv", "@deck_list_pct", ";", "show-options", "-gqv", "@deck_list_height_pct"], env).catch(() => "")).split("\n");
-	const pct = parsePct(pctS);
-	const hpct = parsePct(hpctS, DEFAULT_LIST_HEIGHT_PCT);
-	for (const extra of inWindow.slice(3)) {
-		await deckTmux(
-			["break-pane", "-d", "-s", extra.pane, "-t", POOL_TARGET, ";", "set-option", "-w", "-t", extra.pane, "window-size", "manual"],
-			env,
-		);
-	}
-	if (inWindow.length >= 3) return;
-	const list = inWindow[0].pane;
-	if (inWindow.length === 2) {
-		// Two panes: either a deck from before §15 (list | slot) or one whose pi slot went (list / nvim slot).
-		const leftColumn = await deckTmux(["display-message", "-p", "-t", inWindow[1].pane, "#{pane_at_left}"], env).catch(() => "0");
-		if (leftColumn === "1") {
-			// The pi slot: a full-height column on the right, after the nvim slot (so it becomes pane 2).
-			const holder = panes.find((p) => p.role === "preview" && p.sessionName === POOL_SESSION);
-			if (holder) await deckTmux(["join-pane", "-d", "-h", "-f", "-l", `${100 - pct}%`, "-s", holder.pane, "-t", inWindow[1].pane], env);
-			else {
-				await deckTmux(
-					[
-						"split-window", "-d", "-h", "-f", "-l", `${100 - pct}%`, "-t", inWindow[1].pane, "sh", "-c", HOLDER_CMD, ";",
-						"set-option", "-p", "-t", SLOT_TARGET, "@pi_fleet_role", "preview",
-					],
-					env,
-				);
-			}
-			return;
+	const opts = (await deckTmux(["show-options", "-gqv", "@deck_list_pct", ";", "show-options", "-gqv", "@deck_list_height_pct", ";", "show-options", "-gqv", "@deck_nvim_height_pct"], env).catch(() => "")).split("\n");
+	const pct = parsePct(opts[0]);
+	const hpct = parsePct(opts[1], DEFAULT_LIST_HEIGHT_PCT);
+	const npct = parsePct(opts[2], DEFAULT_NVIM_HEIGHT_PCT);
+	const toPool = async (ps: DeckPane[]) => {
+		for (const p of ps) {
+			await deckTmux(["break-pane", "-d", "-s", p.pane, "-t", POOL_TARGET, ";", "set-option", "-w", "-t", p.pane, "window-size", "manual"], env);
 		}
-	}
-	if (inWindow.length === 1) {
-		const holder = panes.find((p) => p.role === "preview" && p.sessionName === POOL_SESSION);
-		if (holder) await deckTmux(["join-pane", "-d", "-h", "-l", `${100 - pct}%`, "-s", holder.pane, "-t", list], env);
-		else {
-			await deckTmux(
-				[
-					"split-window", "-d", "-h", "-l", `${100 - pct}%`, "-t", list, "sh", "-c", HOLDER_CMD, ";",
-					"set-option", "-p", "-t", "=deck:=deck.1", "@pi_fleet_role", "preview",
-				],
-				env,
-			);
-		}
+	};
+	await toPool(inWindow.slice(4));
+	({ panes, inWindow } = await read());
+	const zoomed = (await deckTmux(["display-message", "-p", "-t", DECK_WINDOW_TARGET, "#{window_zoomed_flag}"], env).catch(() => "0")) === "1";
+	if (inWindow.length === 4) {
+		if (zoomed) return;
+		const [list, nvim, term, pi] = inWindow as [DeckPane, DeckPane, DeckPane, DeckPane];
+		const ok = nvim.left === list.left && term.left === list.left && list.top < nvim.top && nvim.top < term.top && pi.left > list.left && pi.top === list.top;
+		if (ok && list.role === "list") return;
+		// Out of order (a hand-made split, an old tmux): every slot back to the pool, then rebuilt below.
+		await toPool(inWindow.filter((p) => p.role !== "list" && p.index !== 0));
 		({ panes, inWindow } = await read());
 	}
-	// The nvim slot: under the list, so it becomes pane 1 and the pi slot pane 2.
-	const holder = panes.find((p) => p.role === "nvim-holder" && p.sessionName === POOL_SESSION);
-	if (holder) await deckTmux(["join-pane", "-d", "-v", "-l", `${100 - hpct}%`, "-s", holder.pane, "-t", list], env);
-	else {
-		await deckTmux(
-			[
-				"split-window", "-d", "-v", "-l", `${100 - hpct}%`, "-t", list, "sh", "-c", NVIM_HOLDER_CMD, ";",
-				"set-option", "-p", "-t", NVIM_SLOT_TARGET, "@pi_fleet_role", "nvim-holder",
-			],
-			env,
-		);
+	// A zoomed window cannot be split: unzoom for the repair.
+	if (zoomed) await deckTmux(["resize-pane", "-Z", "-t", DECK_WINDOW_TARGET], env).catch(() => "");
+	/** Put slot `name`'s holder in, splitting `target` (h: a column on the right, full height with `full`; v: below it). */
+	const add = async (name: SlotName, target: string, dir: "-h" | "-v", size: number, full = false) => {
+		const h = HOLDERS[name];
+		const holder = panes.find((p) => p.role === h.role && p.sessionName === POOL_SESSION);
+		const flags = ["-d", dir, ...(full ? ["-f"] : []), "-l", `${Math.max(1, Math.min(99, size))}%`];
+		if (holder) await deckTmux(["join-pane", ...flags, "-s", holder.pane, "-t", target], env);
+		else {
+			const made = await deckTmux(["split-window", ...flags, "-t", target, "-P", "-F", "#{pane_id}", "sh", "-c", h.cmd], env);
+			await deckTmux(["set-option", "-p", "-t", made.split("\n")[0]!, "@pi_fleet_role", h.role], env);
+		}
+		({ panes, inWindow } = await read());
+	};
+	for (let guard = 0; guard < 4 && inWindow.length < 4; guard++) {
+		const n = inWindow.length;
+		const list = inWindow[0]!;
+		const last = inWindow[n - 1]!;
+		// The right column exists when the last pane is right of the list.
+		const hasRight = n > 1 && last.left > list.left;
+		const left = hasRight ? n - 1 : n;
+		if (!hasRight) await add("pi", last.pane, "-h", 100 - pct, n > 1);
+		else if (left === 1) await add("nvim", list.pane, "-v", 100 - hpct);
+		else await add("term", inWindow[1]!.pane, "-v", Math.round((100 * (100 - hpct - npct)) / (100 - hpct)));
 	}
 }
 
-/** The preview holder pane (created in the pool if there is none). */
-export async function ensureHolder(env: NodeJS.ProcessEnv = process.env): Promise<string> {
-	const holder = (await deckPanes(env)).find((p) => p.role === "preview");
+async function ensureSlotHolder(name: SlotName, env: NodeJS.ProcessEnv): Promise<string> {
+	const h = HOLDERS[name];
+	const holder = (await deckPanes(env)).find((p) => p.role === h.role);
 	if (holder) return holder.pane;
-	return newPoolWindow("holder", { options: { "@pi_fleet_role": "preview" }, command: ["sh", "-c", HOLDER_CMD] }, env);
+	const sizes = name === "pi" ? undefined : await currentSizes(env);
+	return newPoolWindow(h.kind, { options: { "@pi_fleet_role": h.role }, command: ["sh", "-c", h.cmd], size: sizes?.[name], restore: sizes?.pi }, env);
 }
-
+/** The preview holder pane (created in the pool if there is none). */
+export function ensureHolder(env: NodeJS.ProcessEnv = process.env): Promise<string> {
+	return ensureSlotHolder("pi", env);
+}
 /** The nvim holder pane (created in the pool, at the nvim-slot size, if there is none). */
-export async function ensureNvimHolder(env: NodeJS.ProcessEnv = process.env): Promise<string> {
-	const holder = (await deckPanes(env)).find((p) => p.role === "nvim-holder");
-	if (holder) return holder.pane;
-	const sizes = await currentSizes(env);
-	return newPoolWindow(
-		"nvim-holder",
-		{ options: { "@pi_fleet_role": "nvim-holder" }, command: ["sh", "-c", NVIM_HOLDER_CMD], size: sizes?.nvim, restore: sizes?.pi },
-		env,
-	);
+export function ensureNvimHolder(env: NodeJS.ProcessEnv = process.env): Promise<string> {
+	return ensureSlotHolder("nvim", env);
+}
+/** The terminal holder pane (created in the pool, at the terminal-slot size, if there is none). */
+export function ensureTermHolder(env: NodeJS.ProcessEnv = process.env): Promise<string> {
+	return ensureSlotHolder("term", env);
 }
 
 /** The holder's tty, for the list to write preview frames to. */
@@ -642,7 +681,7 @@ export async function holderTty(env: NodeJS.ProcessEnv = process.env): Promise<s
 
 /**
  * The list process's setup: mark `listPane` as the list, record @deck_tui_pid/@deck_bin, create the
- * pool (anchor + holders), give the deck window its two slots, and apply the sizes.
+ * pool (anchor + holders), give the deck window its slots, and apply the sizes.
  */
 export async function initDeck(listPane: string, env: NodeJS.ProcessEnv = process.env, pid = process.pid): Promise<void> {
 	await deckTmux(
@@ -659,35 +698,41 @@ export async function initDeck(listPane: string, env: NodeJS.ProcessEnv = proces
 	await ensureLayout(env);
 	await ensureHolder(env);
 	await ensureNvimHolder(env);
+	await ensureTermHolder(env);
 	await applySizes(env);
 }
 
 // ---------------------------------------------------------------- slots
 
+const SLOT_TARGETS: Record<SlotName, string> = { pi: SLOT_TARGET, nvim: NVIM_SLOT_TARGET, term: TERM_SLOT_TARGET };
+
 /**
- * The swaps (one tmux call's arguments) that put `want.pi` into the pi slot and `want.nvim` into the nvim
- * slot (`swap-pane -d`: no resize, pool panes have their slot's size; `-Z`: a zoomed deck window stays
- * zoomed), for `panes` as just read.
- * Undefined if both are there already.
+ * The swaps (one tmux call's arguments) that put `want.pi`, `want.nvim` and `want.term` into their slots
+ * (`swap-pane -d`: no resize, pool panes have their slot's size; `-Z`: a zoomed deck window stays
+ * zoomed), for `panes` as just read. Undefined if all are there already.
  */
-export function slotArgs(panes: DeckPane[], want: { pi?: string; nvim?: string }): string[] | undefined {
-	let inPi = panes.find((p) => p.inSlot)?.pane;
-	let inNvim = panes.find((p) => p.inNvimSlot)?.pane;
+export function slotArgs(panes: DeckPane[], want: Partial<Record<SlotName, string>>): string[] | undefined {
+	const cur: Record<SlotName, string | undefined> = {
+		pi: panes.find((p) => p.inSlot)?.pane,
+		nvim: panes.find((p) => p.inNvimSlot)?.pane,
+		term: panes.find((p) => p.inTermSlot)?.pane,
+	};
 	const cmds: string[][] = [];
-	if (want.pi && inPi !== want.pi) {
-		cmds.push(["swap-pane", "-d", "-Z", "-s", want.pi, "-t", SLOT_TARGET]);
-		if (inNvim === want.pi) inNvim = inPi;
-		inPi = want.pi;
-	}
-	if (want.nvim && want.nvim !== want.pi && inNvim !== want.nvim) {
-		cmds.push(["swap-pane", "-d", "-Z", "-s", want.nvim, "-t", NVIM_SLOT_TARGET]);
-		if (inPi === want.nvim) inPi = inNvim;
-		inNvim = want.nvim;
+	const done = new Set<string>();
+	for (const slot of ["pi", "nvim", "term"] as SlotName[]) {
+		const pane = want[slot];
+		if (!pane || done.has(pane)) continue;
+		done.add(pane);
+		if (cur[slot] === pane) continue;
+		cmds.push(["swap-pane", "-d", "-Z", "-s", pane, "-t", SLOT_TARGETS[slot]]);
+		// The pane may have been in another slot: what this slot held goes there.
+		for (const other of ["pi", "nvim", "term"] as SlotName[]) if (other !== slot && cur[other] === pane) cur[other] = cur[slot];
+		cur[slot] = pane;
 	}
 	return cmds.length ? chain(cmds) : undefined;
 }
 
-/** Swap `pane` into the slot of its role (nvim, nvim-holder: the nvim slot; the rest: the pi slot). */
+/** Swap `pane` into the slot of its role (slotOf). */
 export async function showPane(pane: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
 	const args = showPaneArgs(await deckPanes(env), pane);
 	if (args) await deckTmux(args, env);
@@ -696,17 +741,22 @@ export async function showPane(pane: string, env: NodeJS.ProcessEnv = process.en
 /** The one tmux call showPane makes for `panes` as just read. Undefined if `pane` is in its slot already. */
 export function showPaneArgs(panes: DeckPane[], pane: string): string[] | undefined {
 	const role = panes.find((p) => p.pane === pane)?.role ?? "";
-	return slotArgs(panes, nvimSized(role) ? { nvim: pane } : { pi: pane });
+	return slotArgs(panes, { [slotOf(role)]: pane });
+}
+
+/** The live terminal pane of a deck session (§17). */
+export function sessionTermPane(panes: DeckPane[], sessionId: string): DeckPane | undefined {
+	return panes.find((p) => p.role === "term" && p.session === sessionId && !p.gone);
 }
 
 /**
- * Show a deck session: its pi in the pi slot and its nvim in the nvim slot, in one tmux call. The nvim is
- * created on the session's first show (`nvim: false`: never create, the nvim holder stands in); if that
- * fails the nvim holder stands in too and `nvimError` says why. Returns the pi pane.
+ * Show a deck session: its pi, nvim and terminal in their slots, in one tmux call. The nvim and the
+ * terminal are created on the session's first show (`nvim: false`: never create, the holders stand in);
+ * if that fails a holder stands in too and `nvimError`/`termError` say why. Returns the pi pane.
  */
 export async function showSession(
 	sessionId: string,
-	opts: { focus?: boolean | "nvim"; nvim?: boolean } = {},
+	opts: { focus?: boolean | "nvim" | "term"; nvim?: boolean } = {},
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<string> {
 	return (await showSessionDetail(sessionId, opts, env)).pane;
@@ -719,11 +769,14 @@ export interface ShowSessionResult {
 	nvimPane?: string;
 	nvimCreated: boolean;
 	nvimError?: string;
+	termPane?: string;
+	termCreated: boolean;
+	termError?: string;
 }
 
 export async function showSessionDetail(
 	sessionId: string,
-	opts: { focus?: boolean | "nvim"; nvim?: boolean; panes?: DeckPane[] } = {},
+	opts: { focus?: boolean | "nvim" | "term"; nvim?: boolean; panes?: DeckPane[] } = {},
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<ShowSessionResult> {
 	const panes = opts.panes ?? (await deckPanes(env));
@@ -731,8 +784,9 @@ export async function showSessionDetail(
 	if (!pi) throw new Error(`deck: no pane for session ${sessionId.slice(0, 8)}`);
 	// A finished pi is about to be reconciled away (pane-died fired already): never swap it into the slot.
 	if (pi.gone) throw new Error(`deck: session ${sessionId.slice(0, 8)} has exited`);
-	const result: ShowSessionResult = { pane: pi.pane, nvimCreated: false };
+	const result: ShowSessionResult = { pane: pi.pane, nvimCreated: false, termCreated: false };
 	let nvimPane = livePeerIn(panes, pi)?.pane;
+	let termPane = sessionTermPane(panes, sessionId)?.pane;
 	const after: string[][] = [];
 	if (!nvimPane && opts.nvim !== false) {
 		try {
@@ -744,23 +798,34 @@ export async function showSessionDetail(
 			result.nvimError = (error as Error).message;
 		}
 	}
+	if (!termPane && opts.nvim !== false) {
+		try {
+			termPane = await createTerm(pi, env);
+			result.termCreated = true;
+		} catch (error) {
+			result.termError = (error as Error).message;
+		}
+	}
 	result.nvimPane = nvimPane;
+	result.termPane = termPane;
 	const nvimShown = nvimPane ?? panes.find((p) => p.role === "nvim-holder" && !p.gone)?.pane ?? (await ensureNvimHolder(env));
-	const swap = slotArgs(panes, { pi: pi.pane, nvim: nvimShown });
-	// Swap first: a dead old nvim in the nvim slot leaves it before `after` kills it (the window keeps 3 panes).
+	const termShown = termPane ?? panes.find((p) => p.role === "term-holder" && !p.gone)?.pane ?? (await ensureTermHolder(env));
+	const swap = slotArgs(panes, { pi: pi.pane, nvim: nvimShown, term: termShown });
+	// Swap first: a dead old nvim in the nvim slot leaves it before `after` kills it (the window keeps its panes).
 	const cmds: string[][] = [];
 	if (swap) cmds.push(swap);
 	cmds.push(...after);
-	if (opts.focus) cmds.push(["select-pane", "-t", opts.focus === "nvim" ? NVIM_SLOT_TARGET : SLOT_TARGET]);
+	if (opts.focus) cmds.push(["select-pane", "-t", opts.focus === "nvim" ? NVIM_SLOT_TARGET : opts.focus === "term" ? TERM_SLOT_TARGET : SLOT_TARGET]);
 	if (cmds.length) await deckTmux(chain(cmds), env);
 	return result;
 }
 
-/** Show the holders: the preview holder in the pi slot, the nvim holder in the nvim slot. Returns the preview holder. */
+/** Show the holders in every slot. Returns the preview holder. */
 export async function showHolder(env: NodeJS.ProcessEnv = process.env): Promise<string> {
 	const holder = await ensureHolder(env);
 	const nvimHolder = await ensureNvimHolder(env);
-	const args = slotArgs(await deckPanes(env), { pi: holder, nvim: nvimHolder });
+	const termHolder = await ensureTermHolder(env);
+	const args = slotArgs(await deckPanes(env), { pi: holder, nvim: nvimHolder, term: termHolder });
 	if (args) await deckTmux(args, env);
 	return holder;
 }
@@ -770,6 +835,9 @@ export function focusSlot(env: NodeJS.ProcessEnv = process.env): Promise<string>
 }
 export function focusNvimSlot(env: NodeJS.ProcessEnv = process.env): Promise<string> {
 	return deckTmux(["select-pane", "-t", NVIM_SLOT_TARGET], env);
+}
+export function focusTermSlot(env: NodeJS.ProcessEnv = process.env): Promise<string> {
+	return deckTmux(["select-pane", "-t", TERM_SLOT_TARGET], env);
 }
 export function focusList(env: NodeJS.ProcessEnv = process.env): Promise<string> {
 	return deckTmux(["select-pane", "-t", LIST_TARGET], env);
@@ -909,6 +977,28 @@ async function createNvim(panes: DeckPane[], me: DeckPane, env: NodeJS.ProcessEn
 }
 
 /**
+ * A new terminal for the deck pi `me` (§17): the user's login shell ($SHELL -l, as tmux's default
+ * command runs it) in the pi's cwd, a pool pane at the terminal-slot size, under POOL_WRAP so an `exit`
+ * is reconciled like any pool pane. Returns its pane.
+ */
+async function createTerm(me: DeckPane, env: NodeJS.ProcessEnv): Promise<string> {
+	const shell = env.SHELL && env.SHELL.startsWith("/") ? env.SHELL : "/bin/sh";
+	const sizes = await currentSizes(env);
+	return newPoolWindow(
+		"term",
+		{
+			cwd: me.cwd || homedir(),
+			envArgs: [...deckPaneEnv(env)],
+			options: { "@pi_fleet_role": "term", "@pi_fleet_session": me.session },
+			command: ["sh", "-c", POOL_WRAP, "pi-fleet-term", shell, "-l"],
+			size: sizes?.term,
+			restore: sizes?.pi,
+		},
+		env,
+	);
+}
+
+/**
  * `pair --deck PANE [--show]`, `/view`, `, g s`: a deck pi's nvim (created on first use). PANE may be
  * the pi or its nvim. With `show` the session is shown (pi and nvim) and the nvim slot focused.
  */
@@ -949,13 +1039,17 @@ export interface ReconcileResult {
 	slotReplaced?: { dead: string; session: string; by: string };
 	/** The dead nvim that was in the nvim slot, and what replaced it (the nvim holder). */
 	nvimSlotReplaced?: { dead: string; session: string; by: string };
+	/** The terminal slot's pane that went (dead, or its session's pi is gone), and its holder. */
+	termSlotReplaced?: { dead: string; session: string; by: string };
 }
 
 /**
  * Clean up dead panes: a dead pi-slot pane is replaced (`replacement(session)` may name the pi to show,
  * with its nvim; else the holders) and killed; a dead nvim in the nvim slot gives way to the nvim
  * holder; dead pool pi/nvim panes are killed (a killed nvim's pi loses its peer; the session's next
- * show makes a new one); a dead holder or anchor is respawned. Also repairs the deck window's panes.
+ * show makes a new one); a session's terminal goes once it is dead or its pi is (§17: killed with
+ * whatever runs in it, never waited for; in the terminal slot the terminal holder takes its place); a
+ * dead holder or anchor is respawned. Also repairs the deck window's panes.
  */
 export async function reconcile(
 	env: NodeJS.ProcessEnv = process.env,
@@ -987,11 +1081,28 @@ export async function reconcile(
 		result.nvimSlotReplaced = { dead: nvimSlot.pane, session: nvimSlot.session, by };
 		panes = await deckPanes(env);
 	}
+	// A terminal outlives nothing: dead, or its session's pi gone (exited, killed) → it goes.
+	const piAlive = (session: string) => panes.some((q) => q.role === "pi" && q.session === session && !q.gone);
+	const orphan = (p: DeckPane) => p.role === "term" && (p.gone || !piAlive(p.session));
+	const termSlot = panes.find((p) => p.inTermSlot);
+	if (termSlot && orphan(termSlot)) {
+		const by = await ensureTermHolder(env);
+		await showPane(by, env);
+		result.termSlotReplaced = { dead: termSlot.pane, session: termSlot.session, by };
+		panes = await deckPanes(env);
+	}
 	const cmds: string[][] = [];
 	for (const p of panes) {
-		if (!p.gone || p.isList) continue;
-		if (p.role === "preview" || p.role === "nvim-holder" || p.role === "anchor") {
-			cmds.push(["respawn-pane", "-t", p.pane, "sh", "-c", p.role === "preview" ? HOLDER_CMD : p.role === "nvim-holder" ? NVIM_HOLDER_CMD : ANCHOR_CMD]);
+		if (p.isList) continue;
+		if (orphan(p) && !p.inTermSlot) {
+			cmds.push(["kill-pane", "-t", p.pane]);
+			result.killed.push(p.pane);
+			continue;
+		}
+		if (!p.gone) continue;
+		if (p.role === "preview" || p.role === "nvim-holder" || p.role === "term-holder" || p.role === "anchor") {
+			const cmd = p.role === "anchor" ? ANCHOR_CMD : HOLDERS[slotOf(p.role)].cmd;
+			cmds.push(["respawn-pane", "-t", p.pane, "sh", "-c", cmd]);
 			result.respawned.push(p.pane);
 			continue;
 		}
@@ -1539,6 +1650,7 @@ export async function killDeck(opts: { waitMs?: number; force?: boolean } = {}, 
 	const dirty: DeckPane[] = [];
 	for (const p of nvims) if ((await nvimModified(p.nvimSock, env)) === true) dirty.push(p);
 	const left = dirty.map((p) => ({ pane: p.pane, session: p.session, cwd: p.cwd, nvimSock: p.nvimSock }));
+	// The sessions' terminals go with the server, whatever runs in them (§17).
 	const killedServer = left.length && !opts.force ? false : await deckTmuxOk(["kill-server"], env);
 	return { sessions: live.map((p) => p.session), asked, stillAlive, nvims: left, killedServer };
 }

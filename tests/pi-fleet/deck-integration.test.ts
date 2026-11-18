@@ -48,7 +48,7 @@ test("deck pi: /new and /resume open pool panes over deck.sock (shown, focused);
 	await d.type(a.pane, "/new");
 	const b = await waitFor("a pool pi from /new", () => d.panes().find((p) => p.role === "pi" && p.session && p.session !== a.id), 30_000, () => d.screen(a.pane));
 	await waitFor("b in the slot", () => d.slot()?.pane === b.pane);
-	assert.equal(d.activeIndex(), "2", "and focused");
+	assert.equal(d.activeIndex(), "3", "and focused");
 	await d.ready(b.pane);
 	const stB = await waitFor("status of b", () => d.status(b.session)?.pid && d.status(b.session));
 	assert.equal(stB.cwd, d.work);
@@ -131,7 +131,7 @@ test("deck nvim: made on first show below the list; /view opens the file there a
 	assert.equal(nvim.session, a.id);
 	assert.equal(nvim.peer, a.pane);
 	assert.equal(d.panes().find((p) => p.pane === a.pane)?.peer, nvim.pane);
-	assert.equal(d.activeIndex(), "2");
+	assert.equal(d.activeIndex(), "3");
 	const sock = nvim.nvimSock;
 	await waitFor("nvim's socket", () => existsSync(sock));
 
@@ -151,7 +151,7 @@ test("deck nvim: made on first show below the list; /view opens the file there a
 
 	// :PiFocus: the pi beside it gets the focus; both stay where they are.
 	await d.keys(nvim.pane, [":PiFocus", "Enter"]);
-	await waitFor("the pi focused", () => d.activeIndex() === "2");
+	await waitFor("the pi focused", () => d.activeIndex() === "3");
 	assert.equal(d.nvimSlot()?.pane, nvim.pane);
 	assert.equal(d.slot()?.pane, a.pane);
 

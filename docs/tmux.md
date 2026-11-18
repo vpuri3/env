@@ -41,8 +41,9 @@ The mouse is on: click to focus, drag borders to resize, scroll to enter copy mo
 ## pi-fleet (pi sessions)
 
 pi sessions live in the **pi deck**, a private tmux server (`tmux -L pifleet`,
-config `~/env/pi/deck.tmux.conf`) with three panes: the session list (top
-left), the selected session's nvim (bottom left) and its pi (right half). See
+config `~/env/pi/deck.tmux.conf`) with four panes: down the left the session
+list, the selected session's nvim and a shell in its directory (40/40/20), and
+its pi on the right half. See
 the README's pi-fleet section. `pf` opens it (outside tmux in the terminal,
 inside tmux in a popup). These keys run `~/env/bin/pi-fleet` and
 `pi-deck-attach`; without them they do nothing.
@@ -54,7 +55,7 @@ inside tmux in a popup). These keys run `~/env/bin/pi-fleet` and
 
 | Keys (in the deck, prefix `Ctrl+s` too) | Does |
 | --- | --- |
-| `Ctrl+h` `Ctrl+j` `Ctrl+k` `Ctrl+l` | move to the pane on that side: list ↔ nvim with `Ctrl+j`/`Ctrl+k`, nvim → pi with `Ctrl+l`, pi → list with `Ctrl+h`. With no pane on that side the program gets the key (in pi `Ctrl+j`/`Ctrl+k` always stay pi's; in the list `Ctrl+l` is the list's: focus the pi) |
+| `Ctrl+h` `Ctrl+j` `Ctrl+k` `Ctrl+l` | move to the pane on that side: list ↔ nvim ↔ shell with `Ctrl+j`/`Ctrl+k`, nvim or shell → pi with `Ctrl+l`, pi → list with `Ctrl+h`. With no pane on that side the program gets the key (in pi `Ctrl+j`/`Ctrl+k`; in the shell `Ctrl+h`/`Ctrl+j`; in the list `Ctrl+l` is the list's: focus the pi) |
 | `prefix e` | focus pi ↔ nvim |
 | `prefix z` | zoom / unzoom the pane |
 | `prefix h` `j` `k` `l` (or `prefix Ctrl+h` …) | send a literal `Ctrl+h` … to the program |

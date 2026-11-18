@@ -36,11 +36,14 @@ export const REFRESH_TURNS = 6;
 export const TIMEOUT_MS = 15_000;
 /** Failed attempts per session process before giving up. */
 export const MAX_TRIES = 3;
+/** Titles are clamped to this many words / chars (the prompt asks for about 6 to 12 words). */
+export const TITLE_MAX_WORDS = 16;
+export const TITLE_MAX_CHARS = 120;
 /** Marker in the system prompt (tests' faux provider answers title requests by it). */
 export const TITLE_MARKER = "pi-fleet session title";
 
 const SYSTEM_PROMPT = `You write the ${TITLE_MARKER} for a conversation between a user and a coding agent.
-Reply with the title only: 3 to 6 words naming what the session is about (the task, not the agent's actions), sentence case, no quotes, no trailing punctuation.`;
+Reply with the title only: about 6 to 12 words naming what the session is about (the task, not the agent's actions), sentence case, no quotes, no trailing punctuation.`;
 
 const CHEAP = /haiku|flash|mini|nano|lite/i;
 const NOT_CHAT = /image|audio|tts|realtime|embed|transcribe|search|computer-use|robotics|live/i;
@@ -152,7 +155,7 @@ export function titleInput(entries: readonly any[]): string | undefined {
 	return ["<conversation>", ...head, ...skipped, ...tail, "</conversation>"].join("\n\n");
 }
 
-/** One clean line of ≤ 8 words / 60 chars, or undefined. */
+/** One clean line of ≤ TITLE_MAX_WORDS words / TITLE_MAX_CHARS chars, or undefined. */
 export function cleanTitle(raw: string): string | undefined {
 	let line = raw
 		.split("\n")
@@ -162,8 +165,8 @@ export function cleanTitle(raw: string): string | undefined {
 	line = line.replace(/^[*_`"'“‘«]+|[*_`"'”’»]+$/g, "").replace(/[.!?:;,]+$/, "");
 	line = squash(line);
 	const words = line.split(" ");
-	if (words.length > 8) line = words.slice(0, 8).join(" ");
-	if (line.length > 60) line = line.slice(0, 60).replace(/\s+\S*$/, "") || line.slice(0, 60);
+	if (words.length > TITLE_MAX_WORDS) line = words.slice(0, TITLE_MAX_WORDS).join(" ");
+	if (line.length > TITLE_MAX_CHARS) line = line.slice(0, TITLE_MAX_CHARS).replace(/\s+\S*$/, "") || line.slice(0, TITLE_MAX_CHARS);
 	return line || undefined;
 }
 

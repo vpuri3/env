@@ -1,10 +1,12 @@
 /**
- * pi-deck list (docs/pi-deck-design.md §6, §15): `pi-fleet deck`, the top-left pane of the deck
+ * pi-deck list (docs/pi-deck-design.md §6, §15, §17): `pi-fleet deck`, the top-left pane of the deck
  * window. A telescope-like list of every pi session of this login node, grouped by repo; the
- * highlighted row's session is in the slots (its real pi pane in the right half, its nvim below the
- * list, swapped in by deck.ts; the nvim is created on the session's first show), or, for rows
- * without a deck pane, a preview frame written into the preview holder's tty (and the nvim holder
- * below the list).
+ * highlighted row's session is in the slots (its real pi pane in the right half, its nvim and its shell
+ * below the list, swapped in by deck.ts; nvim and shell are created on the session's first show), or,
+ * for rows without a deck pane, a preview frame written into the preview holder's tty (and the nvim
+ * and shell holders below the list). The order of the rows is fixed when the list starts (the sort
+ * rules below); later changes update rows in place, new sessions go last in their group; `r` sorts
+ * again.
  *
  * Layout (top to bottom): the list, the selected row's status line, the search bar in a box
  * (mode badge and `4/12` on its top border, the color legend on its bottom one), key hints.
@@ -70,6 +72,7 @@ import {
 	deckTmux,
 	ensureHolder,
 	ensureNvimHolder,
+	ensureTermHolder,
 	focusSlot,
 	killDeck,
 	sessionPiPane,
@@ -425,12 +428,15 @@ const HELP_LINES = [
 	"  Space             subagents of a session / fold a group",
 	"                    (on +N closed: a repo's older closed sessions)",
 	"  a                 new session in the row's repo",
+	"  r                 refresh: sort the list again (rows otherwise keep their",
+	"                    place as their state changes; new sessions go last)",
 	"  d                 kill: y/⏎ kill · s kill + scancel Slurm · n/Esc no",
 	"  i  /              search (INSERT)    Esc  clear the search",
 	"  ! @ # &   0       only working / waiting / idle / error;  all",
 	"  C-c (prefix d)    detach    C-j  the nvim below    C-l  the pi",
 	"  C-d               kill every deck session and the deck (asks first)",
-	"  panes: C-h/C-j/C-k/C-l move (pi: C-h back here)   prefix e  pi ↔ nvim",
+	"  panes: C-h/C-j/C-k/C-l move: list, nvim, shell down the left, pi right",
+	"         (pi: C-h back here)   prefix e  pi ↔ nvim   prefix z  zoom",
 	"INSERT",
 	"  letters           fuzzy terms (all must match name, repo, cwd, message)",
 	"  C-n/C-p ↑/↓       move    Enter  open    Esc  back to NORMAL",
@@ -502,6 +508,14 @@ export class DeckView implements Component {
 	/** Groups whose older closed sessions are shown. */
 	private allClosed = new Set<string>();
 	private expanded = new Set<string>();
+	/**
+	 * The fixed order (§6, user 2026-11-17): taken from the sort rules when the list first has rows and on
+	 * `r`; status changes update rows in place. Groups by key, rows by id (with `live`: the row was in its
+	 * group's live part then, so a session that closes since stays where it was).
+	 */
+	private order:
+		| { groups: Map<string, { rank: number; closedOnly: boolean }>; rows: Map<string, { rank: number; live: boolean }>; liveGroups: number; next: number; nextGroup: number }
+		| undefined;
 	private threadCache = new Map<string, FoldedThread[] | undefined>();
 	private help = false;
 	private message: { text: string; until: number } | undefined;
@@ -670,18 +684,17 @@ export class DeckView implements Component {
 		return q.split(/\s+/).every((t) => hay.includes(t) || subsequence(t, name) || subsequence(t, label));
 	}
 
-	private rebuild(): void {
-		const searching = !!(this.query.trim() || this.statusFilter);
-		const shown = this.rows.filter((r) => this.matches(r));
+	/** `r`: sort everything again with the current rules (the selection stays on its row). */
+	resort(): void {
+		this.order = undefined;
+		this.rebuild();
+	}
+
+	/** The groups of `rows` in the sort rules' order: live repo groups, outside, closed-only repos. */
+	private groupsOf(rows: SessionRow[], kinds: Map<string, RowKind>): { key: string; group: Group; special?: "outside"; closedOnly: boolean }[] {
 		const repoRows: SessionRow[] = [];
 		const outside: SessionRow[] = [];
-		const kinds = new Map<string, RowKind>();
-		for (const row of shown) {
-			const kind = this.rowKind(row);
-			kinds.set(row.id, kind);
-			if (kind === "outside") outside.push(row);
-			else repoRows.push(row);
-		}
+		for (const row of rows) (kinds.get(row.id) === "outside" ? outside : repoRows).push(row);
 		const isClosed = (r: SessionRow) => kinds.get(r.id) === "closed";
 		// Closed sessions sit in their repo's group (one groupRows call: same-named repos get paths),
 		// after its live rows; repos with only closed sessions come after every live group.
@@ -693,6 +706,65 @@ export class DeckView implements Component {
 			groups.push({ key: OUTSIDE_KEY, group: { repo: "", label: "outside (your tmux)", rows: g }, special: "outside", closedOnly: false });
 		}
 		groups.push(...byRepo.filter((g) => g.closedOnly));
+		return groups;
+	}
+
+	/** Fix the order of every row (search or not) as the sort rules have it now. */
+	private freezeOrder(kinds: Map<string, RowKind>): void {
+		const groups = this.groupsOf(this.rows, kinds);
+		const order = { groups: new Map<string, { rank: number; closedOnly: boolean }>(), rows: new Map<string, { rank: number; live: boolean }>(), liveGroups: 0, next: 0, nextGroup: 0 };
+		let rank = 0;
+		groups.forEach((g, i) => {
+			order.groups.set(g.key, { rank: i, closedOnly: g.closedOnly });
+			if (!g.closedOnly && !g.special) order.liveGroups = i + 1;
+			const live = g.group.rows.filter((r) => kinds.get(r.id) !== "closed");
+			const closed = g.group.rows.filter((r) => kinds.get(r.id) === "closed").sort((a, b) => b.at - a.at);
+			for (const r of live) order.rows.set(r.id, { rank: rank++, live: true });
+			for (const r of closed) order.rows.set(r.id, { rank: rank++, live: false });
+		});
+		order.next = rank;
+		this.order = order;
+	}
+
+	private rebuild(): void {
+		const searching = !!(this.query.trim() || this.statusFilter);
+		const shown = this.rows.filter((r) => this.matches(r));
+		const kinds = new Map<string, RowKind>();
+		for (const row of this.rows) kinds.set(row.id, this.rowKind(row));
+		if (!this.order && this.rows.length) this.freezeOrder(kinds);
+		const isClosed = (r: SessionRow) => kinds.get(r.id) === "closed";
+		const groups = this.groupsOf(shown, kinds);
+		// The fixed order: known groups where they were (a repo whose sessions all closed since stays among
+		// the live ones), new live groups after the known live ones, new closed-only repos at the end.
+		const order = this.order;
+		if (order) {
+			// What appeared since the order was fixed gets its place the first time it is seen (over all rows,
+			// search or not), and keeps it: new live groups after the known live ones, a repo that came back
+			// from closed-only among them too, new closed-only repos at the end; new live rows last in their group.
+			for (const g of this.groupsOf(this.rows, kinds)) {
+				const known = order.groups.get(g.key);
+				if (!known || (known.closedOnly && !g.closedOnly)) {
+					const n = ++order.nextGroup;
+					const rank = g.closedOnly ? 1e6 + n : g.special ? order.liveGroups - 0.25 : order.liveGroups - 0.5 + n * 1e-6;
+					order.groups.set(g.key, { rank, closedOnly: g.closedOnly });
+				}
+				for (const r of g.group.rows) {
+					const knownRow = order.rows.get(r.id);
+					if (!isClosed(r) && !knownRow?.live) order.rows.set(r.id, { rank: order.next++, live: true });
+				}
+			}
+			const rankOf = (g: (typeof groups)[number]) => order.groups.get(g.key)?.rank ?? 1e9;
+			const ranked = groups.map((g) => ({ g, r: rankOf(g) }));
+			ranked.sort((a, b) => a.r - b.r);
+			groups.splice(0, groups.length, ...ranked.map((x) => x.g));
+		}
+		/** A row's place in its group's live part: known rows by their rank, new ones after them (as sorted now). */
+		const liveRank = (r: SessionRow, i: number) => {
+			const known = order?.rows.get(r.id);
+			return known?.live ? known.rank : 1e9 + i;
+		};
+		/** Shown in the live part: running now, or live when the order was fixed (it stays until `r`). */
+		const inLive = (r: SessionRow) => !isClosed(r) || !!order?.rows.get(r.id)?.live;
 		const items: Item[] = [];
 		const pushRow = (row: SessionRow) => {
 			const expanded = this.expanded.has(row.id);
@@ -706,10 +778,14 @@ export class DeckView implements Component {
 			for (const thread of threads) items.push({ kind: "sub", key: `s:${row.id}:${thread.path}`, row, thread });
 		};
 		for (const { key, group, special, closedOnly } of groups) {
-			const live = group.rows.filter((r) => !isClosed(r));
-			const closed = group.rows.filter(isClosed).sort((a, b) => b.at - a.at);
+			const live = group.rows
+				.filter(inLive)
+				.map((r, i) => ({ r, k: liveRank(r, i) }))
+				.sort((a, b) => a.k - b.k)
+				.map((x) => x.r);
+			const closed = group.rows.filter((r) => !inLive(r)).sort((a, b) => b.at - a.at);
 			const collapsed = !searching && (closedOnly ? !this.opened.has(key) : this.collapsed.has(key));
-			items.push({ kind: "group", key, group, collapsed, special, live: live.length, closed: closed.length });
+			items.push({ kind: "group", key, group, collapsed, special, live: live.filter((r) => !isClosed(r)).length, closed: group.rows.filter(isClosed).length });
 			if (collapsed) continue;
 			for (const row of live) pushRow(row);
 			const folds = !searching && closed.length > CLOSED_SHOWN;
@@ -1190,6 +1266,10 @@ export class DeckView implements Component {
 				// Not detach (C-c and prefix d do that): q only closes the help.
 				this.help = false;
 				return;
+			case "r":
+				this.resort();
+				this.scheduleApply();
+				return;
 			case "i":
 			case "/":
 				this.mode = "insert";
@@ -1512,7 +1592,7 @@ export class DeckView implements Component {
 		const chunks =
 			this.mode === "insert"
 				? ["type to search", "⏎ open", "C-n/C-p move", "Esc normal"]
-				: ["j/k move", ...this.openHints(), "a new", "d kill", "i / search", "? help", "C-c detach", "C-d kill all", "␣ subagents"];
+				: ["j/k move", ...this.openHints(), "a new", "d kill", "i / search", "? help", "C-c detach", "r refresh", "C-d kill all", "␣ subagents"];
 		// As many hints as fit, in order (detach before the rarer ones).
 		let hint = "";
 		for (const c of chunks) {
@@ -1595,7 +1675,11 @@ export class DeckView implements Component {
 		this.top = Math.max(0, Math.min(this.top, Math.max(0, this.items.length - height)));
 		const lines: string[] = [];
 		const now = this.now();
-		for (let i = this.top; i < Math.min(this.items.length, this.top + height); i++) lines.push(this.itemLine(this.items[i]!, i === this.selected, width, now));
+		// The subagent counts column: as wide as the widest counts of any row (so columns line up while
+		// scrolling), right-aligned to the pane's edge; the name takes the rest.
+		let countsW = 0;
+		for (const i of this.items) if (i.kind === "main") countsW = Math.max(countsW, visibleWidth(countsText(i.row.counts, style)));
+		for (let i = this.top; i < Math.min(this.items.length, this.top + height); i++) lines.push(this.itemLine(this.items[i]!, i === this.selected, width, now, countsW));
 		if (this.top > 0) lines[0] = this.withMore(lines[0]!, "↑", width);
 		if (this.top + height < this.items.length) lines[lines.length - 1] = this.withMore(lines[lines.length - 1]!, "↓", width);
 		const at = this.selected - this.top;
@@ -1608,7 +1692,7 @@ export class DeckView implements Component {
 		return `${l}${" ".repeat(Math.max(0, width - 2 - visibleWidth(l)))} ${this.opts.style.fg("dim", arrow)}`;
 	}
 
-	private itemLine(item: Item, selected: boolean, width: number, now: number): string {
+	private itemLine(item: Item, selected: boolean, width: number, now: number, countsW = 0): string {
 		const style = this.opts.style;
 		const marker = selected ? style.bold(style.fg("accent", "›")) : " ";
 		if (item.kind === "group") {
@@ -1637,11 +1721,14 @@ export class DeckView implements Component {
 		const avail = Math.max(10, width - 4);
 		const wide = avail >= 60;
 		const detailW = wide ? 16 : 13;
-		// The name takes every column the detail, cost and subagent counts leave (counts reserved at
-		// the right edge), so long titles show in full in a wide list.
-		const countsW = wide ? 14 : 8;
-		const room = avail - detailW - 1 - (wide ? 8 : 0) - 1;
-		const nameW = Math.max(Math.min(wide ? 30 : 22, Math.max(8, room - 8)), room - countsW);
+		// The row spans the pane: name | detail | cost | counts (right-aligned at the edge, countsW as
+		// measured over the rows). The name takes every column the others leave; a narrow list keeps a
+		// readable name and lets the counts be cut at the edge.
+		const room = avail - detailW - 1 - (wide ? 8 : 0);
+		const minName = Math.min(wide ? 30 : 16, Math.max(8, room - 8));
+		const countsFit = Math.max(0, Math.min(countsW, room - minName - 1));
+		const countsCol = countsFit ? countsFit + 1 : 0;
+		const nameW = room - countsCol;
 		let name = oneLine(row.name);
 		let suffix = "";
 		if (item.rowKind === "outside") {
@@ -1657,8 +1744,8 @@ export class DeckView implements Component {
 		const detailText = toned(tone, rowDetail(row, now), style);
 		const cost = row.costUsd ? `$${row.costUsd.toFixed(2)}` : "";
 		const costText = wide ? ` ${padRight(style.fg(tone === "closed" || tone === "remote" ? "dim" : "muted", cost), 7)}` : "";
-		const counts = countsText(row.counts, style);
-		return fit(`${marker} ${glyph(row, style)} ${pad(nameText, nameW)} ${pad(detailText, detailW)}${costText} ${counts}`, width);
+		const counts = countsCol ? ` ${padRight(fit(countsText(row.counts, style), countsFit), countsFit)}` : "";
+		return fit(`${marker} ${glyph(row, style)} ${pad(nameText, nameW)} ${pad(detailText, detailW)}${costText}${counts}`, width);
 	}
 
 	// ------------------------------------------------------------ holder frames
@@ -2039,11 +2126,13 @@ export function tmuxOps(env: NodeJS.ProcessEnv, list: Pick<DeckList, "serial">, 
 			// Its pi in the pi slot, its nvim (created on the first show) in the nvim slot: one swap call.
 			const r = await showSessionDetail(target.session, { panes }, env);
 			if (r.nvimError) opts.flash?.(`pi-fleet: no nvim: ${r.nvimError}`);
+			if (r.termError) opts.flash?.(`pi-fleet: no terminal: ${r.termError}`);
 			return true;
 		}
 		const holder = panes.find((p) => p.role === "preview" && !p.gone)?.pane ?? (await ensureHolder(env));
 		const nvimHolder = panes.find((p) => p.role === "nvim-holder" && !p.gone)?.pane ?? (await ensureNvimHolder(env));
-		const args = slotArgs(panes, { pi: holder, nvim: nvimHolder });
+		const termHolder = panes.find((p) => p.role === "term-holder" && !p.gone)?.pane ?? (await ensureTermHolder(env));
+		const args = slotArgs(panes, { pi: holder, nvim: nvimHolder, term: termHolder });
 		if (args) await deckTmux(args, env);
 		return true;
 	};

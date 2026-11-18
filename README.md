@@ -93,14 +93,17 @@ Host github.com
 ## pi-fleet
 
 pi-fleet runs several pi sessions at once in the **pi deck**, a private tmux
-server (`tmux -L pifleet`) with three panes: the session list (top left), the
-selected session's **nvim** (bottom left) and its **pi** (right half). Moving
-in the list swaps that session's pi and nvim in; every session keeps running
-in the background, and each has its own nvim (started the first time the
-session is shown). It is made of `pi/extensions/fleet/` (the pi extension),
+server (`tmux -L pifleet`) with four panes: down the left the session list,
+the selected session's **nvim** and a **shell** in its directory (40/40/20),
+and its **pi** on the right half. Moving in the list swaps that session's pi,
+nvim and shell in; every session keeps running in the background, and each
+has its own nvim and shell (started the first time the session is shown; the
+shell goes when the session ends, whatever runs in it). The list keeps its
+order as sessions change state (new sessions go last in their repo); `r`
+sorts it again. It is made of `pi/extensions/fleet/` (the pi extension),
 `bin/pi-fleet` (the CLI), `pi/deck.tmux.conf`, `nvim/lua/nvconf/pi_fleet.lua`
 and the tmux keys in [docs/tmux.md](docs/tmux.md). The design is in
-[docs/pi-deck-design.md](docs/pi-deck-design.md) (§15) and
+[docs/pi-deck-design.md](docs/pi-deck-design.md) (§15–§17) and
 [docs/pi-fleet-design.md](docs/pi-fleet-design.md).
 
 From a shell, `pf` opens the deck: outside tmux in this terminal, inside tmux
@@ -132,7 +135,7 @@ sessions that need you (`π 1? 2◐`).
 
 **Session titles.** After the first run of an unnamed session, the fleet
 extension asks a cheap model (the cheapest haiku/flash/mini/nano/lite model of
-the session's provider, else the session's model) for a 3–6 word title and
+the session's provider, else the session's model) for a 6–12 word title and
 sets it as the session name, which the deck and `/resume` show.
 It is rewritten once more after 6 user messages. A name you give with `/name`
 or `--name` is never replaced. `PI_FLEET_TITLE_MODEL=provider/id` picks the
@@ -147,7 +150,7 @@ finish.
 
 | In the deck | Does |
 | --- | --- |
-| `C-h` `C-j` `C-k` `C-l` | move to the pane in that direction (from pi, `C-h` goes to the list; in pi `C-j`/`C-k` stay newline/kill line; at an edge the key goes to the program) |
+| `C-h` `C-j` `C-k` `C-l` | move to the pane in that direction: list ↕ nvim ↕ shell down the left, `C-l` to pi, `C-h` from pi to the list. At an edge the key goes to the program (in pi `C-j`/`C-k` stay newline/kill line; in the shell `C-h`/`C-j`; `prefix C-k`/`prefix C-l` send those literally) |
 | `prefix e` | pi ↔ nvim |
 | `prefix z` | zoom the focused pane |
 | `prefix h` (or `prefix C-h`), … | send a literal `C-h`, … |
@@ -155,7 +158,8 @@ finish.
 
 | Session list | Does |
 | --- | --- |
-| `j` / `k` (or arrows, `C-n`/`C-p`) | move; the session's pi and nvim follow |
+| `j` / `k` (or arrows, `C-n`/`C-p`) | move; the session's pi, nvim and shell follow |
+| `r` | refresh: sort the list again (otherwise rows keep their place; the selection stays on its row) |
 | `Enter`, `C-l` | focus the session's pi (closed session: `Enter` resumes it, `C-l` reads its transcript in `less`) |
 | `Space` | show a session's subagents; fold a repo. A subagent of a deck session shows its agent view (as `/agents tree` → Enter) in the session's pi, `Enter`/`C-l` go there (`Esc` → the tree → the conversation); other subagents preview their transcript (`C-l` reads it in `less`) |
 | `d` | kill the session: confirm with `y`, or `s` to also scancel its Slurm jobs (`n`/`Esc` cancel) |
