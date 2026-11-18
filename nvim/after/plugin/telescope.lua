@@ -81,12 +81,9 @@ else
                 "--glob",
                 "!.idea/*",
             },
+            -- No <C-h> (which_key): C-h/j/k/l belong to tmux pane navigation; `?` in normal mode shows the keys.
             mappings = {
-                i = {
-                    ["<C-h>"] = "which_key",
-                },
                 n = {
-                    ["<C-h>"] = "which_key",
                     ["q"] = require("telescope.actions").close,
                     ["<Esc><Esc>"] = require("telescope.actions").close,
                 },

@@ -64,11 +64,8 @@ vim.keymap.set({"v", "x"}, "K", ":move '<-2<CR>gv=gv", opts)
 vim.keymap.set("v", "<", "<gv", opts)
 vim.keymap.set("v", ">", ">gv", opts)
 
--- split screen motions
-vim.keymap.set("n", "<C-H>", "<C-W><C-H>", opts)
-vim.keymap.set("n", "<C-J>", "<C-W><C-J>", opts)
-vim.keymap.set("n", "<C-K>", "<C-W><C-K>", opts)
-vim.keymap.set("n", "<C-L>", "<C-W><C-L>", opts)
+-- split screen motions: built-in <C-w>h/j/k/l. <C-h/j/k/l> are left to tmux, which uses them to
+-- move between pi deck panes (docs/pi-deck-design.md §15).
 
 -- Navigate buffers
 vim.keymap.set("n", "<S-l>", ":bnext<CR>", opts)
