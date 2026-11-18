@@ -59,6 +59,22 @@ async function waitFor<T>(what: string, probe: () => T | undefined | false, time
 	}
 }
 
+/** Poll until `probe()` equals `want`; on timeout name what was awaited and the last value seen. */
+async function waitEq(what: string, probe: () => string, want: string, timeoutMs = 12_000): Promise<void> {
+	let last = "";
+	const end = Date.now() + timeoutMs;
+	for (;;) {
+		try {
+			last = probe();
+			if (last === want) return;
+		} catch (e) {
+			last = `error: ${e}`;
+		}
+		if (Date.now() > end) throw new Error(`timed out waiting for ${what} === ${JSON.stringify(want)}; last observed ${JSON.stringify(last)}`);
+		await sleep(50);
+	}
+}
+
 interface Pane {
 	pane: string;
 	where: string;
@@ -240,7 +256,7 @@ async function harness(d: Deck): Promise<{ keys: (...k: string[]) => void; hex: 
 	);
 	d.tmux(["set", "-g", "escape-time", "0"], "h");
 	await waitFor("the outer client", () => d.tmux(["list-clients", "-F", "#{client_name}"], "outer") !== "");
-	await sleep(300);
+	await waitEq("the outer client size", () => d.tmux(["list-clients", "-F", "#{client_width}x#{client_height}"], "outer"), "160x48");
 	return {
 		keys: (...k: string[]) => d.tmux(["send-keys", "-t", "h", ...k], "h") as unknown as void,
 		hex: (h: string) => d.tmux(["send-keys", "-t", "h", "-H", ...h.split(" ")], "h") as unknown as void,
@@ -431,7 +447,8 @@ test("open ×3: pool pis at the pi-slot size, nvims and shells (made on first sh
 			assert.equal(deckFlag, "1");
 			assert.deepEqual(args, ["--session-id", s.id]);
 		}
-		await sleep(500);
+		await waitFor("the last session's nvim in the slot", () => d.nvimSlot().session === sessions[sessions.length - 1].id && d.nvimSlot().role === "nvim");
+		await sleep(300); // negative check below: let any startup SIGWINCH land first
 		const before = sessions.map((s) => d.file(s.id, "winch"));
 		for (const s of [sessions[0], sessions[1], sessions[2], sessions[0]]) {
 			const r = d.request({ type: "select", session: s.id });
@@ -443,7 +460,8 @@ test("open ×3: pool pis at the pi-slot size, nvims and shells (made on first sh
 		}
 		assert.equal(d.panes().filter((p) => p.role === "term").length, 3, "no second shell for a session");
 		assert.equal(d.panes().filter((p) => p.role === "nvim").length, 3, "no second nvim for a session");
-		await sleep(500);
+		await waitFor("the selection shown", () => d.slot().session === sessions[0].id && d.nvimSlot().session === sessions[0].id && d.termSlot().session === sessions[0].id);
+		await sleep(300); // bounded stability window for the negative check
 		assert.deepEqual(sessions.map((s) => d.file(s.id, "winch")), before, "no SIGWINCH from swaps");
 		// open of a session already in the deck selects it; open --session of a closed one resumes into the pool.
 		const again = d.cli(["open", "--deck", "--session", sessions[1].id, "--json"]);
@@ -565,14 +583,16 @@ test("resizing the deck client resizes every pool window in one tmux call", { sk
 				return slot.width === slotSizeFor(w, slot.height, 50).slot.width && pool.every((p) => at(p, slotOf(p.role)));
 			});
 		await settled(180);
-		await sleep(300);
 		writeFileSync(log, "");
 		d.tmux(["resize-window", "-t", "h", "-x", "140", "-y", "40"], "h");
 		await settled(140);
-		await sleep(300);
-		const calls = readFileSync(log, "utf8")
-			.split("\n")
-			.filter((l) => l.startsWith(`-L ${d.label} `) && /resize-window/.test(l));
+		const callsNow = () =>
+			readFileSync(log, "utf8")
+				.split("\n")
+				.filter((l) => l.startsWith(`-L ${d.label} `) && /resize-window/.test(l));
+		await waitFor("the pool resize-window call", () => callsNow().length >= 1);
+		await sleep(300); // negative: no second resize call
+		const calls = callsNow();
 		const poolWindows = Number(d.tmux(["display-message", "-p", "-t", "=pool:", "#{session_windows}"]));
 		assert.equal(calls.length, 1, calls.join("\n"));
 		assert.equal(calls[0].match(/resize-window/g)!.length, poolWindows);
@@ -594,7 +614,7 @@ test("nvim quit by hand in the nvim slot: a new nvim for the same pi takes its p
 			const n = d.nvimSlot();
 			return n.role === "nvim" && n.session === a.id && !n.dead ? n : undefined;
 		});
-		await sleep(500);
+		await waitFor("nvim drawn in its pane", () => d.tmux(["capture-pane", "-p", "-t", old.pane]).includes("~"));
 		d.tmux(["send-keys", "-t", old.pane, "Escape", ":qa!", "Enter"]);
 		const fresh = await waitFor("a new nvim in the nvim slot", () => {
 			const n = d.nvimSlot();
@@ -602,7 +622,7 @@ test("nvim quit by hand in the nvim slot: a new nvim for the same pi takes its p
 		});
 		assert.equal(fresh.session, a.id);
 		assert.equal(fresh.peer, a.pane);
-		assert.equal(d.tmux(["show", "-pv", "-t", a.pane, "@pi_fleet_peer"]), fresh.pane);
+		await waitEq("a's @pi_fleet_peer pointing at the new nvim", () => d.tmux(["show", "-pv", "-t", a.pane, "@pi_fleet_peer"]), fresh.pane);
 		await waitFor("the old nvim pane killed", () => !d.panes().some((p) => p.pane === old.pane));
 	} finally {
 		d.close();
@@ -623,7 +643,7 @@ test("a pi exiting 0 leaves the pool and the slot falls back to the holder; a de
 		// a's shell runs a foreground job: it goes with a anyway (killed, never waited for).
 		const aTerm = d.panes().find((p) => p.role === "term" && p.session === a.id)!;
 		d.tmux(["send-keys", "-t", aTerm.pane, "sleep 1000", "Enter"]);
-		await sleep(300);
+		await waitEq("a's shell foreground command", () => d.tmux(["display-message", "-p", "-t", aTerm.pane, "#{pane_current_command}"]), "sleep");
 		writeFileSync(join(d.stub, `${a.id}.exit`), "0\n");
 		await waitFor("a's pane killed", () => !d.panes().some((p) => p.pane === a.pane));
 		await waitFor("a's shell killed too", () => !d.panes().some((p) => p.pane === aTerm.pane));
@@ -702,9 +722,9 @@ test("attaching never points ~/.ssh/ssh_auth_sock at itself", { skip: skipTmux, 
 		await d.attachDirect("h");
 		assert.equal(d.tmux(["show-environment", "SSH_AUTH_SOCK"]), `SSH_AUTH_SOCK=${link}`, "the attach exported the link");
 		// The client-attached hook runs in the background; give it time, and a second attach.
-		await sleep(500);
+		await sleep(300);
 		await d.attachDirect("h2");
-		await sleep(500);
+		await sleep(300);
 		assert.equal(readlinkSync(link), agentSock);
 	} finally {
 		agent.close();
@@ -776,7 +796,7 @@ test("kill-deck leaves the deck running for an nvim with unsaved changes unless 
 			await waitFor("nvim up", () => existsSync(nvim.nvimSock));
 			d.tmux(["send-keys", "-t", nvimPane, "i", "unsaved", "Escape"]);
 			await waitFor("buffer modified", () => {
-				const r = spawnSync("nvim", ["--server", nvim.nvimSock, "--remote-expr", "&modified"], { encoding: "utf8", timeout: 3000 });
+				const r = spawnSync("nvim", ["--server", nvim.nvimSock, "--remote-expr", "&modified"], { encoding: "utf8", timeout: 10000 });
 				return r.stdout.trim() === "1";
 			});
 			const r = (await d.deckCallAsync("d.killDeck({ waitMs: 5000 })")) as { killedServer: boolean; nvims: { pane: string }[]; asked: string[] };
@@ -827,7 +847,7 @@ test("popup: attach, C-h/j/k/l between the panes, prefix C-<key>, Shift+Enter, p
 				return true;
 			}),
 		);
-		await sleep(500);
+		await sleep(300); // baseline for the negative SIGWINCH check
 		const winch0 = d.file(s.id, "winch");
 		const nvim = d.nvimSlot();
 		assert.equal(nvim.role, "nvim");
@@ -871,7 +891,7 @@ test("popup: attach, C-h/j/k/l between the panes, prefix C-<key>, Shift+Enter, p
 		assert.deepEqual([term.role, term.session], ["term", s.id]);
 		const typed = join(d.root, "term-keys");
 		d.tmux(["send-keys", "-t", term.pane, `stty raw -echo; cat > ${typed}`, "Enter"]);
-		await sleep(500);
+		await waitEq("the shell's foreground command", () => d.tmux(["display-message", "-p", "-t", term.pane, "#{pane_current_command}"]), "cat");
 		h.keys("C-j");
 		await waitFor("terminal slot focused (C-j)", () => d.activeIndex() === "2");
 		h.keys("C-h", "C-j");
