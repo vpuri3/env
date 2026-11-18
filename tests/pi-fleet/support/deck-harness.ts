@@ -29,15 +29,18 @@ export function guardTmuxArgs(args: string[]): void {
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function waitFor<T>(what: string, probe: () => T | undefined | false, timeoutMs = 10_000, everyMs = 50): Promise<T> {
 	const end = Date.now() + timeoutMs;
+	let last: unknown;
 	for (;;) {
 		let value: T | undefined | false;
 		try {
 			value = probe();
-		} catch {
+		} catch (e) {
 			value = undefined;
+			last = `threw ${(e as Error)?.message ?? e}`;
 		}
+		if (value === undefined || value === false) last = value === undefined && typeof last === "string" ? last : value;
 		if (value !== undefined && value !== false) return value as T;
-		if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+		if (Date.now() > end) throw new Error(`timed out after ${timeoutMs} ms waiting for ${what} (last observed: ${String(last)})`);
 		await sleep(everyMs);
 	}
 }

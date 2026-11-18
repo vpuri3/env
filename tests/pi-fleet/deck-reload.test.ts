@@ -6,6 +6,7 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { connect } from "node:net";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LIST_LOOP, isCurrentListLoop } from "../../pi/extensions/fleet/deck.ts";
@@ -50,6 +51,24 @@ async function newListPid(d: Deck, old: number): Promise<number> {
 		const p = listPid(d);
 		return p > 1 && p !== old ? p : undefined;
 	});
+}
+/** The list is serving: @deck_sock is published and something accepts a connection there. */
+async function listServing(d: Deck): Promise<void> {
+	let seen = "";
+	const end = Date.now() + 15_000;
+	for (;;) {
+		const sock = d.tryTmux(["show", "-gqv", "@deck_sock"]) ?? "";
+		const ok = sock
+			? await new Promise<boolean>((res) => {
+					const c = connect(sock);
+					c.once("connect", () => (c.destroy(), res(true)));
+					c.once("error", (e) => ((seen = `${sock}: ${e.message}`), res(false)));
+				})
+			: ((seen = "@deck_sock unset"), false);
+		if (ok) return;
+		if (Date.now() > end) throw new Error(`timed out after 15000 ms waiting for the new list serving deck.sock (last observed: ${seen})`);
+		await sleep(50);
+	}
 }
 /** Pool and slot panes: id, place, role, session, pid (none of these may change on a reload). */
 function poolState(d: Deck): string[] {
@@ -101,11 +120,17 @@ test("deck-reload re-reads deck.tmux.conf and restarts the list; pool panes and 
 	const pid2 = await newListPid(d, pid1);
 	assert.ok(r.out.includes(`${pid1} → ${pid2}`), r.out);
 	await waitFor("the old list gone", () => !alive(pid1));
+	await waitFor("the respawned list pane (role list, not dead)", () => {
+		const p = d.panes().find((q) => q.where === "deck:deck.0");
+		return p && p.role === "list" && !p.dead ? p : undefined;
+	});
 	// The list pane itself was not respawned (its loop restarted the list), and nothing else moved.
 	const listNow = d.panes().find((p) => p.where === "deck:deck.0")!;
 	assert.equal(listNow.pane, list.pane);
 	assert.equal(listNow.role, "list");
-	await sleep(500); // the new list's start-up reconcile
+	await listServing(d); // the new list's start-up reconcile follows the bind
+	assert.deepEqual(poolState(d), before);
+	await sleep(300); // stability: the reconcile changes nothing
 	assert.deepEqual(poolState(d), before);
 	assert.equal(d.slot().pane, b.pane);
 	for (const s of [a, b]) assert.equal(d.file(s.id, "runs").trim().split("\n").length, 1, `${s.id} started once`);
@@ -135,7 +160,9 @@ test("deck-reload respawns a list pane that runs an older loop (same pane, curre
 	assert.equal(listNow.pane, list.pane, "same pane id");
 	assert.equal(listNow.dead, false);
 	assert.equal(listNow.role, "list");
-	await sleep(500);
+	await listServing(d);
+	assert.deepEqual(poolState(d), before);
+	await sleep(300); // stability: the reconcile changes nothing
 	assert.deepEqual(poolState(d), before);
 	assert.equal(d.slot().pane, a.pane);
 	assert.equal(listPid(d), pid2);
@@ -153,7 +180,9 @@ test("deck-reload --debounce: concurrent reloads restart the list once", { skip:
 	assert.equal(runs.filter((r) => /list restarted/.test(r.out)).length, 1, runs.map((r) => r.out).join(""));
 	assert.equal(runs.filter((r) => /just reloaded/.test(r.out)).length, 2, runs.map((r) => r.out).join(""));
 	const pid2 = await newListPid(d, pid1);
-	await sleep(1000);
+	await listServing(d);
+	assert.equal(listPid(d), pid2, "restarted once");
+	await sleep(1000); // stability window: no second restart
 	assert.equal(listPid(d), pid2, "restarted once");
 	// Still within the window: skipped. Without --debounce: always.
 	assert.match(d.cli(["deck-reload", "--debounce", "5000"]).out, /just reloaded/);
@@ -199,8 +228,15 @@ test("pi's /reload (ctx.reload in a real rpc pi) reloads the deck; startup does 
 		assert.match(d.tmux(["show", "-gv", "@deck_reload"]), /^\d+:[0-9a-f]+$/);
 	} finally {
 		child.stdin.end();
-		await Promise.race([exited, sleep(5000)]);
-		if (child.exitCode === null) child.kill("SIGKILL");
+		let exitErr: unknown;
+		try {
+			await waitFor("pi (rpc) to exit after stdin closed", () => child.exitCode !== null || child.signalCode !== null, 15_000);
+		} catch (e) {
+			exitErr = e;
+			child.kill("SIGKILL");
+		}
+		void exited;
+		if (exitErr) throw exitErr;
 		if (process.env.DEBUG_DECK_RELOAD) process.stderr.write(stderr + stdout);
 	}
 });
