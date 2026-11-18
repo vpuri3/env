@@ -283,6 +283,8 @@ export interface DeckPane {
 	exited: string;
 	/** dead, or exited: the pane is finished. */
 	gone: boolean;
+	/** An nvim its pi asked to :qa as the pi exited (cli.ts closePeerNvim): not replaced by a new one. */
+	closing: boolean;
 	/** In the pi slot (the right half). */
 	inSlot: boolean;
 	/** In the nvim slot (left, below the list). */
@@ -315,6 +317,7 @@ const DECK_PANE_FORMAT = [
 	"#{@pi_fleet_exited}",
 	"#{pane_left}",
 	"#{pane_top}",
+	"#{@pi_fleet_closing}",
 ].join("\t");
 
 function parseDeckPane(line: string): DeckPane {
@@ -345,6 +348,7 @@ function parseDeckPane(line: string): DeckPane {
 		left: Number(f[17] ?? 0),
 		top: Number(f[18] ?? 0),
 		isList: inDeckWindow && f[4] === "0",
+		closing: !!f[19],
 	};
 }
 
@@ -1045,8 +1049,8 @@ export interface ReconcileResult {
 
 /**
  * Clean up dead panes: a dead pi-slot pane is replaced (`replacement(session)` may name the pi to show,
- * with its nvim; else the holders) and killed; a dead nvim in the nvim slot gives way to the nvim
- * holder; dead pool pi/nvim panes are killed (a killed nvim's pi loses its peer; the session's next
+ * with its nvim; else the holders) and killed; a dead nvim in the nvim slot that quit cleanly (the user's
+ * :qa) is replaced by a new nvim for its pi; else (crashed, pi gone, or closed by its exiting pi) the nvim holder; dead pool pi/nvim panes are killed (a killed nvim's pi loses its peer; the session's next
  * show makes a new one); a session's terminal goes once it is dead or its pi is (§17: killed with
  * whatever runs in it, never waited for; in the terminal slot the terminal holder takes its place); a
  * dead holder or anchor is respawned. Also repairs the deck window's panes.
@@ -1076,8 +1080,27 @@ export async function reconcile(
 	}
 	const nvimSlot = panes.find((p) => p.inNvimSlot);
 	if (nvimSlot?.gone && nvimSlot.role !== "nvim-holder") {
-		const by = await ensureNvimHolder(env);
-		await showPane(by, env);
+		// Only an nvim that quit cleanly (:q, :qa) and was not closed by its exiting pi: a crash must not loop.
+		const quit = (nvimSlot.exited || String(nvimSlot.deadStatus ?? "")) === "0";
+		const pi =
+			nvimSlot.role === "nvim" && quit && !nvimSlot.closing
+				? panes.find((q) => q.pane === nvimSlot.peer && q.peer === nvimSlot.pane && q.role === "pi" && q.session && !q.gone)
+				: undefined;
+		let by: string | undefined;
+		if (pi) {
+			try {
+				const made = await createNvim(panes, pi, env);
+				by = made.nvimPane;
+				await showPane(by, env);
+				await deckTmux(chain(made.after), env);
+			} catch {
+				by = undefined;
+			}
+		}
+		if (!by || !(await deckPanes(env)).some((p) => p.pane === by && p.inNvimSlot)) {
+			by = await ensureNvimHolder(env);
+			await showPane(by, env);
+		}
 		result.nvimSlotReplaced = { dead: nvimSlot.pane, session: nvimSlot.session, by };
 		panes = await deckPanes(env);
 	}

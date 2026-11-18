@@ -590,6 +590,30 @@ test("resizing the deck client resizes every pool window in one tmux call", { sk
 	}
 });
 
+test("nvim quit by hand in the nvim slot: a new nvim for the same pi takes its place", { skip: skipNvim, timeout: 90_000 }, async () => {
+	const d = new Deck();
+	try {
+		d.start();
+		const a = await d.open();
+		const old = await waitFor("a's nvim in the nvim slot", () => {
+			const n = d.nvimSlot();
+			return n.role === "nvim" && n.session === a.id && !n.dead ? n : undefined;
+		});
+		await sleep(500);
+		d.tmux(["send-keys", "-t", old.pane, "Escape", ":qa!", "Enter"]);
+		const fresh = await waitFor("a new nvim in the nvim slot", () => {
+			const n = d.nvimSlot();
+			return n.role === "nvim" && n.pane !== old.pane && !n.dead ? n : undefined;
+		});
+		assert.equal(fresh.session, a.id);
+		assert.equal(fresh.peer, a.pane);
+		assert.equal(d.tmux(["show", "-pv", "-t", a.pane, "@pi_fleet_peer"]), fresh.pane);
+		await waitFor("the old nvim pane killed", () => !d.panes().some((p) => p.pane === old.pane));
+	} finally {
+		d.close();
+	}
+});
+
 test("a pi exiting 0 leaves the pool and the slot falls back to the holder; a dead list respawns", { skip: skipTmux, timeout: 90_000 }, async () => {
 	const d = new Deck();
 	try {

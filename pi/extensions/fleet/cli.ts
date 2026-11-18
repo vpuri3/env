@@ -527,6 +527,8 @@ export async function closePeerNvim(pane: string, env: NodeJS.ProcessEnv = proce
 	if (!bin) return false;
 	const modified = await runNvim(bin, ["--server", peer.nvimSock, "--remote-expr", MODIFIED_EXPR]);
 	if (modified !== "0") return false;
+	// The deck's reconcile replaces an nvim quit by hand with a new one; not this one.
+	await tmux(["set-option", "-p", "-t", peer.pane, "@pi_fleet_closing", "1"], env).catch(() => "");
 	await runNvim(bin, ["--server", peer.nvimSock, "--remote-send", "<C-\\><C-N>:qa<CR>"]);
 	return true;
 }

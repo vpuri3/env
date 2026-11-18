@@ -461,6 +461,8 @@ window in the user's tmux and no `fleet` session.
    cwd = session cwd. Rows without a live deck session (closed, subagent, outside, remote) show
    the preview/pager in the pi slot (as §6) and a second holder (`@pi_fleet_role=nvim-holder`,
    blank/dim card) in the nvim slot. The `@pi_fleet_shown` pi↔nvim toggle is gone.
+   Quitting the shown nvim by hand (`:qa`, exit 0) starts a new one for the same pi in the slot;
+   an nvim that crashed, or that its exiting pi closed (`@pi_fleet_closing`), gives way to the holder.
 4. **Navigation** (deck root table, `C-h/j/k/l`): move to the neighbouring pane in that
    direction when there is one, else pass the key through. Exceptions: in pi, `C-j`/`C-k`
    always pass through (newline / kill line) and `C-h` always goes to the list; in the list, `C-l`
