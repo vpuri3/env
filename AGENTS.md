@@ -30,11 +30,12 @@ docs and skills use placeholders (`mycluster`, `/project/me`).
 | `nvim/` | Neovim config; `nvconf` (terminal) vs `nvconf_vscode` (vscode-neovim) |
 | `vimrc`, `tmux.conf`, `emacs.conf` | symlinked dotfiles |
 | `vscode_settings.json`, `vscode_keybindings.json` | linked into Cursor and VS Code |
-| `pi/` | pi agent: extensions, prompt templates (`pi/prompts/`), keybindings, settings, pinned packages, subagent types (`pi/agents/`) |
+| `pi/` | pi agent: extensions, prompt templates (`pi/prompts/`), keybindings, settings, pinned packages, subagent types (`pi/agents/`), global orchestration rules (`pi/AGENTS.md`, linked to `~/.pi/agent/AGENTS.md`; `bin/agent-lane` makes the worktrees) |
 | `skills/` | agent skills, linked into `~/.agents/skills/` |
 | `docs/` | cheat sheets: `tmux.md`, `nvim.md`, `vscode.md` |
 | `tests/bootstrap_test.sh` | bootstraps throwaway homes and checks the result |
 | `tests/pi_fleet_test.sh` | runs the pi-fleet tests (`tests/pi-fleet/*.test.ts`, node's test runner) |
+| `tests/agent_lane_test.sh` | tests `bin/agent-lane` in a throwaway repository |
 
 ## Rules for `bootstrap.sh`
 

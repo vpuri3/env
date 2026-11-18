@@ -56,7 +56,7 @@ base_path="/usr/bin:/bin:/usr/sbin:/sbin"
 # (bootstrap and the checks never write a repo file in place), or a copy where cp -l is missing.
 template="$work/env-template"
 mkdir -p "$template"
-(cd "$repo" && tar --exclude=./.git --exclude='.bootstrap-test.*' -cf - .) | (cd "$template" && tar -xf -)
+(cd "$repo" && tar --exclude=./.git --exclude=./.worktrees --exclude='.bootstrap-test.*' -cf - .) | (cd "$template" && tar -xf -)
 git init -q "$template"
 
 new_home() {
@@ -185,6 +185,12 @@ deck_conf_loads() {
 }
 check "pi deck tmux config loads" deck_conf_loads "$home/env/pi/deck.tmux.conf"
 check "pi prompts linked into repo" [ "$(readlink "$home/.pi/agent/prompts")" = "$home/env/pi/prompts" ]
+check "pi global AGENTS.md linked into repo" [ "$(readlink "$home/.pi/agent/AGENTS.md")" = "$home/env/pi/AGENTS.md" ]
+check "scout agent matches repo" cmp -s "$home/env/pi/agents/scout.md" "$home/.pi/agent/subagent-manager/agents/scout.md"
+check "coder-low agent matches repo" cmp -s "$home/env/pi/agents/coder-low.md" "$home/.pi/agent/subagent-manager/agents/coder-low.md"
+check "coder-fast agent matches repo" cmp -s "$home/env/pi/agents/coder-fast.md" "$home/.pi/agent/subagent-manager/agents/coder-fast.md"
+check "lane worktrees not copied into test homes" is_absent "$home/env/.worktrees"
+check "agent-lane executable in ~/bin" is_exec_file "$home/bin/agent-lane"
 check "slurm-operator agent is a real file" is_real_file "$home/.pi/agent/subagent-manager/agents/slurm-operator.md"
 check "slurm-operator agent matches repo" cmp -s "$home/env/pi/agents/slurm-operator.md" "$home/.pi/agent/subagent-manager/agents/slurm-operator.md"
 check "pi settings.json is a real file" is_real_file "$home/.pi/agent/settings.json"

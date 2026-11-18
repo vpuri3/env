@@ -1,0 +1,152 @@
+#!/bin/bash
+# Git worktrees for parallel agent lanes: one worktree and branch per writer, so
+# coders running at the same time never share a working tree.
+#
+#   agent-lane new <lane> [base]   create <repo>/.worktrees/<lane> on branch lane/<lane>
+#                                  (base: HEAD of the checkout you run it from)
+#   agent-lane path <lane>         print the lane's directory
+#   agent-lane list                lanes with commits ahead/behind and dirty state
+#   agent-lane merge <lane>        rebase the lane onto this checkout's branch and
+#                                  fast-forward that branch to it (one lane at a time)
+#   agent-lane rm [-f] <lane>      remove the worktree; delete the branch if merged
+#
+# "This checkout" is the worktree you run the command in: the main checkout, or a
+# lane that has its own sub-lanes (a lead coder fanning out to workers). All lanes,
+# sub-lanes too, live in the main checkout's .worktrees/ (~/env/.worktrees/<lane>);
+# `new` adds /.worktrees/ to .git/info/exclude, so git status, rg and fd skip them
+# without a .gitignore change. Untracked files (venvs, node_modules, local config)
+# are not copied into a new lane.
+
+set -euo pipefail
+
+die() { echo "agent-lane: $*" >&2; exit 1; }
+
+usage() {
+    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+# The main checkout: parent of the shared git dir (works from inside a lane too).
+main_root() {
+    local common
+    common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) ||
+        die "not inside a git repository"
+    [ "$(basename "$common")" = .git ] || die "unsupported git layout: $common"
+    dirname "$common"
+}
+
+# The checkout the command runs in (main checkout or a lane).
+here() { git rev-parse --show-toplevel 2>/dev/null || die "not inside a git work tree"; }
+
+lanes_root() { echo "$(main_root)/.worktrees"; }
+
+check_name() {
+    case "$1" in
+        "" | *[!A-Za-z0-9._-]* | .*) die "lane names use letters, digits, '.', '_', '-': '$1'" ;;
+    esac
+}
+
+# Keep .worktrees/ out of git status (and rg/fd, which read the exclude file)
+# without touching the repository's tracked .gitignore.
+exclude_lanes() {
+    local exclude
+    exclude="$(git rev-parse --path-format=absolute --git-common-dir)/info/exclude"
+    mkdir -p "$(dirname "$exclude")"
+    grep -qxF '/.worktrees/' "$exclude" 2>/dev/null || printf '/.worktrees/\n' >> "$exclude"
+}
+
+cmd_new() {
+    local lane="${1:-}" base="${2:-HEAD}" root dir
+    check_name "$lane"
+    root=$(main_root)
+    dir="$(lanes_root)/$lane"
+    [ ! -e "$dir" ] || die "$dir already exists"
+    git -C "$root" rev-parse --verify --quiet "refs/heads/lane/$lane" >/dev/null &&
+        die "branch lane/$lane already exists (agent-lane rm $lane, or pick another name)"
+    base=$(git rev-parse --verify --quiet "$base^{commit}") || die "unknown base '${2:-HEAD}'"
+    exclude_lanes
+    mkdir -p "$(lanes_root)"
+    git -C "$root" worktree add --quiet -b "lane/$lane" "$dir" "$base"
+    echo "$dir"
+}
+
+cmd_path() {
+    local lane="${1:-}" dir
+    check_name "$lane"
+    dir="$(lanes_root)/$lane"
+    [ -d "$dir" ] || die "no lane '$lane' ($dir)"
+    echo "$dir"
+}
+
+cmd_list() {
+    local lanes target line dir lane ahead behind dirty
+    lanes=$(lanes_root)
+    target=$(git symbolic-ref --quiet --short HEAD || echo HEAD)
+    git worktree list --porcelain | while IFS= read -r line; do
+        case "$line" in
+            "worktree $lanes/"*)
+                dir=${line#worktree }
+                lane=${dir#"$lanes/"}
+                read -r behind ahead < <(git -C "$dir" rev-list --left-right --count "$target...HEAD")
+                dirty=$([ -n "$(git -C "$dir" status --porcelain)" ] && echo " dirty" || true)
+                printf '%-28s +%s -%s vs %s%s  %s\n' "$lane" "$ahead" "$behind" "$target" "$dirty" "$dir"
+                ;;
+        esac
+    done
+}
+
+cmd_merge() {
+    local lane="${1:-}" into dir target
+    check_name "$lane"
+    into=$(here)
+    dir=$(cmd_path "$lane")
+    [ "$into" != "$dir" ] || die "run merge from the checkout to merge into, not from the lane"
+    target=$(git -C "$into" symbolic-ref --quiet --short HEAD) ||
+        die "$into is on a detached HEAD"
+    [ -z "$(git -C "$dir" status --porcelain --untracked-files=no)" ] ||
+        die "lane '$lane' has uncommitted changes; commit them first"
+    if ! git -C "$dir" rebase --quiet "$target"; then
+        die "rebase of lane/$lane onto $target stopped on conflicts; resolve them in $dir (git rebase --continue), then rerun"
+    fi
+    # Refuses (and changes nothing) if uncommitted changes in this checkout
+    # touch the same files.
+    git -C "$into" merge --quiet --ff-only "lane/$lane"
+    echo "merged lane/$lane into $target at $(git -C "$into" rev-parse --short HEAD)"
+}
+
+cmd_rm() {
+    local force=0 lane root dir
+    if [ "${1:-}" = -f ]; then force=1; shift; fi
+    lane="${1:-}"
+    check_name "$lane"
+    root=$(main_root)
+    dir="$(lanes_root)/$lane"
+    if [ -d "$dir" ]; then
+        if [ "$force" = 1 ]; then
+            git -C "$root" worktree remove --force "$dir"
+        else
+            git -C "$root" worktree remove "$dir" ||
+                die "lane '$lane' has changes; commit them or use agent-lane rm -f $lane"
+        fi
+    fi
+    if git -C "$root" rev-parse --verify --quiet "refs/heads/lane/$lane" >/dev/null; then
+        if [ "$force" = 1 ]; then
+            git -C "$root" branch --quiet -D "lane/$lane"
+        elif ! git merge-base --is-ancestor "lane/$lane" HEAD 2>/dev/null ||
+            ! git -C "$root" branch --quiet -D "lane/$lane"; then
+            echo "agent-lane: kept unmerged branch lane/$lane (delete with agent-lane rm -f $lane)" >&2
+        fi
+    fi
+    rmdir "$(lanes_root)" 2>/dev/null || true
+}
+
+cmd="${1:-}"
+[ "$#" -gt 0 ] && shift
+case "$cmd" in
+    new) cmd_new "$@" ;;
+    path) cmd_path "$@" ;;
+    list | ls) cmd_list ;;
+    merge) cmd_merge "$@" ;;
+    rm) cmd_rm "$@" ;;
+    -h | --help | help | "") usage ;;
+    *) die "unknown command '$cmd' (see agent-lane --help)" ;;
+esac

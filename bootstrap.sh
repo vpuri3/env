@@ -827,6 +827,8 @@ configure_pi() {
     link_file "$ENV_REPO_DIR/pi/keybindings.json" "$agent_dir/keybindings.json"
     link_file "$ENV_REPO_DIR/pi/extensions" "$agent_dir/extensions"
     link_file "$ENV_REPO_DIR/pi/prompts" "$agent_dir/prompts"
+    # Global instructions pi loads in every project (subagent orchestration rules).
+    link_file "$ENV_REPO_DIR/pi/AGENTS.md" "$agent_dir/AGENTS.md"
     # Subagent types for pi-subagent-manager: full definitions (*.md) and settings
     # overlays (*.yml, e.g. thinkingLevel). It refuses symlinked agent files,
     # so copy them; a copy that differs from the repo is backed up and replaced.
