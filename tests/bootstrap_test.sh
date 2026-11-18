@@ -4,12 +4,30 @@
 #
 #   SHELL=/bin/zsh tests/bootstrap_test.sh
 #   SHELL=/bin/bash tests/bootstrap_test.sh
+#   SHELL=/bin/bash tests/bootstrap_test.sh -q    only FAIL lines and the summary
 
 set -euo pipefail
+
+quiet=
+case "${1:-}" in
+    -q | --quiet) quiet=1 ;;
+    "") ;;
+    *)
+        echo "usage: SHELL=/bin/bash|/bin/zsh $0 [-q]" >&2
+        exit 2
+        ;;
+esac
+started=$(date +%s)
 
 repo=$(cd "$(dirname "$0")/.." && pwd -P)
 shell_name=$(basename "$SHELL")
 os=$(uname -s)
+
+if [ "$os" = Linux ] && [ "$shell_name" = zsh ]; then
+    # bootstrap refuses Linux + zsh; the bash run checks that refusal.
+    echo "skipped: Linux + zsh is not supported (SHELL=/bin/bash $0 checks the refusal)"
+    exit 0
+fi
 
 # Test homes live under the checkout, not /tmp: bootstrap rejects PY_WD on
 # temporary storage.
@@ -17,7 +35,7 @@ work=$(mktemp -d "$repo/.bootstrap-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 failures=0
-pass() { printf 'ok   %s\n' "$*"; }
+pass() { [ -n "$quiet" ] || printf 'ok   %s\n' "$*"; }
 fail() { printf 'FAIL %s\n' "$*"; failures=$((failures + 1)); }
 check() {
     local name="$1"
@@ -32,10 +50,23 @@ no_rc_files() { is_absent "$1/.bashrc" && is_absent "$1/.zshrc" && is_absent "$1
 
 base_path="/usr/bin:/bin:/usr/sbin:/sbin"
 
+# Every home gets its own ~/env: the checkout as it is (uncommitted and untracked files included),
+# without its .git (tens of MB in a main checkout, a pointer file in a worktree) but in a fresh
+# repository, so bootstrap sets up the remotes there. Copied once; homes get hard links to it
+# (bootstrap and the checks never write a repo file in place), or a copy where cp -l is missing.
+template="$work/env-template"
+mkdir -p "$template"
+(cd "$repo" && tar --exclude=./.git --exclude='.bootstrap-test.*' -cf - .) | (cd "$template" && tar -xf -)
+git init -q "$template"
+
 new_home() {
     local home="$work/$1"
-    mkdir -p "$home/env"
-    (cd "$repo" && tar --exclude='.bootstrap-test.*' -cf - .) | (cd "$home/env" && tar -xf -)
+    mkdir -p "$home"
+    if ! cp -al "$template" "$home/env" 2>/dev/null; then
+        rm -rf "$home/env"
+        mkdir -p "$home/env"
+        (cd "$template" && tar -cf - .) | (cd "$home/env" && tar -xf -)
+    fi
     printf '%s\n' "$home"
 }
 
@@ -93,7 +124,7 @@ noninteractive_probe() {
     fi
 }
 
-echo "# $os + $shell_name"
+[ -n "$quiet" ] || echo "# $os + $shell_name"
 
 ###
 ### personal machine: PY_WD inside $HOME
@@ -114,6 +145,7 @@ printf '{}\n' > "$cursor_user/settings.json"
 mkdir -p "$home/.ssh"
 printf 'Host mybox\n    ForwardAgent yes\n' > "$home/.ssh/config"
 printf 'Host cl1\n    HostName cl-login-01.example.org\nHost cl*\n    ForwardAgent yes\n' > "$home/.ssh/config.local"
+chmod 600 "$home/.ssh/config.local" # ssh ignores a group-writable one (umask 002)
 # A skill link left by an older checkout (the skill was renamed); a foreign one stays.
 mkdir -p "$home/.agents/skills" "$home/other-skill"
 ln -s "$home/env/skills/leavemealone" "$home/.agents/skills/leavemealone"
@@ -355,9 +387,10 @@ EOF
     check "dangling legacy ~/.condarc removed" is_absent "$home/.condarc"
 fi
 
-echo
+elapsed="$(($(date +%s) - started)) s"
+[ -n "$quiet" ] || echo
 if [ "$failures" -gt 0 ]; then
-    echo "$failures check(s) failed"
+    echo "$failures check(s) failed ($os + $shell_name, $elapsed)"
     exit 1
 fi
-echo "all checks passed"
+echo "all checks passed ($os + $shell_name, $elapsed)"
