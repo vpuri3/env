@@ -168,7 +168,7 @@ finish.
 | `!` `@` `#` `&` / `0` | only running / waiting / idle / error; `0` shows all |
 | `?` | help |
 | `C-c` | detach (as `prefix d`; the deck keeps running) |
-| `C-d` | kill every deck session and the deck (asks first: `y`/`Enter` kill, `n`/`Esc` cancel; nvims with unsaved changes keep it up and are named) |
+| `C-d` | kill every deck session and the deck (asks first: `y`/`Enter`/`C-d` kill, `n`/`Esc` cancel; nvims with unsaved changes keep it up and are named) |
 
 **vim-mode** (`pi/extensions/vim-mode.ts`, `Esc` enters NORMAL mode). Leader
 keys (`,`) work in NORMAL mode only. The mode line shows `,…` while one is

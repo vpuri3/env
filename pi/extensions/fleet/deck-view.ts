@@ -434,7 +434,7 @@ const HELP_LINES = [
 	"  i  /              search (INSERT)    Esc  clear the search",
 	"  ! @ # &   0       only working / waiting / idle / error;  all",
 	"  C-c (prefix d)    detach    C-j  the nvim below    C-l  the pi",
-	"  C-d               kill every deck session and the deck (asks first)",
+	"  C-d               kill every deck session and the deck (asks; C-d again or y)",
 	"  panes: C-h/C-j/C-k/C-l move: list, nvim, shell down the left, pi right",
 	"         (pi: C-h back here)   prefix e  pi ↔ nvim   prefix z  zoom",
 	"INSERT",
@@ -1358,7 +1358,8 @@ export class DeckView implements Component {
 
 	private handleConfirmAll(data: string): void {
 		const ch = printable(data);
-		if (ch === "y" || matchesKey(data, "enter")) {
+		// C-d again confirms, so C-d C-d kills like y.
+		if (ch === "y" || matchesKey(data, "enter") || matchesKey(data, "ctrl+d")) {
 			this.confirmAll = undefined;
 			this.killingAll = true;
 			this.flash("killing every deck session and the deck…");
@@ -1583,7 +1584,7 @@ export class DeckView implements Component {
 
 	private hintLine(width: number): string {
 		const style = this.opts.style;
-		if (this.confirmAll) return fit(` ${style.bold(style.fg("warning", "y/⏎ kill · n/Esc cancel"))}`, width);
+		if (this.confirmAll) return fit(` ${style.bold(style.fg("warning", "y/⏎/C-d kill · n/Esc cancel"))}`, width);
 		if (this.confirm) {
 			const scancel = this.confirmJobs(this.confirm).length ? " · s kill+scancel" : "";
 			return fit(` ${style.bold(style.fg("warning", `y/⏎ kill${scancel} · n/Esc cancel`))}`, width);

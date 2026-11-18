@@ -265,7 +265,7 @@ popup (direct attach) the row flashes "runs in your tmux (window N)".
 | | `?` | help (`q` or `Esc` closes it) |
 | | `C-c` | detach (close the popup / back to the shell); `q` is no detach (§15) |
 | | `r` | refresh: sort the list again with the rules above (§17: otherwise the order is fixed); the selection stays on its row |
-| | `C-d` | kill every deck session and the deck: inline confirm (`y`/Enter kill · `n`/Esc cancel), then `killDeck` (also in INSERT) |
+| | `C-d` | kill every deck session and the deck: inline confirm (`y`/Enter/`C-d` kill · `n`/Esc cancel), then `killDeck` (also in INSERT) |
 | INSERT | letters | fuzzy terms (space-separated, all must match name/repo/cwd/last message); list filters live |
 | | `C-n`/`C-p`, ↑/↓ | move while typing; `Enter` = NORMAL `Enter` |
 | | `Esc` | back to NORMAL (query kept; a second `Esc` in NORMAL clears it) |

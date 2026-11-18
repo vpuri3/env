@@ -60,7 +60,7 @@ inside tmux in a popup). These keys run `~/env/bin/pi-fleet` and
 | `prefix z` | zoom / unzoom the pane |
 | `prefix h` `j` `k` `l` (or `prefix Ctrl+h` …) | send a literal `Ctrl+h` … to the program |
 | `prefix d`, `prefix g` (or `Ctrl+c` in the list) | detach (closes the popup; the deck keeps running) |
-| `Ctrl+d` in the list | kill every deck session and the deck (asks first) |
+| `Ctrl+d` in the list | kill every deck session and the deck (asks first; `Ctrl+d` again or `y` confirms) |
 | `prefix [` | copy mode |
 
 - **Bell.** A pi that stops (waiting ◐, question ?, error ✕) rings the bell.

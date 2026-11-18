@@ -701,7 +701,7 @@ test("Enter / C-l: deck row focuses the slot; outside row jumps; closed resumes;
 	assert.equal(of("detach").length, 1);
 });
 
-test("C-d: confirm killing every deck session and the deck (NORMAL and INSERT); n cancels, y kills; nvims with unsaved changes are named", { skip }, async () => {
+test("C-d: confirm killing every deck session and the deck (NORMAL and INSERT); n cancels, y or C-d kills; nvims with unsaved changes are named", { skip }, async () => {
 	const { view, clock, ops, calls, of } = makeView();
 	const killDeck: { killedServer: boolean; nvims: { session: string; cwd: string }[] }[] = [];
 	let reply = { killedServer: true, nvims: [] as { session: string; cwd: string }[] };
@@ -716,7 +716,7 @@ test("C-d: confirm killing every deck session and the deck (NORMAL and INSERT); 
 	press(view, "\x04");
 	let lines = screen(view, 90);
 	assert.match(lines.at(-5)!, /Kill all 2 deck sessions and the deck\?/);
-	assert.match(lines.at(-1)!, /y\/⏎ kill · n\/Esc cancel/);
+	assert.match(lines.at(-1)!, /y\/⏎\/C-d kill · n\/Esc cancel/);
 	press(view, "j");
 	assert.match(screen(view, 90).at(-5)!, /Kill all 2 deck sessions/, "other keys keep the question");
 	press(view, "n");
@@ -736,6 +736,10 @@ test("C-d: confirm killing every deck session and the deck (NORMAL and INSERT); 
 	press(view, KEY.esc, "\x04", KEY.enter);
 	await clock.advance(10);
 	assert.equal(of("killDeck").length, 2);
+	// C-d C-d kills too.
+	press(view, "\x04", "\x04");
+	await clock.advance(10);
+	assert.equal(of("killDeck").length, 3);
 	lines = screen(view, 140);
 	assert.match(lines.at(-1)!, /unsaved changes in nvim \(physicsnemo sweep, deadbeef\): save and quit them \(:wqa\), then C-d again/);
 	assert.equal(of("detach").length, 0);
