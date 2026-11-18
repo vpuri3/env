@@ -119,6 +119,32 @@ test("backfill: titles the newest closed unnamed mains only, up to the limit", a
 	}
 });
 
+test("backfill --retitle: rewrites our titles and unnamed sessions, never a user's name", async () => {
+	const f = fixture();
+	try {
+		const ours = f.write("ours", {
+			entries: [userMsg("about ours"), agentMsg("ok"), { type: "session_info", name: "Old" }, { type: "custom", customType: TITLE_ENTRY, data: { entryId: "PLACEHOLDER" } }],
+		});
+		// Point the marker at the session_info entry's real id.
+		const lines = readFileSync(ours.path, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+		lines[4].data.entryId = lines[3].id;
+		writeFileSync(ours.path, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+		utimesSync(ours.path, (f.now - HOUR) / 1000, (f.now - HOUR) / 1000);
+		const unnamed = f.write("unnamed");
+		const named = f.write("named", { entries: [userMsg("about named"), { type: "session_info", name: "mine" }] });
+		const fm = fakeModels();
+		const plain: string[] = [];
+		await backfill({}, { models: fm.models, write: (p) => plain.push(p) }, f.env);
+		assert.deepEqual(plain, [unnamed.path]);
+		const writes: [string, string][] = [];
+		await backfill({ retitle: true }, { models: fm.models, write: (p, t) => writes.push([p, t]) }, f.env);
+		assert.deepEqual(writes.sort(), [[ours.path, "Title for ours"], [unnamed.path, "Title for unnamed"]].sort());
+		assert.ok(!writes.some(([p]) => p === named.path));
+	} finally {
+		f.cleanup();
+	}
+});
+
 test("backfill: model failures are reported, not written", async () => {
 	const f = fixture();
 	try {

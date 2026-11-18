@@ -1,6 +1,8 @@
 /**
- * `pi-fleet title-backfill [--limit N] [--dry-run] [--model PROVIDER/ID]`: give recent closed
- * sessions without a name an LLM title, as the fleet extension (title.ts) does for live ones.
+ * `pi-fleet title-backfill [--limit N] [--retitle] [--dry-run] [--model PROVIDER/ID]`: give recent
+ * closed sessions without a name an LLM title, as the fleet extension (title.ts) does for live ones.
+ * With --retitle, sessions whose current name is one of our titles are titled again (e.g. after
+ * the title prompt changed); names the user set are still never touched.
  *
  * Candidates: main sessions (not subagents) from the session index, newest first, whose file
  * has no `session_info` entry at all (a name the user set, or cleared, is never touched), has a
@@ -79,6 +81,8 @@ export interface BackfillOptions {
 	dryRun?: boolean;
 	model?: string;
 	minAgeMs?: number;
+	/** Also rewrite names that are ours (the latest session_info is followed by our marker). */
+	retitle?: boolean;
 }
 
 export interface BackfillResult {
@@ -100,7 +104,7 @@ export async function backfill<M extends ModelLike>(
 	const result: BackfillResult = { titled: [], failed: [] };
 	const files = new SessionIndex(env)
 		.scan()
-		.filter((e) => !e.subagent && !e.name)
+		.filter((e) => !e.subagent && (opts.retitle || !e.name))
 		.sort((a, b) => b.mtimeMs - a.mtimeMs);
 	let picked = 0;
 	for (const entry of files) {
@@ -115,7 +119,8 @@ export async function backfill<M extends ModelLike>(
 		}
 		const entries = parseJsonl(text);
 		const state = titleState(entries);
-		if (entries.some((e) => e.type === "session_info") || state.titles || userTurns(entries) < 1) continue;
+		if (userTurns(entries) < 1) continue;
+		if (opts.retitle ? !state.ours : entries.some((e) => e.type === "session_info") || state.titles) continue;
 		const branch = branchOf(entries);
 		const input = titleInput(branch);
 		if (!input) continue;

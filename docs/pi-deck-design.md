@@ -191,7 +191,7 @@ Dark grey is for borders and separators only. The legend sits on the search box'
 
 Built from `sessions-view.ts` (rows, grouping, ordering, colors, `humanizeSince`, the inline
 kill confirm, `fleetSource`, `TranscriptTails`), minus the preview pane, joins and timers.
-Telescope layout: list on top, then the selected row's detail line, then the **search bar** in a
+Telescope layout: list on top, then the selected row's detail line (state, time, cost, cwd; not the name, which the row already shows), then the **search bar** in a
 box (rounded border, light grey in NORMAL, bold cyan in INSERT; mode badge and match count on the
 top border, the query inside, the color legend on the bottom border), then key hints.
 
@@ -559,5 +559,5 @@ click or the list's own Enter/C-l, clears the mark). pi side: fleet/agents-view.
    and keeps the selection on its row. Searches and filters show the fixed order.
 5. **Rows span the pane.** The subagent-counts column is as wide as the widest counts (aligned
    across rows) and ends at the pane's right edge; the name column takes the rest (in a narrow
-   list the name keeps ≥ 16–30 columns and the counts are cut). Session titles ask for about
-   6–12 words (clamped to 16 words / 120 chars).
+   list the name keeps ≥ 16–30 columns and the counts are cut). Session titles ask for
+   10–16 words (clamped to 16 words / 160 chars).

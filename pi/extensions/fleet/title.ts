@@ -2,7 +2,7 @@
  * fleet/title: an LLM-written session name ("Fix deck kill confirm"), so the deck list and
  * /resume show what a session is about instead of its first prompt.
  *
- * After the first settled run of a main session with no name, a cheap model writes a 3–6 word
+ * After the first settled run of a main session with no name, a cheap model writes a 10–16 word
  * title from the first user messages plus a short tail of the conversation (a few KB), and it
  * becomes the pi session name (pi.setSessionName: a `session_info` entry, as `/name` writes).
  * Once the session has REFRESH_TURNS user messages the title is rewritten once more. So at most
@@ -36,14 +36,14 @@ export const REFRESH_TURNS = 6;
 export const TIMEOUT_MS = 15_000;
 /** Failed attempts per session process before giving up. */
 export const MAX_TRIES = 3;
-/** Titles are clamped to this many words / chars (the prompt asks for about 6 to 12 words). */
+/** Titles are clamped to this many words / chars (the prompt asks for 10 to 16 words). */
 export const TITLE_MAX_WORDS = 16;
-export const TITLE_MAX_CHARS = 120;
+export const TITLE_MAX_CHARS = 160;
 /** Marker in the system prompt (tests' faux provider answers title requests by it). */
 export const TITLE_MARKER = "pi-fleet session title";
 
 const SYSTEM_PROMPT = `You write the ${TITLE_MARKER} for a conversation between a user and a coding agent.
-Reply with the title only: about 6 to 12 words naming what the session is about (the task, not the agent's actions), sentence case, no quotes, no trailing punctuation.`;
+Reply with the title only: 10 to 16 words (never more than 16) naming what the session is about (the task, not the agent's actions), sentence case, no quotes, no trailing punctuation.`;
 
 const CHEAP = /haiku|flash|mini|nano|lite/i;
 const NOT_CHAT = /image|audio|tts|realtime|embed|transcribe|search|computer-use|robotics|live/i;

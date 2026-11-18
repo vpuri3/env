@@ -1650,7 +1650,8 @@ export class DeckView implements Component {
 		}
 		const s = row.status;
 		const since = s ? Date.parse(s.since) || row.at : row.at;
-		const parts = [style.bold(oneLine(row.name)), toned(rowTone(row), `${glyphChar(row)} ${stateWord(row)}`, style)];
+		// The name is already in the selected row above: only the facts the row lacks.
+		const parts = [toned(rowTone(row), `${glyphChar(row)} ${stateWord(row)}`, style)];
 		if (row.state === "running") {
 			const sub = s?.sub ?? "";
 			parts.push(sub.startsWith("tool:") ? `tool ${oneLine(sub.slice(5))}` : sub.startsWith("bg") ? "subagents in the background" : "thinking");

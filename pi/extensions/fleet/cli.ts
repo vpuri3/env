@@ -693,8 +693,9 @@ const HELP = `usage: pi-fleet <command>
   deck-reload [--debounce MS]        re-read deck.tmux.conf and restart the deck's list (new code)
   pair --deck PANE [--show] [--json] the deck pi's nvim (created on first use); --show shows and focuses it
   deck                               the deck's list process (run by the deck server)
-  title-backfill [--limit N] [--dry-run] [--model PROVIDER/ID]
-                                     LLM titles for the N (20) newest closed sessions without a name
+  title-backfill [--limit N] [--retitle] [--dry-run] [--model PROVIDER/ID]
+                                     LLM titles for the N (20) newest closed sessions without a name;
+                                     --retitle also rewrites titles pi-fleet wrote (not /name ones)
 `;
 
 // ---------------------------------------------------------------- deck (deck.ts; docs/pi-deck-design.md)
@@ -954,7 +955,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
 			process.exit(await deck.runDeckStub(env));
 		}
 		case "title-backfill": {
-			const { values } = parse({ limit: { type: "string" }, "dry-run": { type: "boolean" }, model: { type: "string" } });
+			const { values } = parse({ limit: { type: "string" }, "dry-run": { type: "boolean" }, retitle: { type: "boolean" }, model: { type: "string" } });
 			const limit = values.limit === undefined ? undefined : Number(values.limit);
 			if (limit !== undefined && !(Number.isInteger(limit) && limit > 0)) throw new Error("title-backfill: --limit must be a positive integer");
 			const packages = locatePiPackages(env);
@@ -962,7 +963,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
 			await usePiPackages(packages);
 			const tb = await import("./title-backfill.ts");
 			const log = (line: string) => process.stdout.write(`${line}\n`);
-			const r = await tb.backfill({ limit, dryRun: !!values["dry-run"], model: values.model as string | undefined }, await tb.piDeps(log), env);
+			const r = await tb.backfill({ limit, dryRun: !!values["dry-run"], retitle: !!values.retitle, model: values.model as string | undefined }, await tb.piDeps(log), env);
 			if (!values["dry-run"]) process.stdout.write(`titled ${r.titled.length}, failed ${r.failed.length}\n`);
 			return r.failed.length && !r.titled.length ? 1 : 0;
 		}

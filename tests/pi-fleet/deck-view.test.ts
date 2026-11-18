@@ -261,8 +261,8 @@ test("layout: repo groups with their closed sessions after the live ones, then o
 		`╰─ ○ active  ● working  ◐ done  ? needs input  ✕ error  » auto ${"─".repeat(8)}╯`,
 		" j/k move  ⏎/C-l open  a new  d kill  i / search  ? help  C-c detach",
 	]);
-	assert.equal(lines[15], " physicsnemo sweep · ● working · tool bash · for 4m · $3.41 · subagents…");
-	assert.match(screen(view, 140)[15]!, /^ physicsnemo sweep · ● working · tool bash · for 4m · \$3\.41 · subagents 2w 1◐ 3✓ · \/.*\/work\/alpha$/);
+	assert.match(lines[15]!, /^ ● working · tool bash · for 4m · \$3\.41 · subagents 2w 1◐ 3✓ · \/.*…$/);
+	assert.match(screen(view, 140)[15]!, /^ ● working · tool bash · for 4m · \$3\.41 · subagents 2w 1◐ 3✓ · \/.*\/work\/alpha$/);
 });
 
 test("stable order: status changes keep rows in place; new sessions go last in their group; a closed one stays; r sorts again and keeps the selection", { skip }, async () => {
@@ -405,7 +405,8 @@ test("modes: i and / enter INSERT; fuzzy terms filter live; Esc back to NORMAL k
 	assert.deepEqual(of("open")[0]![1], { session: fx.files.old, focus: true });
 	// Status filters: & errors only, 0 all.
 	press(view, KEY.esc, "&");
-	assert.deepEqual(screen(view).filter((l) => /^▌?.? [?✕◐●○⇢⟳] /.test(l)).length, 1);
+	// Rows only (two-column prefix): the status line starts with the glyph too.
+	assert.deepEqual(screen(view).filter((l) => /^(▌›| {2}) [?✕◐●○⇢⟳] /.test(l)).length, 1);
 	press(view, "0");
 	assert.match(screen(view)[16]!, / 9\/9 ─╮$/);
 });

@@ -135,13 +135,14 @@ sessions that need you (`π 1? 2◐`).
 
 **Session titles.** After the first run of an unnamed session, the fleet
 extension asks a cheap model (the cheapest haiku/flash/mini/nano/lite model of
-the session's provider, else the session's model) for a 6–12 word title and
+the session's provider, else the session's model) for a 10–16 word title and
 sets it as the session name, which the deck and `/resume` show.
 It is rewritten once more after 6 user messages. A name you give with `/name`
 or `--name` is never replaced. `PI_FLEET_TITLE_MODEL=provider/id` picks the
 model, `PI_FLEET_TITLE=off` turns titles off (`on` also titles RPC-mode pis),
 `PI_FLEET_TITLE_DEBUG=FILE` logs failures. `pi-fleet title-backfill [--limit N]
-[--dry-run]` titles the N (default 20) newest closed sessions without a name.
+[--retitle] [--dry-run]` titles the N (default 20) newest closed sessions without
+a name; `--retitle` also rewrites the titles it wrote before (never a `/name`).
 
 Outside tmux, pi keeps its own `/new` and `/resume`, and `/view` falls back to
 `nvim -R`. **Don't `/reload` while subagents are running.** It reloads every

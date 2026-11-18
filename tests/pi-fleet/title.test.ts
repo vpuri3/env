@@ -99,9 +99,9 @@ test("cleanTitle: one short line without quotes, prefixes or trailing punctuatio
 	assert.equal(cleanTitle("Fix the deck's subagent rows so a live agent view opens in the session's pi"), "Fix the deck's subagent rows so a live agent view opens in the session's pi");
 	const words = Array.from({ length: 20 }, (_, i) => `w${i + 1}`).join(" ");
 	assert.equal(cleanTitle(words), Array.from({ length: 16 }, (_, i) => `w${i + 1}`).join(" "), "≤ 16 words");
-	const long = `${"abcdefghij ".repeat(14)}end`;
+	const long = `${"abcdefghijklmn ".repeat(14)}end`;
 	const cut = cleanTitle(long)!;
-	assert.ok(cut.length <= 120 && !cut.endsWith(" ") && cut.split(" ").length <= 16, cut);
+	assert.ok(cut.length <= 160 && !cut.endsWith(" ") && cut.split(" ").length <= 16, cut);
 	assert.equal(cleanTitle("  \n"), undefined);
 });
 
