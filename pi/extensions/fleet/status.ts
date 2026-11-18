@@ -26,7 +26,7 @@
  * deletes it. A `.seen` left over from an earlier, already acknowledged run is deleted when the
  * next run settles. The control socket (§10) deliberately has no `seen` command.
  *
- * Readers (bar, ls, dashboard) derive `crashed`/`remote` with liveness().
+ * Readers (ls, the deck list) derive `crashed`/`remote` with liveness().
  *
  * Portions adapted from agent-deck (github.com/asheshgoplani/agent-deck, MIT, commit 80494e5):
  * the event→state mapping and per-run id guard (internal/session/assets/pi/agent-deck.ts) and

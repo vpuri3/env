@@ -1,4 +1,4 @@
-// A fixture pi sessions dir + status dir for the sessions-view and dashboard tests (phase 4).
+// A fixture pi sessions dir + status dir for the sessions-view and deck list tests.
 // Everything lives in one temp dir; env points PI_CODING_AGENT_SESSION_DIR, PI_FLEET_STATE_DIR,
 // PI_FLEET_CACHE_DIR and PI_FLEET_RUNTIME_DIR there and drops TMUX, so nothing touches the
 // user's sessions, status files or tmux server.

@@ -181,6 +181,10 @@ export class DeckRig {
 			});
 	}
 	slot(): DeckPaneRow | undefined {
+		return this.panes().find((p) => p.where === "deck:deck.2");
+	}
+	/** The nvim slot (below the list). */
+	nvimSlot(): DeckPaneRow | undefined {
 		return this.panes().find((p) => p.where === "deck:deck.1");
 	}
 	activeIndex(): string {
@@ -275,7 +279,7 @@ export class DeckRig {
 			rmSync(join(socketDir, name), { force: true });
 		}
 		this.servers.clear();
-		rmSync(this.root, { recursive: true, force: true });
+		rmSync(this.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	}
 }
 

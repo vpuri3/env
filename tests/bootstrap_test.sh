@@ -136,6 +136,21 @@ check "pi keybindings linked into repo" [ "$(readlink "$home/.pi/agent/keybindin
 check "pi extensions linked into repo" [ "$(readlink "$home/.pi/agent/extensions")" = "$home/env/pi/extensions" ]
 check "pi-fleet extension visible to pi" is_real_file "$home/.pi/agent/extensions/fleet/index.ts"
 check "pi-fleet CLI executable in ~/bin" is_exec_file "$home/bin/pi-fleet"
+check "pi deck attach executable in ~/bin" is_exec_file "$home/bin/pi-deck-attach"
+# The deck's own tmux config loads (throwaway server, never the user's or the real deck's).
+deck_conf_loads() {
+    local sock="envtest-deck-$$" ok=1
+    command -v tmux >/dev/null 2>&1 || return 0
+    if tmux -L "$sock" -f "$1" new-session -d -s t 'sleep 30' 2>/dev/null &&
+        [ "$(tmux -L "$sock" show -gv @deck_list_pct 2>/dev/null)" = 50 ] &&
+        [ "$(tmux -L "$sock" show -gv @deck_list_height_pct 2>/dev/null)" = 50 ]; then
+        ok=0
+    fi
+    tmux -L "$sock" kill-server 2>/dev/null || true
+    rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$sock"
+    return "$ok"
+}
+check "pi deck tmux config loads" deck_conf_loads "$home/env/pi/deck.tmux.conf"
 check "pi prompts linked into repo" [ "$(readlink "$home/.pi/agent/prompts")" = "$home/env/pi/prompts" ]
 check "slurm-operator agent is a real file" is_real_file "$home/.pi/agent/subagent-manager/agents/slurm-operator.md"
 check "slurm-operator agent matches repo" cmp -s "$home/env/pi/agents/slurm-operator.md" "$home/.pi/agent/subagent-manager/agents/slurm-operator.md"

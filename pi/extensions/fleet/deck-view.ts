@@ -1,8 +1,10 @@
 /**
- * pi-deck list (docs/pi-deck-design.md §6, phase 2): `pi-fleet deck`, the left pane of the deck
+ * pi-deck list (docs/pi-deck-design.md §6, §15): `pi-fleet deck`, the top-left pane of the deck
  * window. A telescope-like list of every pi session of this login node, grouped by repo; the
- * highlighted row's session is in the right slot (its real pi pane, swapped in by deck.ts), or,
- * for rows without a deck pane, a preview frame written into the preview holder's tty.
+ * highlighted row's session is in the slots (its real pi pane in the right half, its nvim below the
+ * list, swapped in by deck.ts; the nvim is created on the session's first show), or, for rows
+ * without a deck pane, a preview frame written into the preview holder's tty (and the nvim holder
+ * below the list).
  *
  * Layout (top to bottom): the list, the selected row's status line, the search bar in a box
  * (mode badge and `4/12` on its top border, the color legend on its bottom one), key hints.
@@ -13,7 +15,12 @@
  * shows every match, folded or not. Glyph, name and detail take their state's color (sessions-view
  * TONE_COLOR: active blue, working purple, done green, needs input orange, error red, closed grey).
  *
- * Right slot per row: a deck session → its pi (or its nvim, if that was shown last); a subagent
+ * Right slot per row: a deck session → its pi (its nvim in the nvim slot); a subagent of a deck
+ * session (§16) → that session's pi showing pi-subagent-manager's agent view of it: the list asks the
+ * pi over its control socket (`agents-view`, the pane marked @pi_fleet_agents_view, latest request
+ * wins), then swaps it in; Enter/C-l focus it; moving to another row sends `agents-close` while the
+ * mark is still there (focusing that pi clears it: deck.tmux.conf's after-select-pane hook); a refused
+ * view (reaped/unknown agent) falls back to the holder like below. Any other subagent
  * (Space expands; unfinished ones first, see orderThreads) → the tail of its transcript (registry.ts TranscriptTails), re-read on fs.watch of
  * its JSONL while selected; an outside session → a summary card plus one `capture-pane` taken on
  * highlight and on that session's status change (≤ 1/s); closed/crashed → a summary card, then the
@@ -23,7 +30,7 @@
  * frames, and moving to another row gives the holder its `sleep` back first (closePager).
  * Highlight changes are coalesced: the slot follows SWAP_COALESCE_MS after the last move, so a
  * key repeat is one swap. A session shown for ACK_MS while a client is attached is acknowledged
- * (`<id>.seen`, as `pi-fleet seen` did).
+ * (`<id>.seen`).
  *
  * Updates (DeckController): fs.watch on the status dir, debounced STATUS_DEBOUNCE_MS, re-reads only
  * the named files; LIVENESS_MS re-derives liveness (and relative times), RESCAN_MS re-scans the
@@ -39,7 +46,8 @@
  * less resumes); outside: close the popup and jump the outer client there via @deck_jump; subagent:
  * Enter its main, C-l its transcript; header: fold; `+N closed`: unfold) · Space subagents / fold · a new
  * session in the row's repo · d kill (inline: y or Enter kill · s kill + scancel · n or Esc no) · i or / INSERT · ! @ # & / 0
- * status filters · ? help · Esc clears the query · q detach. INSERT: letters are fuzzy terms
+ * status filters · ? help · Esc clears the query · C-c detach (as prefix d) · C-d kill every deck
+ * session and the deck (inline confirm; NORMAL and INSERT). INSERT: letters are fuzzy terms
  * (space-separated, all must match), C-n/C-p ↑/↓ move, Enter opens, Esc back to NORMAL.
  *
  * Runs as its own process (cli.ts registers pi-tui's resolve hook first), so process-level state
@@ -53,7 +61,7 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { isKeyRelease, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
-import { guardedSocket } from "./cli.ts";
+import { ctlSockPath, guardedSocket, readStatus } from "./cli.ts";
 import {
 	DeckOpenError,
 	defaultDeckHandler,
@@ -61,10 +69,12 @@ import {
 	deckSocketPath,
 	deckTmux,
 	ensureHolder,
+	ensureNvimHolder,
 	focusSlot,
-	livePeerIn,
+	killDeck,
 	sessionPiPane,
-	showPaneArgs,
+	showSessionDetail,
+	slotArgs,
 	startDeckList,
 	deckOpen,
 	type DeckList,
@@ -106,6 +116,7 @@ import {
 	printable,
 	rowDetail,
 	rowTone,
+	sendControl,
 	stateWord,
 	threadGlyph,
 	tilde,
@@ -302,6 +313,11 @@ function readJson(path: string): StatusFile | undefined {
 
 /** The slot: a deck session's pane, or the preview holder. */
 export type SlotTarget = { session: string } | { holder: true };
+/** What a row shows: a slot target, or (§16) a deck session's pi showing one of its subagents. */
+type ViewTarget = SlotTarget | { session: string; agent: string };
+function targetKey(t: ViewTarget): string {
+	return "agent" in t ? `a:${t.session}:${t.agent}` : "session" in t ? `s:${t.session}` : "h";
+}
 
 export interface DeckOps {
 	/** Every deck pane (read from tmux). */
@@ -320,6 +336,11 @@ export interface DeckOps {
 	jump(row: SessionRow): Promise<string | undefined>;
 	/** Detach the deck client (closes the popup). */
 	detach(): Promise<void>;
+	/**
+	 * C-d: deck.ts killDeck (as `pi-fleet kill-deck`, without --yes's force): every deck pi is asked to
+	 * quit, then the server goes (this list with it). Server left up: nvims with unsaved buffers, listed.
+	 */
+	killDeck(): Promise<{ killedServer: boolean; nvims: { session: string; cwd: string }[] }>;
 	/** A client is attached to the deck. */
 	attached(): Promise<boolean>;
 	ack(sessionId: string, runId: string): Promise<void>;
@@ -335,6 +356,13 @@ export interface DeckOps {
 	pagerExit(): Promise<{ token: string; status: number } | undefined>;
 	/** Focus the slot (whatever it shows). */
 	focusSlot(): Promise<void>;
+	/**
+	 * §16: ask a deck session's pi to show its subagent `path` (the package's LiveAgentView) and mark its
+	 * pane deck-opened (@pi_fleet_agents_view). ok:false: it cannot (reaped/unknown path, no tree, timeout).
+	 */
+	agentsView(sessionId: string, path: string): Promise<{ ok: boolean; error?: string }>;
+	/** §16: close what agentsView opened, unless the user focused that pi since (the mark is gone then). */
+	agentsClose(sessionId: string): Promise<void>;
 	/** fs.watch a file; returns the unwatch function. */
 	watchFile(file: string, onChange: () => void): () => void;
 	squeue(ids: string[]): Promise<SlurmJob[] | undefined>;
@@ -388,9 +416,10 @@ const HELP_LINES = [
 	"NORMAL",
 	"  j/k ↓/↑ C-n/C-p   move (the right pane follows)    PgUp/PgDn  page",
 	"  Enter, C-l        open: focus the session (outside: jump there;",
-	"                    subagent: Enter its main)",
+	"                    subagent of a deck session: its agent view, in its",
+	"                    pi; other subagents: Enter its main)",
 	"  Enter             closed/crashed: resume it as a pi in the deck",
-	"  C-l               closed/crashed/subagent: read its transcript in the",
+	"  C-l               closed/crashed/other subagent: read its transcript in the",
 	"                    right pane (less: j/k C-d/C-u C-f/C-b g/G / ? n/N;",
 	"                    q or C-h back here; Enter resumes it)",
 	"  Space             subagents of a session / fold a group",
@@ -399,7 +428,9 @@ const HELP_LINES = [
 	"  d                 kill: y/⏎ kill · s kill + scancel Slurm · n/Esc no",
 	"  i  /              search (INSERT)    Esc  clear the search",
 	"  ! @ # &   0       only working / waiting / idle / error;  all",
-	"  q  (prefix g)     detach    C-h (anywhere)  back to this list",
+	"  C-c (prefix d)    detach    C-j  the nvim below    C-l  the pi",
+	"  C-d               kill every deck session and the deck (asks first)",
+	"  panes: C-h/C-j/C-k/C-l move (pi: C-h back here)   prefix e  pi ↔ nvim",
 	"INSERT",
 	"  letters           fuzzy terms (all must match name, repo, cwd, message)",
 	"  C-n/C-p ↑/↓       move    Enter  open    Esc  back to NORMAL",
@@ -476,6 +507,9 @@ export class DeckView implements Component {
 	private message: { text: string; until: number } | undefined;
 	private messageTimer: unknown;
 	private confirm: KillConfirm | undefined;
+	/** C-d: the "kill everything" confirm (count of live deck sessions), and a kill-deck under way. */
+	private confirmAll: { count: number } | undefined;
+	private killingAll = false;
 	/** Session id → its live pi pane in the deck. */
 	private deckPanesById = new Map<string, DeckPane>();
 	private slotSize = { width: 80, height: 24 };
@@ -490,6 +524,10 @@ export class DeckView implements Component {
 	/** The key last shown in the slot (and its target), so refreshes do not re-swap. */
 	private appliedKey: string | undefined;
 	private appliedTarget: string | undefined;
+	/** §16: the session last sent agents-view (agents-close goes there when the selection moves on). */
+	private agentsOpen: string | undefined;
+	/** §16: the subagent row whose agents-view failed: it falls back to the holder preview. */
+	private agentFallbackKey: string | undefined;
 	private lastFrame = "";
 	// previews
 	private transcripts = new Map<string, { file?: string; items?: TranscriptItem[]; failed?: boolean }>();
@@ -596,14 +634,14 @@ export class DeckView implements Component {
 		this.scheduleApply(0);
 	}
 
-	flash(text: string): void {
-		this.message = { text: oneLine(text), until: this.now() + MESSAGE_MS };
+	flash(text: string, ms = MESSAGE_MS): void {
+		this.message = { text: oneLine(text), until: this.now() + ms };
 		if (this.messageTimer) this.timers.clearTimeout(this.messageTimer);
 		this.messageTimer = this.timers.setTimeout(() => {
 			this.messageTimer = undefined;
 			if (this.message && this.message.until <= this.now()) this.message = undefined;
 			this.opts.requestRender();
-		}, MESSAGE_MS);
+		}, ms);
 	}
 
 	// ------------------------------------------------------------ rows, groups, items
@@ -750,17 +788,25 @@ export class DeckView implements Component {
 
 	// ------------------------------------------------------------ the slot follows the selection
 
-	/** What the slot shows for the selected item: a session, or the holder. */
-	private targetOf(item: Item | undefined): SlotTarget {
+	/**
+	 * What the slot shows for the selected item: a session, a deck session showing one of its subagents
+	 * (§16: its pi with the package's agent view, unless that failed for this row), or the holder.
+	 */
+	private targetOf(item: Item | undefined): ViewTarget {
 		if (item?.kind === "main" && item.rowKind === "deck") return { session: item.row.id };
+		if (this.liveAgent(item)) return { session: item.row.id, agent: item.thread.path };
 		return { holder: true };
+	}
+
+	/** A subagent row of a live deck session whose agent view has not failed (§16). */
+	private liveAgent(item: Item | undefined): item is Extract<Item, { kind: "sub" }> {
+		return item?.kind === "sub" && this.deckPanesById.has(item.row.id) && this.agentFallbackKey !== item.key && !!item.thread.path;
 	}
 
 	/** After a refresh: re-apply if the selected item's target changed, or refresh its holder frame. */
 	private followSlot(): void {
 		const item = this.items[this.selected];
-		const target = this.targetOf(item);
-		const t = "session" in target ? `s:${target.session}` : "h";
+		const t = targetKey(this.targetOf(item));
 		if (this.appliedKey !== this.selectedKey || this.appliedTarget !== t) this.scheduleApply();
 		else if (t === "h") this.scheduleApply(0);
 		else this.armAck();
@@ -796,14 +842,43 @@ export class DeckView implements Component {
 	private async applyOnce(): Promise<void> {
 		const item = this.items[this.selected];
 		const key = this.selectedKey;
+		if (this.agentFallbackKey !== undefined && this.agentFallbackKey !== key) this.agentFallbackKey = undefined;
 		const target = this.targetOf(item);
-		const t = "session" in target ? `s:${target.session}` : "h";
+		let t = targetKey(target);
 		if (this.watchedKey !== key) this.stopWatching();
 		try {
+			// §16: another row: the agent view the deck opened goes (unless the user took it over).
+			if (this.agentsOpen && !("agent" in target && target.session === this.agentsOpen)) {
+				const id = this.agentsOpen;
+				this.agentsOpen = undefined;
+				await this.opts.ops.agentsClose(id).catch(() => {});
+			}
 			// The slot moves on from a transcript pager: the holder gets its `sleep` back first.
 			if (this.pager && (this.pager.key !== key || "session" in target)) await this.closePager();
 			if (this.pager) {
 				// This item's pager is in the slot (the user came back with C-h): leave it.
+			} else if ("agent" in target) {
+				if (this.appliedKey !== key || this.appliedTarget !== t) {
+					// Ask first, swap after: a refused view falls back to the holder without showing the pi.
+					this.agentsOpen = target.session;
+					const r = await this.opts.ops.agentsView(target.session, target.agent).catch((error) => ({ ok: false, error: (error as Error).message }));
+					// The selection moved on meanwhile: the next apply (already scheduled) takes over, and must
+					// ask again even for the row it showed before (this stale request may have moved the pi's view).
+					if (this.disposed || this.selectedKey !== key) {
+						this.appliedKey = undefined;
+						return;
+					}
+					if (r.ok) {
+						this.shows++;
+						if (!(await this.opts.ops.show({ session: target.session }))) await this.showHolderFor(item);
+					} else {
+						this.agentsOpen = undefined;
+						this.agentFallbackKey = key;
+						t = "h";
+						await this.showHolderFor(item);
+						this.startPreview(item);
+					}
+				}
 			} else if ("session" in target) {
 				if (this.appliedKey !== key || this.appliedTarget !== t) {
 					this.shows++;
@@ -1042,7 +1117,9 @@ export class DeckView implements Component {
 	handleInput(data: string): void {
 		if (isKeyRelease(data)) return;
 		this.message = undefined;
-		if (this.confirm) this.handleConfirm(data);
+		if (this.confirmAll) this.handleConfirmAll(data);
+		else if (this.confirm) this.handleConfirm(data);
+		else if (matchesKey(data, "ctrl+d")) this.askKillAll();
 		else if (this.mode === "insert") this.handleInsert(data);
 		else this.handleNormal(data);
 		this.opts.requestRender();
@@ -1110,8 +1187,9 @@ export class DeckView implements Component {
 			case "k":
 				return this.move(-1);
 			case "q":
+				// Not detach (C-c and prefix d do that): q only closes the help.
 				this.help = false;
-				return void this.opts.ops.detach().catch(() => {});
+				return;
 			case "i":
 			case "/":
 				this.mode = "insert";
@@ -1191,6 +1269,42 @@ export class DeckView implements Component {
 			});
 	}
 
+	/** C-d: confirm killing every deck session and the deck itself. */
+	private askKillAll(): void {
+		if (this.killingAll) return this.flash("killing the deck…");
+		this.help = false;
+		this.confirmAll = { count: this.deckPanesById.size };
+	}
+
+	private handleConfirmAll(data: string): void {
+		const ch = printable(data);
+		if (ch === "y" || matchesKey(data, "enter")) {
+			this.confirmAll = undefined;
+			this.killingAll = true;
+			this.flash("killing every deck session and the deck…");
+			void this.opts.ops
+				.killDeck()
+				.then((r) => {
+					// Killed: this list goes with the server (SIGHUP). Still here: nvims with unsaved changes.
+					this.killingAll = false;
+					if (r.killedServer) return;
+					const names = r.nvims.map((n) => oneLine(this.rows.find((row) => row.id === n.session)?.name ?? n.session.slice(0, 8)));
+					this.flash(
+						names.length
+							? `unsaved changes in nvim (${names.join(", ")}): save and quit them (:wqa), then C-d again`
+							: "pi-fleet: the deck is still up (kill-server failed)",
+						30_000,
+					);
+				})
+				.catch((error) => {
+					this.killingAll = false;
+					this.flash(`pi-fleet: ${(error as Error).message}`);
+				});
+		} else if (ch === "n" || ch === "q" || matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+			this.confirmAll = undefined;
+		}
+	}
+
 	private confirmJobs(c: KillConfirm): string[] {
 		const ids = c.row.status?.slurmJobs ?? [];
 		return Array.isArray(c.jobs) ? c.jobs.map((j) => j.id) : ids;
@@ -1219,6 +1333,7 @@ export class DeckView implements Component {
 	/** C-l: closed/crashed/subagent rows read their transcript (the pager); every other row is Enter. */
 	private focusOrRead(): void {
 		const item = this.items[this.selected];
+		if (this.liveAgent(item)) return this.activate();
 		if ((item?.kind === "main" || item?.kind === "sub") && (item.kind === "sub" || item.rowKind === "closed" || item.rowKind === "crashed")) return this.openPager(item);
 		this.activate();
 	}
@@ -1228,6 +1343,15 @@ export class DeckView implements Component {
 		if (!item || item.kind === "note") return;
 		if (item.kind === "group" || item.kind === "more") return this.toggle();
 		if (item.kind === "sub") {
+			// §16: a live deck session's subagent: into its pi, where the agent view is (or opens).
+			if (this.liveAgent(item)) {
+				const row = item.row;
+				void this.opts.ops.focusSession(row.id).then(
+					(ok) => (ok ? undefined : this.flash(`${row.name}: its pane is gone`)),
+					(error) => this.flash(`pi-fleet: ${(error as Error).message}`),
+				);
+				return;
+			}
 			this.selectSession(item.row.id);
 			return;
 		}
@@ -1371,6 +1495,7 @@ export class DeckView implements Component {
 	/** What Enter and C-l do on the selected row, for the hints. */
 	private openHints(): string[] {
 		const item = this.items[this.selected];
+		if (this.liveAgent(item)) return ["⏎/C-l its agent view"];
 		if (item?.kind === "sub") return ["⏎ its session", "C-l read"];
 		if (item?.kind === "main" && (item.rowKind === "closed" || item.rowKind === "crashed")) return ["⏎ resume", "C-l read"];
 		return ["⏎/C-l open"];
@@ -1378,6 +1503,7 @@ export class DeckView implements Component {
 
 	private hintLine(width: number): string {
 		const style = this.opts.style;
+		if (this.confirmAll) return fit(` ${style.bold(style.fg("warning", "y/⏎ kill · n/Esc cancel"))}`, width);
 		if (this.confirm) {
 			const scancel = this.confirmJobs(this.confirm).length ? " · s kill+scancel" : "";
 			return fit(` ${style.bold(style.fg("warning", `y/⏎ kill${scancel} · n/Esc cancel`))}`, width);
@@ -1386,8 +1512,8 @@ export class DeckView implements Component {
 		const chunks =
 			this.mode === "insert"
 				? ["type to search", "⏎ open", "C-n/C-p move", "Esc normal"]
-				: ["j/k move", ...this.openHints(), "a new", "d kill", "i / search", "? help", "q detach", "␣ subagents"];
-		// As many hints as fit, in order (q detach before the rarer ones).
+				: ["j/k move", ...this.openHints(), "a new", "d kill", "i / search", "? help", "C-c detach", "C-d kill all", "␣ subagents"];
+		// As many hints as fit, in order (detach before the rarer ones).
 		let hint = "";
 		for (const c of chunks) {
 			const next = hint ? `${hint}  ${c}` : c;
@@ -1401,6 +1527,10 @@ export class DeckView implements Component {
 	private statusLine(width: number): string {
 		const style = this.opts.style;
 		const sep = style.fg("border", " · ");
+		if (this.confirmAll) {
+			const n = this.confirmAll.count;
+			return fit(` ${style.fg("warning", style.bold(`Kill all ${n} deck session${n === 1 ? "" : "s"} and the deck?`))}`, width);
+		}
 		if (this.confirm) {
 			const { row, jobs } = this.confirm;
 			const parts: string[] = [];
@@ -1498,7 +1628,7 @@ export class DeckView implements Component {
 			const live = row.live === "live" || row.live === "remote";
 			const { glyph: g, word } = threadGlyph(item.thread, live, style);
 			const label = oneLine(`${item.thread.type ?? "?"} ${item.thread.path}`);
-			const labelW = Math.min(30, Math.max(10, width - 24));
+			const labelW = Math.min(Math.max(30, Math.floor(width / 2)), Math.max(10, width - 24));
 			let text = `${pad(selected ? style.bold(label) : label, labelW)} ${pad(style.fg("muted", word), 11)}`;
 			if (item.thread.task) text += ` ${style.fg("dim", oneLine(item.thread.task))}`;
 			return fit(`${marker}    ${g} ${text}`, width);
@@ -1507,7 +1637,11 @@ export class DeckView implements Component {
 		const avail = Math.max(10, width - 4);
 		const wide = avail >= 60;
 		const detailW = wide ? 16 : 13;
-		const nameW = Math.min(wide ? 30 : 22, Math.max(8, avail - detailW - 1 - (wide ? 8 : 0) - 1 - 8));
+		// The name takes every column the detail, cost and subagent counts leave (counts reserved at
+		// the right edge), so long titles show in full in a wide list.
+		const countsW = wide ? 14 : 8;
+		const room = avail - detailW - 1 - (wide ? 8 : 0) - 1;
+		const nameW = Math.max(Math.min(wide ? 30 : 22, Math.max(8, room - 8)), room - countsW);
 		let name = oneLine(row.name);
 		let suffix = "";
 		if (item.rowKind === "outside") {
@@ -1863,12 +1997,19 @@ function tmuxOn(socket: string, args: string[], env: NodeJS.ProcessEnv): Promise
 	});
 }
 
+/** §16: the pane option marking a deck-opened agent view (its subagent path) on the main's pi pane. */
+export const AGENTS_VIEW_OPTION = "@pi_fleet_agents_view";
+/** How long the list waits for agents-view (the pi waits ≤ 1 s for the view itself). */
+export const AGENTS_VIEW_REPLY_MS = 2500;
+
 /** DeckOps against the deck server; every slot change goes through the list's serial queue. */
-export function tmuxOps(env: NodeJS.ProcessEnv, list: Pick<DeckList, "serial">): DeckOps & { close(): Promise<void> } {
+export function tmuxOps(env: NodeJS.ProcessEnv, list: Pick<DeckList, "serial">, opts: { flash?: (message: string) => void } = {}): DeckOps & { close(): Promise<void> } {
 	let holder: { tty: string; fh: FileHandle } | undefined;
 	let holderTty: string | undefined;
 	const tails = new TranscriptTails();
 	const conversations = new ConversationTails();
+	/** A session's control socket (its status file's, else the default path). */
+	const controlSock = (id: string) => readStatus(id, env)?.status.ctlSock || ctlSockPath(id, env);
 	/** The holder was respawned (pager in or out): it has a new tty. */
 	const holderRespawned = async () => {
 		await holder?.fh.close().catch(() => {});
@@ -1892,18 +2033,17 @@ export function tmuxOps(env: NodeJS.ProcessEnv, list: Pick<DeckList, "serial">):
 		}
 	};
 	const showIn = async (panes: DeckPane[], target: SlotTarget): Promise<boolean> => {
-		let pane: string;
 		if ("session" in target) {
 			const pi = sessionPiPane(panes, target.session);
 			if (!pi || pi.gone) return false;
-			const nvim = livePeerIn(panes, pi);
-			const slot = panes.find((p) => p.inSlot);
-			if (slot && (slot.pane === pi.pane || slot.pane === nvim?.pane)) return true;
-			pane = pi.shown === "nvim" && nvim ? nvim.pane : pi.pane;
-		} else {
-			pane = panes.find((p) => p.role === "preview" && !p.gone)?.pane ?? (await ensureHolder(env));
+			// Its pi in the pi slot, its nvim (created on the first show) in the nvim slot: one swap call.
+			const r = await showSessionDetail(target.session, { panes }, env);
+			if (r.nvimError) opts.flash?.(`pi-fleet: no nvim: ${r.nvimError}`);
+			return true;
 		}
-		const args = showPaneArgs(panes, pane);
+		const holder = panes.find((p) => p.role === "preview" && !p.gone)?.pane ?? (await ensureHolder(env));
+		const nvimHolder = panes.find((p) => p.role === "nvim-holder" && !p.gone)?.pane ?? (await ensureNvimHolder(env));
+		const args = slotArgs(panes, { pi: holder, nvim: nvimHolder });
 		if (args) await deckTmux(args, env);
 		return true;
 	};
@@ -1965,6 +2105,10 @@ export function tmuxOps(env: NodeJS.ProcessEnv, list: Pick<DeckList, "serial">):
 			const client = newestClient(out);
 			if (client) await deckTmux(["detach-client", "-t", client], env);
 		},
+		async killDeck() {
+			const r = await killDeck({}, env);
+			return { killedServer: r.killedServer, nvims: r.nvims.map((n) => ({ session: n.session, cwd: n.cwd })) };
+		},
 		async attached() {
 			const out = await deckTmux(["list-clients", "-t", "=deck", "-F", "#{client_name}"], env).catch(() => "");
 			return out.trim() !== "";
@@ -1999,6 +2143,30 @@ export function tmuxOps(env: NodeJS.ProcessEnv, list: Pick<DeckList, "serial">):
 		},
 		async focusSlot() {
 			await focusSlot(env);
+		},
+		async agentsView(id, path) {
+			const pi = sessionPiPane(await deckPanes(env), id);
+			if (!pi || pi.gone) return { ok: false, error: "no pane" };
+			// Deck-opened (§16); the deck config's after-select-pane hook clears it once the user focuses that pi.
+			await deckTmux(["set-option", "-p", "-t", pi.pane, AGENTS_VIEW_OPTION, path], env);
+			let reply: { ok?: boolean; error?: string } = {};
+			try {
+				reply = JSON.parse(await sendControl(controlSock(id), { type: "agents-view", path }, AGENTS_VIEW_REPLY_MS));
+			} catch (error) {
+				reply = { ok: false, error: (error as Error).message };
+			}
+			if (reply.ok === true) return { ok: true };
+			await deckTmux(["set-option", "-pu", "-t", pi.pane, AGENTS_VIEW_OPTION], env).catch(() => "");
+			return { ok: false, error: reply.error ?? "agents-view failed" };
+		},
+		async agentsClose(id) {
+			const pi = sessionPiPane(await deckPanes(env), id);
+			if (!pi || pi.gone) return;
+			const mark = await deckTmux(["show-options", "-pqv", "-t", pi.pane, AGENTS_VIEW_OPTION], env).catch(() => "");
+			// Unmarked: the user focused that pi since (the view is theirs now), or nothing was opened.
+			if (!mark) return;
+			await deckTmux(["set-option", "-pu", "-t", pi.pane, AGENTS_VIEW_OPTION], env).catch(() => "");
+			await sendControl(controlSock(id), { type: "agents-close" }, AGENTS_VIEW_REPLY_MS).catch(() => "");
 		},
 		watchFile(file, onChange) {
 			let w: FSWatcher | undefined;
@@ -2072,7 +2240,7 @@ export async function runDeckView(env: NodeJS.ProcessEnv = process.env): Promise
 		},
 		env,
 	);
-	const ops = tmuxOps(env, list);
+	const ops = tmuxOps(env, list, { flash: (message) => view?.flash(message) });
 	const lastOuter: { socket?: string } = {};
 	view = new DeckView({
 		source,
@@ -2104,6 +2272,8 @@ export async function runDeckView(env: NodeJS.ProcessEnv = process.env): Promise
 	const quit = () => finish(0);
 	process.once("SIGTERM", quit);
 	process.once("SIGHUP", quit);
+	// C-d kills the server under this list: its tty goes away mid-write, which is no error worth a trace.
+	process.stdout.on("error", () => {});
 	process.stdout.write("\x1b[?1049h\x1b[H");
 	tui.addChild(view);
 	tui.setFocus(view);
@@ -2116,6 +2286,9 @@ export async function runDeckView(env: NodeJS.ProcessEnv = process.env): Promise
 	if (slot?.session && (slot.role === "pi" || slot.role === "nvim")) view.selectSession(slot.session);
 	// A pager left by the previous list (a restart) gives the holder back.
 	await ops.closePager().catch(() => {});
+	// Agent views a previous list opened and nobody took over (a restart, /reload): close them (§16;
+	// agentsClose acts only on a pi still marked @pi_fleet_agents_view).
+	for (const p of panes) if (p.role === "pi" && p.session && !p.gone) void ops.agentsClose(p.session).catch(() => {});
 	view.scheduleApply(0);
 	tui.requestRender();
 	const code = await finished;

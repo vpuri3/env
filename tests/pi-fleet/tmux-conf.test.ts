@@ -1,6 +1,6 @@
-// tmux.conf's root C-h (pi-fleet ctrl+l / C-h, design §9): in a pi pane joined into the dashboard
-// window (@pi_fleet_joined) it selects the pane on the left (the dashboard list); everywhere else
-// the pane gets C-h itself. ~/env/tmux.conf is loaded into a throwaway server (`tmux -L
+// tmux.conf binds no root C-h any more (the pi deck has its own server and keys, pi-deck-design.md
+// §15; the old dashboard's C-h is unbound for servers that still have it): C-h reaches the pane,
+// also one an old pi-fleet marked @pi_fleet_joined. ~/env/tmux.conf is loaded into a throwaway server (`tmux -L
 // fleettest-conf-…`; the harness refuses the default socket) with a temp HOME and a PATH without
 // pi-fleet. Root key bindings only run for keys a client types, so a client is attached through
 // `script` (a pty) and the keys are written to it.
@@ -45,7 +45,7 @@ async function waitFor<T>(what: string, probe: () => T | undefined | false, time
 	}
 }
 
-test("tmux.conf C-h: a normal pane gets C-h; a joined pi pane goes to the pane on its left", { skip, timeout: 60_000 }, async () => {
+test("tmux.conf C-h: every pane gets C-h itself (no root binding)", { skip, timeout: 60_000 }, async () => {
 	const label = `fleettest-conf-${process.pid}`;
 	// No pi-fleet on PATH (the status bar and hooks stay inert), HOME a temp dir.
 	const env: NodeJS.ProcessEnv = {
@@ -67,7 +67,7 @@ test("tmux.conf C-h: a normal pane gets C-h; a joined pi pane goes to the pane o
 	let client: ChildProcess | undefined;
 	try {
 		tmux(["-f", conf, "new-session", "-d", "-s", "main", "-x", "120", "-y", "30", recorder("plain")]);
-		assert.match(tmux(["list-keys", "-T", "root", "C-h"]), /if-shell -F "?#\{@pi_fleet_joined\}"? "?select-pane -L"? "?send-keys C-h"?/);
+		assert.throws(() => tmux(["list-keys", "-T", "root", "C-h"]), "no root C-h");
 		const plain = tmux(["display-message", "-p", "-t", "main", "#{pane_id}"]);
 		client = spawn("script", ["-qfc", `tmux -L ${label} attach -t main`, "/dev/null"], { env, stdio: ["pipe", "ignore", "ignore"] });
 		await waitFor("the client", () => tmux(["list-clients", "-F", "#{client_tty}"]) !== "");
@@ -85,28 +85,19 @@ test("tmux.conf C-h: a normal pane gets C-h; a joined pi pane goes to the pane o
 			}
 		});
 
-		// A joined pi pane right of the list: C-h selects the list, the pi gets nothing.
-		const list = tmux(["new-window", "-P", "-F", "#{pane_id}", recorder("list")]);
-		const pi = tmux(["split-window", "-h", "-t", list, "-P", "-F", "#{pane_id}", recorder("pi")]);
+		// A pane an old pi-fleet marked as joined: still just a key.
+		const pi = tmux(["split-window", "-h", "-t", plain, "-P", "-F", "#{pane_id}", recorder("pi")]);
 		tmux(["set-option", "-p", "-t", pi, "@pi_fleet_joined", tmux(["display-message", "-p", "-t", pi, "#{window_id}"])]);
 		await waitFor("the pi pane active", () => tmux(["display-message", "-p", "#{pane_id}"]) === pi);
 		typed("x\x08y");
-		await waitFor("C-h went left", () => tmux(["display-message", "-p", "-t", list, "#{pane_active}"]) === "1");
-		await waitFor("y typed into the list", () => {
+		await waitFor("C-h delivered to the marked pane", () => {
 			try {
-				return readFileSync(out("list"), "utf8") === "y";
+				return readFileSync(out("pi"), "utf8") === "x\x08y";
 			} catch {
 				return false;
 			}
 		});
-		assert.equal(readFileSync(out("pi"), "utf8"), "x");
-		// Once it is home (marks unset) C-h is a plain key there again.
-		tmux(["set-option", "-pu", "-t", pi, "@pi_fleet_joined"]);
-		tmux(["select-pane", "-t", pi]);
-		typed("\x08");
-		await waitFor("C-h delivered to the unjoined pi", () => readFileSync(out("pi"), "utf8") === "x\x08");
 		assert.equal(tmux(["display-message", "-p", "#{pane_id}"]), pi);
-		assert.notEqual(plain, pi);
 	} finally {
 		client?.kill();
 		try {
@@ -114,5 +105,6 @@ test("tmux.conf C-h: a normal pane gets C-h; a joined pi pane goes to the pane o
 		} catch {
 			// gone
 		}
+		rmSync(`${process.env.TMUX_TMPDIR || "/tmp"}/tmux-${process.getuid?.() ?? 0}/${label}`, { force: true }); // tmux 3.2a leaves it
 	}
 });

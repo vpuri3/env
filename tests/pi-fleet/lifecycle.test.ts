@@ -1,4 +1,4 @@
-// pi-fleet phase 3 (design §7, §8, §10, §13): /new, /resume → new window, /fork guard, /kill
+// pi-fleet phase 3 (design §7, §8, §10, §13; the deck: pi-deck-design.md): /new, /resume (the deck), /fork guard, /kill
 // dialog, Slurm capture, duplicate guard, control socket, pairing of a hand-started pi.
 //
 // A real `pi --mode rpc` (faux provider) runs with TMUX/TMUX_PANE pointing into a throwaway
@@ -490,7 +490,7 @@ test("rpc pi: Slurm capture, no /fork guard, /kill dialog (control socket and co
 	}
 });
 
-test("rpc pi: /run-autonomously marks the status autonomous until /autonomous off; a confirmed kill (dashboard `d`) asks nothing", { skip: skipRpc, timeout: 90_000 }, async () => {
+test("rpc pi: /run-autonomously marks the status autonomous until /autonomous off; a confirmed kill (the deck list's `d`) asks nothing", { skip: skipRpc, timeout: 90_000 }, async () => {
 	const rig = new Rig();
 	const pi = new RpcPi(rig, rig.tmuxEnv());
 	try {
@@ -613,7 +613,7 @@ test("rpc pi: /fork in a paired pane re-keys the pane options and the nvim's ses
 
 // ---------------------------------------------------------------- TUI pi in a tmux pane
 
-test("tui pi started by hand in tmux: pane marked, no nvim at start, glyph-named window; /kill ends it", { skip: skipTui, timeout: 90_000 }, async () => {
+test("tui pi started by hand in tmux: pane marked, no nvim at start, the window left alone; /kill ends it", { skip: skipTui, timeout: 90_000 }, async () => {
 	// /new and /resume of a hand-started pi open in the pi deck: deck-integration.test.ts.
 	const rig = new Rig();
 	try {
@@ -621,13 +621,11 @@ test("tui pi started by hand in tmux: pane marked, no nvim at start, glyph-named
 		const id = await waitFor("@pi_fleet_session", () => rig.tryTmux(["display-message", "-p", "-t", pane, "#{@pi_fleet_session}"]) || undefined, 30_000);
 		assert.equal(rig.tmux(["display-message", "-p", "-t", pane, "#{@pi_fleet_role}"]), "pi");
 		await waitFor("status", () => rig.status(id));
-		// The window gets glyph names from `pi-fleet bar`...
-		await waitFor("@pi_fleet_named", () => rig.tmux(["display-message", "-p", "-t", pane, "#{@pi_fleet_named}"]) === "1");
-		// ...unless the user named it (automatic-rename off).
 		const mine = rig.tuiPi([], { name: "mine", detached: true });
 		await waitFor("second pane marked", () => rig.tryTmux(["display-message", "-p", "-t", mine, "#{@pi_fleet_session}"]) || undefined, 30_000);
 		await sleep(1000);
-		assert.equal(rig.tmux(["display-message", "-p", "-t", mine, "#{@pi_fleet_named}"]), "");
+		// No window naming any more (no `pi-fleet bar`): no marks, the user's name stays.
+		for (const p of [pane, mine]) assert.equal(rig.tmux(["display-message", "-p", "-t", p, "#{@pi_fleet_named}"]), "", p);
 		assert.equal(rig.tmux(["display-message", "-p", "-t", mine, "#{window_name}"]), "mine");
 		// nvim starts on first use only (pi-deck-design.md decision 1).
 		for (const p of [pane, mine]) {

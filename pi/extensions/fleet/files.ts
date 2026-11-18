@@ -12,7 +12,7 @@
  *      meanwhile), so a lookup never waits for the listing longer than its caller allows.
  *
  * The ranker (rankTiers) is a pure function over pre-lowercased paths; it keeps only the top
- * `limit` per tier, so 50k paths rank in a few ms. grep() runs `rg --vimgrep` for `Space f s`.
+ * `limit` per tier, so 50k paths rank in a few ms. grep() runs `rg --vimgrep` for `, f s`.
  *
  * Per-session state lives in a WeakMap keyed by the `pi` object (as shared.ts does), never in
  * module globals: subagents load this extension in the same process with their own `pi`.

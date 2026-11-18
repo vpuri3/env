@@ -7,8 +7,8 @@
  *                  already), as a pool pane that the deck shows and focuses. In a deck pi that
  *                  is all; in a pi started by hand in the user's tmux the deck is started if
  *                  needed and popped up over this client. A target running in the user's tmux
- *                  is jumped to (same server) or named. If the deck cannot be reached, a hand-
- *                  started pi falls back to cli.ts openSession (a new window), with a notice.
+ *                  is jumped to (same server) or named. If the deck cannot be reached, nothing
+ *                  opens (a notice says why; `pf` starts the deck).
  *                  The current session (and its subagents) is never torn down.
  *                  Outside tmux pi's own behaviour stays, with a one-line notice. /import (a
  *                  "resume" whose target file does not exist yet) imports in place, with a notice.
@@ -22,9 +22,9 @@
  *                  pi-subagent-manager on shutdown; transcripts stay) and this session's Slurm
  *                  jobs still in squeue; the default leaves the jobs running. No dialog for an
  *                  empty session with nothing running. Then abort + ctx.shutdown(): exit 0, so
- *                  `pi-fleet run-pi` closes nvim (unless modified) and the window.
+ *                  `pi-fleet run-pi` closes nvim (unless modified) and its pane goes.
  *                  The control socket's `kill` opens the same dialog, unless it says
- *                  `"confirmed":true` (the dashboard's `d` asked already): then
+ *                  `"confirmed":true` (the deck list's `d` asked already): then
  *                  it kills at once, and scancels only with `"scancel":true`.
  *   Autonomous     `/run-autonomously` (the prompt template, seen in the `input` event; also its
  *                  old name `/leavemealone`, for sessions started before the rename) marks the
@@ -40,10 +40,8 @@
  *                  interactive TUI pi (ctx.mode "tui"). RPC/print/json pis keep pi's own behaviour
  *                  even with $TMUX set: programs never open windows in the user's tmux, and a
  *                  dialog nobody answers cannot hold a pi. /kill and the control socket stay.
- *   Window names   A pi started by hand in tmux (TUI, not in the deck) marks its window
- *                  @pi_fleet_named=1, so `pi-fleet bar` gives it glyph names, unless the user
- *                  renamed the window (automatic-rename off). Its nvim is created on first use
- *                  (view.ts, leader.ts), never at session start.
+ *   By hand        A pi started by hand in tmux (TUI, not in the deck) gets its nvim on first
+ *                  use (view.ts, leader.ts: a split beside it), never at session start.
  *
  * No module-level state: in-process subagents load this extension too; everything checks
  * fleetOf(pi).main.
@@ -55,9 +53,9 @@ import { rename, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { ctlSockPath, focusPane, inTmux, livePeer, openSession, paneInfo, tmux } from "./cli.ts";
+import { ctlSockPath, focusPane, inTmux, livePeer, paneInfo, tmux } from "./cli.ts";
 import { duplicateOf } from "./control.ts";
-import { inDeck, openInDeck, outsideNotice } from "./deck-client.ts";
+import { openInDeck, outsideNotice } from "./deck-client.ts";
 import { nvimRequest } from "./nvim.ts";
 import { RegistryFold } from "./registry.ts";
 import { fleetOf, ownPrompt } from "./shared.ts";
@@ -243,7 +241,7 @@ export function register(pi: ExtensionAPI): void {
 		publishAutonomous();
 	};
 
-	/** `confirmed`: the user already chose in the dashboard (no dialog here). */
+	/** `confirmed`: the user already chose in the deck list (no dialog here). */
 	const kill = async (c: ExtensionContext, confirmed?: { scancel: boolean }): Promise<boolean> => {
 		if (killing) return false;
 		killing = true;
@@ -303,16 +301,6 @@ export function register(pi: ExtensionAPI): void {
 		if (choice === "Jump there" && pane) await focusPane(pane).catch(() => {});
 		restore = other;
 		c.shutdown();
-	};
-
-	/** Mark a hand-started pi's window for glyph names, unless the user named it. */
-	const markWindow = async (pane: string) => {
-		try {
-			const [autoRename, named] = (await tmux(["display-message", "-p", "-t", pane, "#{automatic-rename}\t#{@pi_fleet_named}"])).split("\t");
-			if (autoRename === "1" && named !== "1") await tmux(["set-option", "-w", "-t", pane, "@pi_fleet_named", "1"]);
-		} catch {
-			// pane gone or no tmux: nothing to name
-		}
 	};
 
 	/**
@@ -394,7 +382,6 @@ export function register(pi: ExtensionAPI): void {
 		const pane = process.env.TMUX_PANE;
 		if (process.env.TMUX && pane) {
 			void rekeyPair(pane, sm.getSessionId(), c.mode === "tui");
-			if (c.mode === "tui" && !inDeck()) void markWindow(pane);
 		}
 	});
 
@@ -431,18 +418,7 @@ export function register(pi: ExtensionAPI): void {
 				if (notice) notify(c, notice, "warning");
 			}
 		} catch (error) {
-			const why = (error as Error).message;
-			if (inDeck()) {
-				notify(c, `pi-fleet: deck: ${why}`, "error");
-			} else {
-				// The deck is unreachable: the window of old (pi-fleet-design.md §8).
-				try {
-					const result = await openSession({ ...req, target: process.env.TMUX_PANE });
-					notify(c, `pi-fleet: the deck is unavailable (${why}); ${result.action === "refused" ? `that session is ${result.reason}` : "opened a window instead"}`, "warning");
-				} catch (error2) {
-					notify(c, `pi-fleet: could not open the session: ${why}; ${(error2 as Error).message}`, "error");
-				}
-			}
+			notify(c, `pi-fleet: deck: ${(error as Error).message}`, "error");
 		}
 		// Never tear this session down: the other one lives in its own pane.
 		return { cancel: true };

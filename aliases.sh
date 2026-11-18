@@ -26,21 +26,16 @@ alias cl='claude --dangerously-skip-permissions'
 alias cx='codex -s danger-full-access'
 alias vact='. "$HOME/env/shellrc" && . "${PWD}/.venv/bin/activate"'
 
-# pf [DIR] [-- PI_ARGS...]: a new pi-fleet session (pi + paired nvim window) in DIR
-# (default: here). Outside tmux it opens in the tmux session "fleet" (created if
-# missing) and attaches to it; PF_NO_ATTACH=1 skips the attach. Uses the tmux
-# server in $PI_FLEET_TMUX_SOCKET when set (tests), else tmux's default.
-_pf_tmux() {
-    if [ -n "${PI_FLEET_TMUX_SOCKET:-}" ]; then
-        command tmux -S "$PI_FLEET_TMUX_SOCKET" "$@"
-    else
-        command tmux "$@"
-    fi
-}
+# pf [DIR] [-- PI_ARGS...]: the pi deck (docs/pi-deck-design.md §15): the session list, the
+# selected session's nvim and its pi. Plain `pf` just shows the deck (starting it if needed);
+# with DIR and/or `-- PI_ARGS` it first opens a new session there (DIR defaults to here).
+# Outside tmux it attaches this terminal; inside tmux it opens the deck in a popup.
+# PF_NO_ATTACH=1 skips the attach/popup (tests).
 pf() {
-    local dir="." pane sock
+    local dir="" open=""
     if [ "$#" -gt 0 ] && [ "$1" != "--" ]; then
         dir="$1"
+        open=1
         shift
     fi
     if [ "$#" -gt 0 ]; then
@@ -49,26 +44,23 @@ pf() {
             return 2
         fi
         shift
+        open=1
     fi
-    if [ ! -d "$dir" ]; then
-        echo "pf: not a directory: $dir" >&2
-        return 1
+    if [ -n "$open" ]; then
+        dir=${dir:-.}
+        if [ ! -d "$dir" ]; then
+            echo "pf: not a directory: $dir" >&2
+            return 1
+        fi
+        dir=$(CDPATH='' cd -- "$dir" && pwd) || return 1
+        pi-fleet open --cwd "$dir" -- "$@" >/dev/null || return 1
     fi
-    dir=$(CDPATH='' cd -- "$dir" && pwd) || return 1
-    if [ -n "${TMUX:-}" ]; then
-        pi-fleet open --cwd "$dir" -- "$@" >/dev/null
+    if [ -n "${PF_NO_ATTACH:-}" ]; then
+        [ -n "$open" ] || pi-fleet deck-start >/dev/null
         return
     fi
-    if ! _pf_tmux has-session -t "=fleet" 2>/dev/null; then
-        _pf_tmux new-session -d -s fleet -c "$dir" || return 1
-    fi
-    pane=$(_pf_tmux display-message -p -t "=fleet:" '#{pane_id}') || return 1
-    sock=$(_pf_tmux display-message -p -t "=fleet:" '#{socket_path}') || return 1
-    PI_FLEET_TMUX_SOCKET="$sock" pi-fleet open --cwd "$dir" --target "$pane" -- "$@" >/dev/null || return 1
-    if [ -n "${PF_NO_ATTACH:-}" ]; then
-        return 0
-    fi
-    _pf_tmux attach-session -t "=fleet"
+    # attach starts the deck if needed, sized for this terminal (or the popup).
+    pi-fleet attach
 }
 
 # viewers

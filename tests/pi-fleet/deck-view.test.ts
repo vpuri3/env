@@ -115,6 +115,7 @@ function fakeOps(panes: DeckPane[] = PANES) {
 		kill: async (row: Row, scancel: boolean) => void calls.push(["kill", row.id, scancel]),
 		jump: async (row: Row) => void calls.push(["jump", row.id]),
 		detach: async () => void calls.push(["detach"]),
+		killDeck: async () => (calls.push(["killDeck"]), { killedServer: true, nvims: [] as { session: string; cwd: string }[] }),
 		attached: async () => true,
 		ack: async (id: string, runId: string) => void calls.push(["ack", id, runId]),
 		capture: async (row: Row) => (calls.push(["capture", row.id]), { kind: "frame" as const, lines: ["$ captured from the outer pane"] }),
@@ -141,13 +142,35 @@ function fakeOps(panes: DeckPane[] = PANES) {
 			return e && { token: pagerToken!, status: e.status };
 		},
 		focusSlot: async () => void calls.push(["focusSlot"]),
+		agentsView: (id: string, path: string) => {
+			calls.push(["agentsView", id, path]);
+			if (agentsGate) return agentsGate.then(() => agentsReply(path));
+			return Promise.resolve(agentsReply(path));
+		},
+		agentsClose: async (id: string) => void calls.push(["agentsClose", id]),
+	};
+	/** §16: what agents-view answers (default ok), and an optional gate holding every reply until opened. */
+	let agentsReply = (_path: string): { ok: boolean; error?: string } => ({ ok: true });
+	let agentsGate: Promise<void> | undefined;
+	const agents = {
+		reply(fn: (path: string) => { ok: boolean; error?: string }) {
+			agentsReply = fn;
+		},
+		hold(): () => void {
+			let open: () => void = () => {};
+			agentsGate = new Promise<void>((r) => (open = r));
+			return () => {
+				agentsGate = undefined;
+				open();
+			};
+		},
 	};
 	let pagerToken: string | undefined;
 	let exit: { status: number } | undefined;
 	/** less exits with `status` (the next pagerExit reports it once). */
 	const lessExits = (status: number) => (exit = { status });
 	const of = (kind: string) => calls.filter((c) => c[0] === kind);
-	return { ops, calls, watchers, of, lessExits: (status: number) => lessExits(status) };
+	return { ops, calls, watchers, of, agents, lessExits: (status: number) => lessExits(status) };
 }
 
 /** A style whose selection survives strip() as a leading `▌` (the full-width line in reverse video). */
@@ -221,7 +244,7 @@ test("layout: repo groups with their closed sessions after the live ones, then o
 		`╭─ NORMAL ${"─".repeat(55)} 9/9 ─╮`,
 		`│ ⌕${" ".repeat(68)}│`,
 		`╰─ ○ active  ● working  ◐ done  ? needs input  ✕ error  » auto ${"─".repeat(8)}╯`,
-		" j/k move  ⏎/C-l open  a new  d kill  i / search  ? help  q detach",
+		" j/k move  ⏎/C-l open  a new  d kill  i / search  ? help  C-c detach",
 	]);
 	assert.equal(lines[15], " physicsnemo sweep · ● working · tool bash · for 4m · $3.41 · subagents…");
 	assert.match(screen(view, 140)[15]!, /^ physicsnemo sweep · ● working · tool bash · for 4m · \$3\.41 · subagents 2w 1◐ 3✓ · \/.*\/work\/alpha$/);
@@ -271,6 +294,15 @@ test("ANSI colors (§6): active blue 75, working purple 141 (autonomous: purple 
 	// Autonomous working: purple with its own glyph.
 	const auto = make((r) => (r.id === IDS.sweep && r.status ? { ...r, status: { ...r.status, autonomous: true } } : r)).join("\n");
 	assert.ok(auto.includes(`${fg(141, "»")} ${fg(141, "physicsnemo sweep")}`) && auto.includes(fg(141, "auto bash 4m")), "autonomous: purple »");
+});
+
+test("wide list: the name column takes the width the other columns leave; counts stay at the right edge", { skip }, () => {
+	const { view } = makeView();
+	const narrow = screen(view, 72).find((l) => l.includes("physicsnemo sweep"))!;
+	const wide = screen(view, 140).find((l) => l.includes("physicsnemo sweep"))!;
+	assert.ok(wide.indexOf("bash 4m") > narrow.indexOf("bash 4m") + 50, "detail column moves right in a wide list");
+	assert.ok(wide.length > 120, "the row spans the pane");
+	assert.ok(screen(view, 140).some((l) => l.includes("1 interrupted") && !l.includes("…")), "counts no longer cut");
 });
 
 // ---------------------------------------------------------------- modes and search
@@ -411,6 +443,78 @@ test("subagent rows: Space expands, the holder shows the transcript tail, re-rea
 	assert.match(screen(view, 72).find((l) => l.startsWith("▌"))!, /start the old run/);
 });
 
+test("§16: a live deck session's subagent row shows its agent view in the main's pi (asked, then swapped); latest wins; other rows close it; ok:false falls back to the holder", { skip }, async () => {
+	const { view, clock, of, calls, agents } = makeView({ height: 40 });
+	view.selectSession(IDS.sweep);
+	await clock.advance(100);
+	press(view, KEY.space);
+	await clock.advance(100);
+	calls.length = 0;
+	// The first subagent row of sweep (a deck session): agents-view for its path, then the session is shown.
+	press(view, "j");
+	await clock.advance(dv.SWAP_COALESCE_MS);
+	const [first] = of("agentsView");
+	assert.ok(first, JSON.stringify(calls));
+	assert.equal(first![1], IDS.sweep);
+	const path1 = first![2] as string;
+	assert.match(path1, /^\/agent-\d$/);
+	assert.match(screen(view, 100).find((l) => l.startsWith("▌"))!, new RegExp(path1));
+	assert.deepEqual(calls.filter((c) => c[0] !== "frame"), [["agentsView", IDS.sweep, path1], ["show", IDS.sweep]]);
+	assert.deepEqual([of("frame").length, of("watch").length], [0, 0], "no holder preview");
+	assert.match(screen(view, 100).at(-1)!, /⏎\/C-l its agent view/);
+	// C-l and Enter focus the main's pi (the view is there); no pager.
+	press(view, KEY.ctrlL);
+	press(view, KEY.enter);
+	await clock.advance(10);
+	assert.deepEqual([of("focus"), of("pager")], [[["focus", IDS.sweep], ["focus", IDS.sweep]], []]);
+
+	// Rapid j/k over subagent rows: one agents-view, for the row that stays selected.
+	calls.length = 0;
+	for (const k of ["j", "j", "k", "j"]) {
+		press(view, k);
+		await clock.advance(10);
+	}
+	await clock.advance(dv.SWAP_COALESCE_MS);
+	assert.equal(of("agentsView").length, 1, JSON.stringify(calls));
+	const path3 = of("agentsView")[0]![2] as string;
+	assert.notEqual(path3, path1);
+	assert.deepEqual(of("agentsClose"), [], "same session: the pi switches agents itself");
+
+	// A slow reply that is stale by the time it comes: ignored (no show for it); the newer row is asked next.
+	calls.length = 0;
+	const open = agents.hold();
+	press(view, "j");
+	await clock.advance(dv.SWAP_COALESCE_MS);
+	assert.equal(of("agentsView").length, 1);
+	press(view, "k");
+	await clock.advance(dv.SWAP_COALESCE_MS);
+	open();
+	await clock.advance(10);
+	assert.deepEqual(of("agentsView").map((c) => c[2]), [of("agentsView")[0]![2], path3]);
+	assert.equal(of("show").length, 1, `one show, for the row selected now: ${JSON.stringify(calls)}`);
+
+	// Another row (sweep itself): agents-close to sweep, then sweep's pi as usual.
+	calls.length = 0;
+	view.selectSession(IDS.sweep);
+	await clock.advance(dv.SWAP_COALESCE_MS);
+	assert.deepEqual(of("agentsClose"), [["agentsClose", IDS.sweep]]);
+
+	// ok:false (reaped, unknown, no tree): the holder preview of that subagent, as for other sessions' subagents.
+	calls.length = 0;
+	agents.reply((path) => (path === path1 ? { ok: false, error: "unknown agent" } : { ok: true }));
+	selectLine(view, path1);
+	await clock.advance(dv.SWAP_COALESCE_MS);
+	assert.deepEqual(of("agentsView").map((c) => c[2]), [path1]);
+	assert.deepEqual(of("show"), [["show", "holder"]]);
+	assert.ok(of("frame").length >= 1);
+	assert.match(screen(view, 100).at(-1)!, /⏎ its session {2}C-l read/);
+	// Its pager on C-l, like any subagent row without a view; moving on sends no agents-close (nothing open).
+	calls.length = 0;
+	press(view, "k");
+	await clock.advance(dv.SWAP_COALESCE_MS);
+	assert.deepEqual(of("agentsClose"), []);
+});
+
 test("closed sessions: under their repo after its live rows, the newest 3 then `+N closed`; closed-only repos last, folded; a search shows all", { skip }, async () => {
 	const H = 3600_000;
 	const closed = (id: string, name: string, repo: string, ageH: number): Row => ({ id, file: `/s/${id}.jsonl`, name, unnamed: false, cwd: repo, repo, state: "closed", at: fx.now - ageH * H, counts: { working: 0, waiting: 0, done: 0, error: 0 } });
@@ -526,9 +630,51 @@ test("Enter / C-l: deck row focuses the slot; outside row jumps; closed resumes;
 	press(view, "a");
 	await clock.advance(50);
 	assert.deepEqual(of("open")[1]![1], { cwd: fx.repos.gamma, focus: true });
-	// q and C-c detach (close the popup); the list keeps running.
-	press(view, "q", "\x03");
-	assert.equal(of("detach").length, 2);
+	// C-c detaches (closes the popup; the list keeps running); q does not any more.
+	press(view, "q");
+	assert.equal(of("detach").length, 0, "q is no detach");
+	press(view, "\x03");
+	assert.equal(of("detach").length, 1);
+});
+
+test("C-d: confirm killing every deck session and the deck (NORMAL and INSERT); n cancels, y kills; nvims with unsaved changes are named", { skip }, async () => {
+	const { view, clock, ops, calls, of } = makeView();
+	const killDeck: { killedServer: boolean; nvims: { session: string; cwd: string }[] }[] = [];
+	let reply = { killedServer: true, nvims: [] as { session: string; cwd: string }[] };
+	(ops as Record<string, unknown>).killDeck = async () => {
+		calls.push(["killDeck"]);
+		killDeck.push(reply);
+		return reply;
+	};
+	view.selectSession(IDS.sweep);
+	await clock.advance(100);
+	// C-d asks (two deck sessions here); n cancels, nothing killed; Esc too.
+	press(view, "\x04");
+	let lines = screen(view, 90);
+	assert.match(lines.at(-5)!, /Kill all 2 deck sessions and the deck\?/);
+	assert.match(lines.at(-1)!, /y\/⏎ kill · n\/Esc cancel/);
+	press(view, "j");
+	assert.match(screen(view, 90).at(-5)!, /Kill all 2 deck sessions/, "other keys keep the question");
+	press(view, "n");
+	assert.doesNotMatch(screen(view, 90).at(-5)!, /Kill all/);
+	press(view, "\x04", KEY.esc);
+	assert.doesNotMatch(screen(view, 90).at(-5)!, /Kill all/);
+	assert.equal(of("killDeck").length, 0);
+	// INSERT mode too; y kills (the list goes with the server).
+	press(view, "i", "\x04");
+	assert.match(screen(view, 90).at(-5)!, /Kill all 2 deck sessions/);
+	press(view, "y");
+	await clock.advance(10);
+	assert.equal(of("killDeck").length, 1);
+	assert.equal(of("detach").length, 0);
+	// The server stays up for nvims with unsaved buffers: they are named (session name, else the id).
+	reply = { killedServer: false, nvims: [{ session: IDS.sweep, cwd: "/w" }, { session: "deadbeef-1111", cwd: "/x" }] };
+	press(view, KEY.esc, "\x04", KEY.enter);
+	await clock.advance(10);
+	assert.equal(of("killDeck").length, 2);
+	lines = screen(view, 140);
+	assert.match(lines.at(-1)!, /unsaved changes in nvim \(physicsnemo sweep, deadbeef\): save and quit them \(:wqa\), then C-d again/);
+	assert.equal(of("detach").length, 0);
 });
 
 test("closed rows: the preview is the card then the end of the conversation; C-l reads the transcript (less in the holder), q back, Enter resumes, moving on restores the holder", { skip }, async () => {

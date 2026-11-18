@@ -1,6 +1,6 @@
 // Handler tests for fleet/lifecycle.ts with status.ts: register() against a fake `pi` and
 // context (RPC mode, no tmux), so the wiring is checked without spawning pi:
-//   - a confirmed kill on the control socket (the dashboard's / /sessions' `d`) asks nothing
+//   - a confirmed kill on the control socket (the deck list's `d`) asks nothing
 //     and scancels only when asked; an unconfirmed one still opens the dialog;
 //   - autonomous mode: set by /run-autonomously (or the old /leavemealone; the input text), cleared by /autonomous off,
 //     restored from its session entry on resume.

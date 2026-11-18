@@ -1,5 +1,8 @@
 # pi-deck: one deck window, pi sessions in a private tmux server
 
+> **Superseded in part by §15 (three-pane deck, 2026-11-17).** Where §15 and the sections
+> above disagree (layout, `prefix e`, `C-h`, entry from outside tmux, leader keys), §15 wins.
+
 Status: **design, not implemented** (2026-11-17). Replaces the window-per-session part of
 [pi-fleet-design.md](pi-fleet-design.md); everything that design says about status files, the
 registry, the control socket, the nvim bridge, `/view`, edit delivery and leader keys stays true
@@ -42,7 +45,7 @@ For comparison, one tmux client call is ~2 ms (20 `display -p` calls: 37 ms).
 6. **Per-session nvim lives in the pool too**, created **lazily** (first `prefix e`, `Space v`,
    `/view` or `Space f …`) and toggled with the session's pi in the right slot.
 7. **One entry story**: in the user's tmux `prefix g`, `prefix G`, `Space e`, `Space E` and
-   `/sessions` all open the same popup; `prefix g` (or `q`) inside the deck closes it. A
+   `/sessions` all open the same popup; `prefix g` (or `prefix d`, or `C-c` in the list) inside the deck closes it. A
    persistent outer "deck window" is rejected: it is exactly the nesting and clutter we remove,
    and the popup opens instantly because the list TUI is already running.
 
@@ -258,7 +261,9 @@ popup (direct attach) the row flashes "runs in your tmux (window N)".
 | | `d` | kill with the inline confirm: `y`/Enter kill · `s` kill + scancel · `n`/Esc cancel (Slurm default: left running) |
 | | `i`, `/` | INSERT mode (search bar) |
 | | `!` `@` `#` `&` / `0` | status filters / clear (unchanged) |
-| | `?` | help; `q` detach (close the popup / back to the shell) |
+| | `?` | help (`q` or `Esc` closes it) |
+| | `C-c` | detach (close the popup / back to the shell); `q` is no detach (§15) |
+| | `C-d` | kill every deck session and the deck: inline confirm (`y`/Enter kill · `n`/Esc cancel), then `killDeck` (also in INSERT) |
 | INSERT | letters | fuzzy terms (space-separated, all must match name/repo/cwd/last message); list filters live |
 | | `C-n`/`C-p`, ↑/↓ | move while typing; `Enter` = NORMAL `Enter` |
 | | `Esc` | back to NORMAL (query kept; a second `Esc` in NORMAL clears it) |
@@ -425,6 +430,91 @@ Optional refinements: mouse click selects a list row; a `prefix s` "last two ses
    uses `prefix h`/`:PiFocus`; (c) no root key, `prefix h` only.
 
 ## Decisions (user, 2026-11-17)
-1. nvim starts lazily on first use (prefix e / Space v / /view).
+1. nvim starts lazily on first use (prefix e / Space v / /view). *(§15: on first show.)*
 2. /new and /resume in a hand-started pi create the session in the deck and pop the deck up.
-3. C-h always returns to the list (pi and nvim); prefix C-h sends a literal C-h.
+3. C-h always returns to the list (pi and nvim); prefix C-h sends a literal C-h. *(§15: C-h/j/k/l navigation.)*
+
+## 15. Three-pane deck (user, 2026-11-17)
+
+The popup worked so well that the deck becomes *the* pi-fleet UI. There is no more pi|nvim
+window in the user's tmux and no `fleet` session.
+
+```
+┌──────── list (top-left) ─────────┬──────────── pi slot (right half) ───────────┐
+│ session list TUI (unchanged keys) │ selected session's pi                        │
+├──────── nvim slot (bottom-left) ──┤ (or preview holder / pager, as in §6)        │
+│ selected session's nvim           │                                              │
+└───────────────────────────────────┴──────────────────────────────────────────────┘
+```
+
+1. **Layout.** Deck window has three panes: list `=deck:=deck.0` (top-left), nvim slot
+   (bottom-left), pi slot (right). Left column `@deck_list_pct` (50) of the width, list
+   `@deck_list_height_pct` (50) of the left column's height. Panes are found by role/slot option,
+   not by index, wherever possible. The window always has exactly these three panes; the list
+   repairs it.
+2. **Two slots, two sizes.** Pool pis are kept at the pi-slot size, pool nvims at the nvim-slot
+   size (same no-SIGWINCH-on-swap invariant as §5, per role). Resize re-applies both in one call.
+3. **Highlight swaps both slots** in one tmux call: the session's pi → pi slot, its nvim → nvim
+   slot. **nvim per session, created on first show** (the first time the session is highlighted),
+   cwd = session cwd. Rows without a live deck session (closed, subagent, outside, remote) show
+   the preview/pager in the pi slot (as §6) and a second holder (`@pi_fleet_role=nvim-holder`,
+   blank/dim card) in the nvim slot. The `@pi_fleet_shown` pi↔nvim toggle is gone.
+4. **Navigation** (deck root table, `C-h/j/k/l`): move to the neighbouring pane in that
+   direction when there is one, else pass the key through. Exceptions: in pi, `C-j`/`C-k`
+   always pass through (newline / kill line) and `C-h` always goes to the list; in the list, `C-l`
+   keeps its list meaning (focus pi / read transcript). Net: list `C-j`→nvim, `C-l`→(list's own);
+   nvim `C-k`→list, `C-l`→pi; pi `C-h`→list. `prefix h/j/k/l` and `prefix C-h/j/k/l` send the
+   literal key. `prefix e` toggles focus pi ↔ nvim. `prefix z` zooms the focused pane.
+5. **nvim** drops its own `C-h/j/k/l` uses: cmp `C-j/C-k` (cmp's `C-n/C-p` remain), telescope
+   `C-h` which_key (`?` in normal mode). `:PiFocus` focuses the pi slot.
+6. **pi vim-mode NORMAL**: `Space` starts a selection, `v` toggles char ↔ line selection
+   (`V` still starts line select). The leader moves to `,`: `,ff ,fg ,fb ,fs ,fh ,gs ,t`.
+   `Space e`, `Space E`, `Space v` are removed (no `,` equivalents): the list and nvim are always
+   visible. `/sessions` stays.
+7. **Entry.** `pf` outside tmux: ensure the deck and attach directly (no new session; `a` in the
+   list makes one). `pf DIR [-- ARGS]` / `pf -- ARGS` (cwd): also `open` a new session, selected.
+   Inside tmux: same, in the 95% popup (`prefix g`/`G` too); `prefix d`/`prefix g` detach.
+8. **Leaving the list** (user, 2026-11-17): `q` no longer detaches (too easy to hit); `C-c` in the
+   list and `prefix d` anywhere do. `C-d` in the list (NORMAL and INSERT) kills everything: an inline
+   confirm, then deck.ts `killDeck` (every pi asked to quit, then `kill-server`, the list going with
+   it); nvims with unsaved file buffers keep the server up and are named in the list.
+9. **Cutover (phase 4 of §12)** is done together with this: tmux.conf's fleet block reduced to
+   `@pi_deck_bar` in status-left, bell, `prefix g/G` popup; the window-per-session code, bar/seen,
+   join, dashboard (`pi-fleet dashboard`, SessionsView), `fleet` session path in `pf` deleted;
+   `pi-fleet open` always opens in the deck. Kept on purpose: `pair`/`peer` and the user tmux's
+   `prefix e` (a pi started by hand there gets its nvim split beside it on `/view`), and the status
+   file's `tmux.windowIndex` (the list names an outside session's window).
+
+Status: implemented 2026-11-17 (deck.ts `slotArgs`/`showSessionDetail`/`deckSizesFor`,
+deck.tmux.conf navigation). A running two-pane deck becomes a three-pane one on `pi-fleet
+deck-reload` (the new list's `ensureLayout` splits the nvim slot under the list).
+
+## 16. Live subagent rows show pi-subagent-manager's agent view (user, 2026-11-17)
+
+Highlighting a subagent row of a **live deck session** (running, or finished but not yet reaped)
+shows exactly what `/agents tree` → Enter on that agent shows: the package's `LiveAgentView`
+(steer, actions, Ctrl+O/Ctrl+T, …), rendered by the main session's own pi.
+
+- **Mechanism.** The deck swaps the main session's pi into the pi slot (and its nvim into the
+  nvim slot) and sends that pi's control socket `{"type":"agents-view","path":P}`. The fleet
+  extension runs `/agents tree P` (`pi.sendUserMessage(…, {expandPromptTemplates:true})`;
+  extension commands run immediately, even while streaming), which opens the tree overlay with P
+  selected; `subagent-viewer.ts` (it already wraps the package's DialogSession) sees the tree
+  mount with a pending auto-enter for P and feeds it one Enter, so the overlay lands in P's
+  `LiveAgentView`. If the overlay is already open on another agent it is closed first.
+- **Moving away.** Highlighting any other row sends `{"type":"agents-close"}`, which closes the
+  overlay only if the deck opened it and the user never focused the pi slot while it was open
+  (`@pi_fleet_agents_view=<path>` on the pi pane records "deck-opened"; focusing clears it).
+- **C-l** on such a row focuses the pi slot (instead of the transcript pager). From there it is
+  the package's own UI: `Esc` → agent tree, `Esc` → the main conversation. **Enter** is the same
+  as C-l.
+- Subagents of outside, closed or remote sessions, and reaped/unknown paths (`agents-view`
+  replies `ok:false`), keep the §6 behaviour (holder transcript tail, C-l = less).
+- Fallbacks: if the package's internals change (no tree/dialog detected within 1 s), the reply
+  is `ok:false` and the deck falls back to the holder preview.
+
+Status: implemented 2026-11-17. Deck side: deck-view.ts (`agentsView`/`agentsClose` ops; the list asks
+first and swaps after, so a refused view never flashes the pi; rapid j/k is one request for the row
+that stays, a stale reply makes the next apply ask again; `agents-close` is sent only while the pane
+still carries the mark), deck.tmux.conf's `after-select-pane` hook (any focus of that pane, by key,
+click or the list's own Enter/C-l, clears the mark). pi side: fleet/agents-view.ts, subagent-viewer.ts.

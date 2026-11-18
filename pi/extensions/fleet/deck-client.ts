@@ -1,32 +1,21 @@
 /**
- * fleet/deck-client: what a pi does with the deck (docs/pi-deck-design.md §7, §8; phase 3). Not an
+ * fleet/deck-client: what a pi does with the deck (docs/pi-deck-design.md §7, §8, §15). Not an
  * extension module (index.ts does not load it): lifecycle.ts, leader.ts, view.ts and sessions-view.ts
  * call these helpers. No module-level state.
  *
  * Two places a pi can run:
  *   in the deck   a pool pane of `tmux -L pifleet` (PI_FLEET_DECK=1, $TMUX names the deck socket):
- *                 /new and /resume send `open` over deck.sock, `Space e`/`/sessions` focus the list,
- *                 nvim lives in the pool and is swapped into the right slot.
+ *                 /new and /resume send `open` over deck.sock, `/sessions` focuses the list, its nvim
+ *                 lives in the pool and is swapped into the nvim slot with the pi.
  *   outside       a pi started by hand in the user's tmux: /new and /resume start the deck if needed,
  *                 `open` the session there and pop the deck up over this client (display-popup on the
- *                 user's server, bin/pi-deck-attach); `Space e`/`Space E`/`/sessions` pop it up too.
+ *                 user's server, bin/pi-deck-attach); `/sessions` pops it up too.
  */
 
 import { spawn } from "node:child_process";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { focusPane, paneInfo, tmux, tmuxBaseArgs } from "./cli.ts";
-import {
-	deckPair,
-	deckPopupArgs,
-	deckRequest,
-	deckTmux,
-	focusList,
-	inDeck,
-	initialDeckSize,
-	readSlot,
-	startDeck,
-	type DeckPairResult,
-} from "./deck.ts";
+import { deckPanes, deckPopupArgs, deckRequest, deckTmux, focusList, inDeck, initialDeckSize, slotArgs, startDeck } from "./deck.ts";
 
 export { inDeck } from "./deck.ts";
 
@@ -77,7 +66,7 @@ export function popupDeck(env: NodeJS.ProcessEnv = process.env): Promise<void> {
 }
 
 /**
- * `Space e`, `Space E`, `/sessions` (§7, §8): in the deck, focus the list; in the user's tmux, start
+ * `/sessions` (§7, §8): in the deck, focus the list; in the user's tmux, start
  * the deck if needed and pop it up. Returns where the user ends up.
  */
 export async function enterDeck(env: NodeJS.ProcessEnv = process.env): Promise<"list" | "popup"> {
@@ -151,30 +140,23 @@ export async function outsideNotice(outside: OutsideWhere | undefined, error: st
 	return `pi-fleet: that session ${error}`;
 }
 
-// ---------------------------------------------------------------- nvim in the slot
+// ---------------------------------------------------------------- the session's nvim
 
 /**
- * Show a deck pi's nvim in its place (the slot, when the pi is shown there). If neither is shown the
- * pi remembers it (@pi_fleet_shown=nvim), so selecting the session shows its nvim.
+ * Focus a deck pi's nvim (/view, `, g s`): when the session is shown (its pi in the pi slot, or its nvim
+ * in the nvim slot) the nvim goes into the nvim slot (if something else is there) and gets the focus;
+ * a session that is not shown is left alone (its nvim comes along when it is selected).
  */
 export async function showNvim(piPane: string, nvimPane: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
-	const slot = await readSlot(env);
-	if (slot?.pane === nvimPane) return;
-	if (slot?.pane === piPane) {
-		await deckTmux(["swap-pane", "-d", "-s", nvimPane, "-t", piPane, ";", "select-pane", "-t", nvimPane], env);
-		return;
-	}
-	await deckTmux(["set-option", "-p", "-t", piPane, "@pi_fleet_shown", "nvim"], env);
+	const panes = await deckPanes(env);
+	const pi = panes.find((p) => p.pane === piPane);
+	const nvim = panes.find((p) => p.pane === nvimPane);
+	if (!pi?.inSlot && !nvim?.inNvimSlot) return;
+	const swap = slotArgs(panes, { nvim: nvimPane });
+	await deckTmux([...(swap ? [...swap, ";"] : []), "select-pane", "-t", nvimPane], env);
 }
 
-/** `Space v` in a deck pi: the slot toggles to this session's nvim (created on first use). */
-export async function toggleNvim(piPane: string, env: NodeJS.ProcessEnv = process.env): Promise<DeckPairResult> {
-	const r = await deckPair(piPane, { show: false }, env);
-	await showNvim(r.piPane, r.nvimPane, env);
-	return r;
-}
-
-/** Focus an nvim pane: in the deck show it in the slot, outside select its pane. */
+/** Focus an nvim pane: in the deck its slot (showNvim), outside select its pane. */
 export async function focusNvim(piPane: string | undefined, nvimPane: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
 	if (inDeck(env) && piPane) await showNvim(piPane, nvimPane, env);
 	else await focusPane(nvimPane, env);

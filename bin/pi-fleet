@@ -1,11 +1,12 @@
 #!/bin/sh
-# pi-fleet: many pi sessions in tmux, one window each (pi | nvim). See docs/pi-fleet-design.md.
-# This shim runs pi/extensions/fleet/cli.ts with node >= 22.18, which strips TypeScript types
-# without a flag. node comes from $PI_FLEET_NODE, PATH, or pi's own install (~/.local/share/pi-node).
+# pi-fleet: many pi sessions in the pi deck, a private tmux server (session list | nvim | pi).
+# See docs/pi-deck-design.md. This shim runs pi/extensions/fleet/cli.ts with node >= 22.18, which
+# strips TypeScript types without a flag. node comes from $PI_FLEET_NODE, PATH, or pi's own install
+# (~/.local/share/pi-node).
 #
-#   pi-fleet open [--session FILE|ID] [--cwd DIR]    open or jump to a session window
-#   pi-fleet pair|peer|bar|seen|ls|run-pi|dashboard  see `pi-fleet help`
-#   pi-fleet deck-start|attach|kill-deck|open --deck  the pi deck (docs/pi-deck-design.md)
+#   pi-fleet open [--session FILE|ID] [--cwd DIR]    a session in the deck
+#   pi-fleet attach|deck-start|kill-deck|deck-reload the deck itself
+#   pi-fleet pair|peer|ls|run-pi                     see `pi-fleet help`
 
 # Resolve symlinks to this file, then the repo it lives in.
 self=$0
@@ -39,7 +40,7 @@ for candidate in "${PI_FLEET_NODE:-}" "$(command -v node 2>/dev/null)" \
 done
 
 if [ -z "$node" ]; then
-    # The tmux status bar and hooks call bar/seen every few seconds: stay quiet there.
+    # A tmux server still running the pre-deck tmux.conf calls bar/seen from its status bar and hooks: stay quiet.
     case "${1:-}" in
         bar | seen) exit 0 ;;
     esac

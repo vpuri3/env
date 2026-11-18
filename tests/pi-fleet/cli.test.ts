@@ -1,8 +1,9 @@
-// pi-fleet CLI and tmux glue (design §7, §10; phase 2). Every test drives a throwaway tmux
-// server (`tmux -L fleettest-<pid>-<n>`); the harness refuses the default socket, and the CLI
-// runs with PI_FLEET_TMUX_GUARD=1 so it refuses it too. pi is the stub in support/stub-pi.sh
-// (PI_FLEET_PI_CMD); nvim is real (`nvim --clean -n`), skipped if missing. State, runtime and
-// HOME dirs are temporary.
+// pi-fleet CLI and tmux glue: run-pi, pair/peer (a pi started by hand in your tmux), ls, tmux.conf and
+// `pf` (pi-deck-design.md §8, §15). Every test drives a throwaway tmux server (`tmux -L
+// fleettest-<pid>-<n>`, and `…-deck` for the deck); the harness refuses the default socket, and the CLI
+// runs with PI_FLEET_TMUX_GUARD=1 so it refuses it (and pifleet) too. pi is the stub in
+// support/stub-pi.sh (PI_FLEET_PI_CMD); nvim is real (`nvim --clean -n`), skipped if missing. State,
+// runtime and HOME dirs are temporary.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -10,7 +11,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BAR_STYLES, ctlSockPath, locatePiPackages, nvimSockPath, runtimeDir, usePiPackages } from "../../pi/extensions/fleet/cli.ts";
+import { randomUUID } from "node:crypto";
+import { ctlSockPath, nvimSockPath, runtimeDir } from "../../pi/extensions/fleet/cli.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = join(here, "../..");
@@ -129,36 +131,39 @@ class Fleet {
 		writeFileSync(join(this.statusDir, `${status.sessionId}.json`), JSON.stringify(status));
 		return status.sessionId as string;
 	}
-	/** open a new session; returns its pi pane, nvim pane and session id. */
+	/** A pi started by hand in this tmux (a window running `pi-fleet run-pi`), paired with an nvim split (`pair`). */
 	async open(): Promise<{ pi: string; nvim: string; id: string }> {
-		const r = this.cli(["open", "--cwd", this.work]);
-		assert.equal(r.code, 0, r.err);
-		const pi = r.out.trim();
-		assert.match(pi, /^%\d+$/);
-		const id = this.opt(pi, "@pi_fleet_session");
+		const id = randomUUID();
+		const pi = this.tmux(["new-window", "-P", "-F", "#{pane_id}", "-c", this.work, "-e", `PI_FLEET_SESSION=${id}`, "--", cliBin, "run-pi", "--session-id", id]);
 		await waitFor("stub pi to start", () => this.runs(id).length === 1);
-		return { pi, nvim: this.opt(pi, "@pi_fleet_peer"), id };
+		const r = this.cli(["pair", pi, "--session", id]);
+		assert.equal(r.code, 0, r.err);
+		const nvim = r.out.trim();
+		assert.match(nvim, /^%\d+$/);
+		return { pi, nvim, id };
 	}
 	close(): void {
 		this.tryTmux(["kill-server"]);
 		if (this.socket) rmSync(this.socket, { force: true }); // tmux 3.2a leaves the socket file
-		rmSync(this.root, { recursive: true, force: true });
+		// The deck `pf` starts (PI_FLEET_DECK_SOCKET, see deckEnv).
+		const deck = `${this.label}-deck`;
+		spawnSync("tmux", ["-L", deck, "kill-server"], { stdio: "ignore" });
+		rmSync(join(`${process.env.TMUX_TMPDIR || "/tmp"}/tmux-${process.getuid?.() ?? 0}`, deck), { force: true });
+		rmSync(this.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+	}
+	/** This test's throwaway deck server (`<label>-deck`). */
+	deckEnv(): NodeJS.ProcessEnv {
+		return { PI_FLEET_DECK_SOCKET: `${this.label}-deck` };
+	}
+	deckTmux(args: string[]): string {
+		const full = ["-L", `${this.label}-deck`, ...args];
+		guardTmuxArgs(full);
+		return execFileSync("tmux", full, { encoding: "utf8" }).replace(/\n$/, "");
 	}
 }
 
 const skipTmux = !haveTmux && "tmux not installed";
 const skipNvim = (!haveTmux || !haveNvim) && "tmux or nvim not installed";
-
-test("bar colors are the session palette (sessions-view.ts ANSI_FG by tone)", { skip: !locatePiPackages() && "pi's pi-tui not found" }, async () => {
-	await usePiPackages(locatePiPackages()!);
-	const sv = await import("../../pi/extensions/fleet/sessions-view.ts");
-	const tmuxColour = (tone: import("../../pi/extensions/fleet/sessions-view.ts").Tone) => `colour${sv.ANSI_FG[sv.TONE_COLOR[tone]].replace(/^38;5;/, "")}`;
-	const row = (state: string) => ({ state }) as any;
-	for (const state of ["waiting", "question", "error", "crashed"]) {
-		const tone = sv.rowTone(row(state));
-		assert.equal(BAR_STYLES[state], `#[fg=${tmuxColour(tone)}${tone === "input" ? ",bold" : ""}]`, state);
-	}
-});
 
 test("harness and CLI refuse the default tmux socket", { skip: skipTmux }, () => {
 	assert.throws(() => guardTmuxArgs(["list-sessions"]));
@@ -208,25 +213,26 @@ test("runtimeDir: a bad default dir falls back to one mkdtemp dir, cached for ev
 	}
 });
 
-test("tmux.conf loads on this tmux: bell, bar, hook, keys; user bindings kept", { skip: skipTmux }, () => {
+test("tmux.conf loads on this tmux: bell, the deck bar (no polling), prefix g/G popup, prefix e; user bindings kept", { skip: skipTmux }, () => {
 	const f = new Fleet({ conf: tmuxConf });
 	try {
 		assert.equal(f.tmux(["show", "-gwv", "monitor-bell"]), "on");
 		assert.equal(f.tmux(["show", "-gv", "bell-action"]), "other");
 		assert.equal(f.tmux(["show", "-gv", "visual-bell"]), "off");
-		assert.equal(f.tmux(["show", "-gv", "status-interval"]), "5");
 		assert.equal(f.tmux(["show", "-gv", "status-left-length"]), "120");
-		assert.match(f.tmux(["show", "-gv", "status-left"]), /#\(pi-fleet bar --pane "#\{pane_id\}"/);
+		assert.equal(f.tmux(["show", "-gv", "status-left"]), "[#{session_name}] #{@pi_deck_bar}");
+		assert.doesNotMatch(readFileSync(tmuxConf, "utf8"), /#\(/, "no #(...) in the status bar");
 		assert.equal(f.tmux(["show", "-gv", "prefix"]), "C-s");
 		const hooks = f.tmux(["show-hooks", "-g"]);
-		assert.match(hooks, /session-window-changed\[0\] run-shell -b "pi-fleet seen --window #\{window_id\}/);
+		assert.doesNotMatch(hooks, /pi-fleet/);
 		assert.match(hooks, /client-attached\[0\] run-shell -b "#\{@ssh_link_cmd\}"/);
+		assert.equal(f.tryTmux(["list-keys", "-T", "root", "C-h"]), undefined, "no root C-h");
 		const keys = f.tmux(["list-keys", "-T", "prefix"]);
 		const key = (k: string) => keys.split("\n").find((l) => new RegExp(`-T prefix +${k} `).test(l)) ?? "";
 		assert.match(key("e"), /@pi_fleet_peer/);
 		assert.match(key("e"), /pi-fleet peer --select [^|]*\|\| true\\*"/, "a failure must not put the pane in view mode");
-		assert.match(key("g"), /@pi_fleet_dashboard.*last-window.*pi-fleet dashboard --window/);
-		assert.match(key("G"), /display-popup -E -h 90% -w 95% "pi-fleet dashboard"/);
+		assert.match(key("g"), /display-popup -E -h 90% -w 95% pi-deck-attach/);
+		assert.match(key("G"), /display-popup -E -h 90% -w 95% pi-deck-attach/);
 		for (const [k, cmd] of [["h", "select-pane -L"], ["j", "select-pane -D"], ["k", "select-pane -U"], ["l", "select-pane -R"],
 			["H", "resize-pane -L 10"], ["J", "resize-pane -D 10"], ["K", "resize-pane -U 10"], ["L", "resize-pane -R 10"],
 			["v", "split-window -h"], ["s", "split-window -v"], ["r", "source-file"]]) {
@@ -238,57 +244,31 @@ test("tmux.conf loads on this tmux: bell, bar, hook, keys; user bindings kept", 
 	}
 });
 
-test("open: one window per session, pi | nvim paired by pane id", { skip: skipNvim, timeout: 60_000 }, async () => {
+test("tmux.conf and deck.tmux.conf agree on the terminal settings", { skip: skipTmux }, () => {
+	const f = new Fleet({ conf: tmuxConf });
+	try {
+		const deckConf = join(repo, "pi/deck.tmux.conf");
+		f.deckTmux(["-f", deckConf, "new-session", "-d", "-s", "x", "sleep 600"]);
+		for (const [flag, opt] of [["-gv", "default-terminal"], ["-sv", "extended-keys"], ["-sv", "escape-time"], ["-gv", "prefix"], ["-gv", "set-clipboard"]]) {
+			assert.equal(f.deckTmux(["show", flag, opt]), f.tmux(["show", flag, opt]), opt);
+		}
+	} finally {
+		f.close();
+	}
+});
+
+test("ls: status files of this node, with liveness", { skip: skipTmux }, () => {
 	const f = new Fleet();
 	try {
-		const a = await f.open();
-		const b = await f.open();
-		assert.notEqual(a.id, b.id);
-		assert.equal(f.windows().length, 3);
-		for (const s of [a, b]) {
-			assert.equal(f.opt(s.pi, "@pi_fleet_role"), "pi");
-			assert.equal(f.opt(s.nvim, "@pi_fleet_role"), "nvim");
-			assert.equal(f.opt(s.nvim, "@pi_fleet_peer"), s.pi);
-			assert.equal(f.opt(s.nvim, "@pi_fleet_session"), s.id);
-			assert.equal(f.opt(s.pi, "window_id"), f.opt(s.nvim, "window_id"));
-			assert.equal(f.opt(s.pi, "@pi_fleet_named"), "1");
-			assert.match(f.opt(s.pi, "window_name"), /^⟳ work$/);
-			assert.equal(f.opt(s.pi, "pane_current_path"), f.work);
-			const [, pane, ...args] = f.runs(s.id)[0].split(" ");
-			assert.equal(pane, s.pi);
-			assert.deepEqual(args, ["--session-id", s.id]);
-			const sock = f.opt(s.nvim, "@pi_fleet_nvim_sock");
-			assert.equal(sock, join(f.root, "run", `${s.id}.nvim.sock`));
-			await waitFor("nvim to listen", () => existsSync(sock));
-		}
-		assert.equal(f.active(), b.pi, "the new pi pane is focused");
-		// pair is idempotent while the peer lives
-		const again = f.cli(["pair", a.pi, "--json"]);
-		assert.equal(again.code, 0, again.err);
-		assert.deepEqual(JSON.parse(again.out), { piPane: a.pi, nvimPane: a.nvim, nvimSock: f.opt(a.nvim, "@pi_fleet_nvim_sock"), created: false });
-
-		// --session of a live session with its pane present jumps there: no new window
-		f.writeStatus({ sessionId: a.id, tmux: { socket: f.socket, piPane: a.pi }, state: "waiting", acked: false, runId: "r1" });
-		const jump = f.cli(["open", "--session", a.id.slice(0, 8)]);
-		assert.equal(jump.code, 0, jump.err);
-		assert.equal(jump.out.trim(), a.pi);
-		assert.equal(f.windows().length, 3);
-		assert.equal(f.active(), a.pi);
-
-		// live on another host: refused
-		const remote = f.writeStatus({ sessionId: "remote-1", host: "elsewhere-node", tmux: { socket: f.socket, piPane: a.pi } });
-		const refused = f.cli(["open", "--session", remote]);
-		assert.equal(refused.code, 1);
-		assert.match(refused.err, /running on elsewhere-node/);
-		assert.equal(f.windows().length, 3);
-
-		// crashed (dead pid, pane gone): a new window resumes it with --session
-		const dead = f.writeStatus({ sessionId: "dead-1", pid: 999_999_999, tmux: { socket: f.socket, piPane: "%999" } });
-		const reopened = f.cli(["open", "--session", dead]);
-		assert.equal(reopened.code, 0, reopened.err);
-		assert.equal(f.windows().length, 4);
-		await waitFor("resumed stub", () => f.runs(dead).length === 1);
-		assert.deepEqual(f.runs(dead)[0].split(" ").slice(2), ["--session", dead]);
+		f.writeStatus({ sessionId: "live-1", name: "flare#1", state: "waiting", acked: false, runId: "r2" });
+		f.writeStatus({ sessionId: "dead-1", name: "busy", state: "running", pid: 999_999_999 });
+		f.writeStatus({ sessionId: "remote-2", name: "far", state: "waiting", acked: false, host: "elsewhere-node" });
+		const ls = JSON.parse(f.cli(["ls", "--json"]).out);
+		assert.equal(ls.length, 3);
+		assert.equal(ls.find((s: any) => s.sessionId === "live-1").liveness, "live");
+		assert.equal(ls.find((s: any) => s.sessionId === "dead-1").liveness, "crashed");
+		assert.equal(ls.find((s: any) => s.sessionId === "remote-2").liveness, "remote");
+		assert.match(f.cli(["ls"]).out, /flare#1/);
 	} finally {
 		f.close();
 	}
@@ -388,92 +368,6 @@ test("run-pi: exit 0 leaves nvim open when it has modified buffers; q closes aft
 	}
 });
 
-test("bar lists waiting sessions by real window index, renames fleet windows; seen acks", { skip: skipNvim, timeout: 60_000 }, async () => {
-	const f = new Fleet();
-	try {
-		const a = await f.open();
-		const b = await f.open();
-		const c = await f.open();
-		f.tmux(["move-window", "-s", f.opt(c.pi, "window_id"), "-t", "main:7"]);
-		const t0 = Date.now();
-		const at = (ms: number) => new Date(t0 - ms).toISOString();
-		const sock = f.socket;
-		f.writeStatus({ sessionId: a.id, name: "flare#1", state: "waiting", acked: false, runId: "r2", since: at(60_000), tmux: { socket: sock, piPane: a.pi } });
-		f.writeStatus({ sessionId: b.id, name: "a very long session name", state: "question", acked: false, runId: "r1", since: at(1000), tmux: { socket: sock, piPane: b.pi } });
-		f.writeStatus({ sessionId: c.id, name: "busy", state: "running", acked: true, runId: "r5", since: at(0), tmux: { socket: sock, piPane: c.pi } });
-		f.writeStatus({ sessionId: "remote-2", name: "far", state: "waiting", acked: false, host: "elsewhere-node", tmux: { socket: sock, piPane: a.pi } });
-		f.writeStatus({ sessionId: "other-server", name: "other", state: "waiting", acked: false, tmux: { socket: "/tmp/nope", piPane: a.pi } });
-		const ia = f.opt(a.pi, "window_index");
-		const ib = f.opt(b.pi, "window_index");
-		const r = f.cli(["bar", "--pane", a.pi]);
-		assert.equal(r.code, 0, r.err);
-		// Glyphs in the session palette: question orange 208 bold, waiting (done) green 78.
-		assert.equal(r.out, `π [${ib}]#[fg=colour208,bold]?#[default] a very long… [${ia}]#[fg=colour78]◐#[default] flare##1 `);
-		assert.equal(f.opt(a.pi, "window_name"), "◐ flare#1");
-		assert.equal(f.opt(c.pi, "window_name"), "● busy");
-		assert.equal(f.opt(c.pi, "window_index"), "7");
-		// a user-named window is left alone
-		f.tmux(["set-option", "-w", "-t", f.opt(b.pi, "window_id"), "@pi_fleet_named", "0"]);
-		f.tmux(["rename-window", "-t", f.opt(b.pi, "window_id"), "mine"]);
-		f.cli(["bar"]);
-		assert.equal(f.opt(b.pi, "window_name"), "mine");
-
-		// seen: only waiting/question with a runId; never running
-		f.cli(["seen", "--window", f.opt(c.pi, "window_id")]);
-		assert.ok(!existsSync(join(f.statusDir, `${c.id}.seen`)));
-		f.cli(["seen", "--window", f.opt(a.pi, "window_id")]);
-		assert.deepEqual(JSON.parse(readFileSync(join(f.statusDir, `${a.id}.seen`), "utf8")), { runId: "r2" });
-		f.cli(["seen", b.id]);
-		assert.deepEqual(JSON.parse(readFileSync(join(f.statusDir, `${b.id}.seen`), "utf8")), { runId: "r1" });
-
-		// crashed (pid dead) with its pane present: ✕ in the bar
-		f.writeStatus({ sessionId: c.id, name: "busy", state: "running", pid: 999_999_999, tmux: { socket: sock, piPane: c.pi } });
-		assert.match(f.cli(["bar"]).out, /\[7\]#\[fg=colour196\]✕#\[default\] busy/);
-		assert.equal(f.opt(c.pi, "window_name"), "✕ busy");
-
-		const ls = JSON.parse(f.cli(["ls", "--json"]).out);
-		assert.equal(ls.length, 5);
-		assert.equal(ls.find((s: any) => s.sessionId === c.id).liveness, "crashed");
-		assert.equal(ls.find((s: any) => s.sessionId === "remote-2").liveness, "remote");
-	} finally {
-		f.close();
-	}
-});
-
-test("# in cwd, names and session names is literal, not a tmux format", { skip: skipNvim, timeout: 60_000 }, async () => {
-	const f = new Fleet();
-	try {
-		f.tmux(["new-session", "-d", "-s", "s#1", "-x", "200", "-y", "50", "sh"]);
-		const target = f.tmux(["display-message", "-p", "-t", "s#1:", "#{pane_id}"]);
-		const cwd = join(f.work, "x#{session_name}#H");
-		mkdirSync(cwd);
-		const r = f.cli(["open", "--cwd", cwd, "--target", target]);
-		assert.equal(r.code, 0, r.err);
-		const pi = r.out.trim();
-		const id = f.opt(pi, "@pi_fleet_session");
-		await waitFor("stub pi to start", () => f.runs(id).length === 1);
-		const nvim = f.opt(pi, "@pi_fleet_peer");
-		assert.equal(f.opt(pi, "session_name"), "s#1");
-		assert.equal(f.opt(pi, "window_name"), "⟳ x#{session_name}#H");
-		assert.equal(f.opt(pi, "pane_current_path"), cwd);
-		await waitFor("nvim cwd", () => f.opt(nvim, "pane_current_path") === cwd);
-
-		f.writeStatus({ sessionId: id, name: "n#{session_name}#H", state: "waiting", acked: false, runId: "r1", tmux: { socket: f.socket, piPane: pi } });
-		const bar = f.cli(["bar", "--pane", f.active()]);
-		assert.equal(bar.out, `π [s##1:${f.opt(pi, "window_index")}]#[fg=colour78]◐#[default] n##{session_… `);
-		assert.equal(f.opt(pi, "window_name"), "◐ n#{session_name}#H");
-		// the next tick sees the literal name and does not rename again
-		f.tmux(["set-hook", "-g", "window-renamed", "set -g @pft_renamed 1"]);
-		f.cli(["bar"]);
-		f.cli(["bar"]);
-		assert.equal(f.tmux(["show", "-gqv", "@pft_renamed"]), "");
-		f.tmux(["rename-window", "-t", pi, "probe"]); // the hook itself works
-		await waitFor("hook fired", () => f.tmux(["show", "-gqv", "@pft_renamed"]) === "1");
-	} finally {
-		f.close();
-	}
-});
-
 test("run-pi: SIGTERM is forwarded to pi and exits 143 without the crash prompt", { skip: skipNvim, timeout: 60_000 }, async () => {
 	const f = new Fleet();
 	try {
@@ -491,84 +385,48 @@ test("run-pi: SIGTERM is forwarded to pi and exits 143 without the crash prompt"
 	}
 });
 
-test("tmux.conf hook: switching to a window acks its waiting pi", { skip: skipTmux, timeout: 30_000 }, async () => {
-	const f = new Fleet({ conf: tmuxConf });
-	try {
-		const w1 = f.tmux(["new-window", "-d", "-P", "-F", "#{pane_id}", "sh"]);
-		const w2 = f.tmux(["new-window", "-d", "-P", "-F", "#{pane_id}", "sh"]);
-		const waiting = f.writeStatus({ sessionId: "hook-wait", state: "waiting", acked: false, runId: "r3", tmux: { socket: f.socket, piPane: w1 } });
-		const running = f.writeStatus({ sessionId: "hook-run", state: "running", acked: true, runId: "r4", tmux: { socket: f.socket, piPane: w2 } });
-		f.tmux(["select-window", "-t", w2]);
-		f.tmux(["select-window", "-t", w1]);
-		const seenFile = join(f.statusDir, `${waiting}.seen`);
-		await waitFor("hook wrote .seen", () => existsSync(seenFile));
-		assert.deepEqual(JSON.parse(readFileSync(seenFile, "utf8")), { runId: "r3" });
-		assert.ok(!existsSync(join(f.statusDir, `${running}.seen`)));
-	} finally {
-		f.close();
-	}
-});
-
-test("dashboard --window: creates the fleet window, then toggles back", { skip: skipTmux, timeout: 30_000 }, async () => {
-	const f = new Fleet();
-	try {
-		const start = f.active();
-		assert.equal(f.cli(["dashboard", "--window", "--pane", start]).code, 0);
-		const dash = f.active();
-		assert.notEqual(dash, start);
-		assert.equal(f.opt(dash, "window_name"), "fleet");
-		assert.equal(f.opt(dash, "@pi_fleet_dashboard"), "1");
-		await waitFor("placeholder drawn", () => f.tmux(["capture-pane", "-p", "-t", dash]).includes("pi-fleet"));
-		assert.equal(f.cli(["dashboard", "--window", "--pane", dash]).code, 0);
-		assert.equal(f.active(), start, "from the dashboard: back to the last window");
-		assert.equal(f.cli(["dashboard", "--window", "--pane", start]).code, 0);
-		assert.equal(f.active(), dash, "reuses the existing window");
-		assert.equal(f.windows().length, 2);
-	} finally {
-		f.close();
-	}
-});
-
 // ---------------------------------------------------------------- pf (aliases.sh)
 
-test("pf (aliases.sh): outside tmux opens in session `fleet` (created in DIR); inside tmux just opens; args after --", { skip: !haveTmux && "tmux not found", timeout: 60_000 }, async () => {
+test("pf (aliases.sh): plain pf starts the deck only; pf DIR [-- ARGS] opens a session there in the deck (also inside tmux)", { skip: !haveTmux && "tmux not found", timeout: 90_000 }, async () => {
 	const f = new Fleet();
 	try {
 		const aliases = join(repo, "aliases.sh");
 		const pf = (args: string[], extra: NodeJS.ProcessEnv = {}, cwd = f.work) => {
-			const env: NodeJS.ProcessEnv = { ...f.env, PF_NO_ATTACH: "1", ...extra };
+			const env: NodeJS.ProcessEnv = { ...f.env, ...f.deckEnv(), PF_NO_ATTACH: "1", PI_FLEET_PI_PACKAGES: join(f.root, "none"), ...extra };
+			delete env.PI_FLEET_TMUX_SOCKET;
 			const r = spawnSync("bash", ["-c", '. "$0"; pf "$@"', aliases, ...args], { env, cwd, encoding: "utf8", timeout: 30_000 });
 			return { code: r.status ?? -1, err: r.stderr };
 		};
+		const deckPanes = () =>
+			f.deckTmux(["list-panes", "-a", "-F", "#{session_name}:#{window_name}.#{pane_index}\t#{@pi_fleet_role}\t#{@pi_fleet_session}\t#{pane_current_path}"]).split("\n").map((l) => l.split("\t"));
+		const pis = () => deckPanes().filter((p) => p[1] === "pi");
 		const dir = join(f.work, "proj");
 		mkdirSync(dir);
-		assert.deepEqual(f.tmux(["list-sessions", "-F", "#{session_name}"]).split("\n"), ["main"], "no fleet session yet");
 
-		// Outside tmux (no $TMUX): `fleet` is created in DIR, the pi window opens there and is current.
-		let r = pf(["proj", "--", "--model", "x"]);
+		// Plain pf: the deck (list, nvim slot, pi slot), no session; the user's tmux is left alone.
+		let r = pf([]);
 		assert.equal(r.code, 0, r.err);
-		const windows = () => f.tmux(["list-windows", "-t", "=fleet", "-F", "#{window_id}\t#{pane_id}\t#{window_active}"]).split("\n").map((l) => l.split("\t"));
-		assert.equal(windows().length, 2);
-		assert.equal(f.tmux(["display-message", "-p", "-t", "=fleet:^", "#{pane_current_path}"]), dir);
-		const piPane = f.tmux(["display-message", "-p", "-t", "=fleet:", "#{pane_id}"]);
-		assert.equal(f.opt(piPane, "@pi_fleet_role"), "pi");
-		assert.equal(f.opt(piPane, "pane_current_path"), dir);
-		const id = f.opt(piPane, "@pi_fleet_session");
-		await waitFor("stub pi to start", () => f.runs(id).length === 1);
-		assert.match(f.runs(id)[0]!, /--session-id \S+ --model x$/);
+		assert.deepEqual(deckPanes().filter((p) => p[0]!.startsWith("deck:")).map((p) => p[1]), ["list", "nvim-holder", "preview"]);
+		assert.equal(pis().length, 0);
+		assert.deepEqual(f.tmux(["list-sessions", "-F", "#{session_name}"]).split("\n"), ["main"]);
 
-		// The session exists now: `pf` (here) adds a window to it.
-		r = pf([], {}, dir);
+		// pf DIR -- ARGS: a new session in DIR, shown in the pi slot.
+		r = pf(["proj", "--", "--model", "x"]);
 		assert.equal(r.code, 0, r.err);
-		assert.equal(windows().length, 3);
-		assert.equal(f.opt(f.tmux(["display-message", "-p", "-t", "=fleet:", "#{pane_id}"]), "pane_current_path"), dir);
+		const [first] = pis();
+		assert.equal(first![0], "deck:deck.2");
+		assert.equal(first![3], dir);
+		await waitFor("stub pi to start", () => f.runs(first![2]!).length === 1);
+		assert.match(f.runs(first![2]!)[0]!, /--session-id \S+ --model x$/);
 
-		// Inside tmux: just `pi-fleet open` in this tmux session.
-		const main = f.active();
-		r = pf([dir], { TMUX: `${f.socket},1,0`, TMUX_PANE: main });
+		// pf -- ARGS: a new session here. Inside tmux: the same (the popup is skipped with PF_NO_ATTACH).
+		r = pf(["--", "--model", "y"], {}, dir);
 		assert.equal(r.code, 0, r.err);
-		assert.equal(f.tmux(["list-windows", "-t", "=main"]).split("\n").length, 2);
-		assert.equal(windows().length, 3);
+		assert.equal(pis().length, 2);
+		r = pf([dir], { TMUX: `${f.socket},1,0`, TMUX_PANE: f.active() });
+		assert.equal(r.code, 0, r.err);
+		assert.equal(pis().length, 3);
+		assert.equal(f.tmux(["list-windows", "-t", "=main"]).split("\n").length, 1, "no window in the user's tmux");
 
 		// Errors.
 		r = pf([join(f.work, "nope")]);

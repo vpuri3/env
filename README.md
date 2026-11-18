@@ -92,38 +92,40 @@ Host github.com
 
 ## pi-fleet
 
-pi-fleet runs several pi sessions at once in tmux, one window each: pi on the
-left, a **paired nvim** on the right. A dashboard lists every session on this
-login node, grouped by repo. Switching windows never pauses or kills a session.
-It is made of `pi/extensions/fleet/` (the pi extension), `bin/pi-fleet` (the
-CLI), `nvim/lua/nvconf/pi_fleet.lua` and the tmux keys in
-[docs/tmux.md](docs/tmux.md). The design is in
+pi-fleet runs several pi sessions at once in the **pi deck**, a private tmux
+server (`tmux -L pifleet`) with three panes: the session list (top left), the
+selected session's **nvim** (bottom left) and its **pi** (right half). Moving
+in the list swaps that session's pi and nvim in; every session keeps running
+in the background, and each has its own nvim (started the first time the
+session is shown). It is made of `pi/extensions/fleet/` (the pi extension),
+`bin/pi-fleet` (the CLI), `pi/deck.tmux.conf`, `nvim/lua/nvconf/pi_fleet.lua`
+and the tmux keys in [docs/tmux.md](docs/tmux.md). The design is in
+[docs/pi-deck-design.md](docs/pi-deck-design.md) (§15) and
 [docs/pi-fleet-design.md](docs/pi-fleet-design.md).
 
-Start with `pi-fleet open` inside tmux (or `pi-fleet open --cwd DIR`,
-`pi-fleet open --session FILE|ID`). A session that is already live is jumped
-to and never started twice; one live on another login node is refused.
-From a shell, `pf [DIR] [-- PI_ARGS]` does the same for DIR (default: here);
-outside tmux it opens in the tmux session `fleet` (created if missing) and
-attaches to it.
+From a shell, `pf` opens the deck: outside tmux in this terminal, inside tmux
+in a 95% popup (also `prefix g`). `pf DIR [-- PI_ARGS]` (or `pf -- PI_ARGS`
+for here) first starts a new session in DIR. `prefix d` (or `C-c` in the list)
+detaches; the deck keeps running. `pi-fleet open --session FILE|ID` resumes
+a session in the deck; one live on another login node is refused.
+`pi-fleet kill-deck` ends every deck session and the deck.
 
 Status glyphs: ● running · ? question · ◐ waiting (unseen) · ○ idle · ✕ error or
-crashed · ⟳ starting. Colors, the same in the dashboard and the tmux status
-bar: active (idle) blue, working purple (`»` when autonomous, after
+crashed · ⟳ starting. Colors, the same in the list and the tmux status bar:
+active (idle) blue, working purple (`»` when autonomous, after
 `/run-autonomously`), done (unseen) green, question orange, error red,
-closed grey. A
-stopped pi rings the bell, and the tmux status bar lists the sessions that
-need you by window number.
+closed grey. A stopped pi rings the bell, and your tmux status bar counts the
+sessions that need you (`π 1? 2◐`).
 
 | In pi | Does |
 | --- | --- |
 | `/new` | a new session in the pi deck, shown and focused (the current one keeps running); from a pi started by hand, the deck pops up |
 | `/resume` | pi's picker; the chosen session opens in the pi deck (selected if already there), or is jumped to if it runs in your tmux |
 | `/kill` | end this session: a dialog lists the subagents it stops and its Slurm jobs (left running by default) |
-| `/sessions` | the pi deck popup; in a deck pi, back to its list (same as `Space e`) |
-| `/reload` | pi's reload; also refreshes a running pi deck: re-reads `pi/deck.tmux.conf` and restarts the deck's list with the current code (pool sessions and the slot stay). By hand: `pi-fleet deck-reload` |
+| `/sessions` | in the deck: back to the list; elsewhere the deck popup |
+| `/reload` | pi's reload; also refreshes a running pi deck: re-reads `pi/deck.tmux.conf` and restarts the deck's list with the current code (sessions stay). By hand: `pi-fleet deck-reload` |
 | `/autonomous [off]` | is this session autonomous (set by `/run-autonomously`)? `off` ends it |
-| `/view FILE[:LINE]` | open a file in the session's nvim (started on first use) at LINE, then focus it (in the deck: shown in place of pi); completes files this session touched first, then the repo |
+| `/view FILE[:LINE]` | open a file in the session's nvim at LINE, then focus it (in the deck: the nvim below the list); completes files this session touched first, then the repo |
 | `/view tool:N` | the Nth most recent tool call's full output, read-only in nvim (`tool:` completes) |
 | `/view` | picker: touched files, then the last 10 tool calls |
 | `/btw QUESTION` | a side conversation (pi-btw) that runs even while the agent works |
@@ -131,7 +133,7 @@ need you by window number.
 **Session titles.** After the first run of an unnamed session, the fleet
 extension asks a cheap model (the cheapest haiku/flash/mini/nano/lite model of
 the session's provider, else the session's model) for a 3–6 word title and
-sets it as the session name, which the dashboard, the deck and `/resume` show.
+sets it as the session name, which the deck and `/resume` show.
 It is rewritten once more after 6 user messages. A name you give with `/name`
 or `--name` is never replaced. `PI_FLEET_TITLE_MODEL=provider/id` picks the
 model, `PI_FLEET_TITLE=off` turns titles off (`on` also titles RPC-mode pis),
@@ -143,44 +145,41 @@ Outside tmux, pi keeps its own `/new` and `/resume`, and `/view` falls back to
 extension, including the subagent manager that runs them, so wait until they
 finish.
 
-| Dashboard (`prefix g` / `Space e`, popup `prefix G` / `Space E`) | Does |
+| In the deck | Does |
 | --- | --- |
-| `j` / `k` (or arrows) | move |
-| `Space` | show a session's subagents (select one to preview its transcript); collapse a repo |
-| `Enter` | jump to the session, or open it in a new window (on a subagent: its main) |
-| `ctrl+l` | type into a live session: its pi pane joins the dashboard window on the right; `ctrl+h` in it goes back to the list. Another `ctrl+l` switches sessions, closing the dashboard sends the pane home. In the popup: jump to the session's window |
-| `d` | kill the session: confirm with `y`, or `s` to also scancel its Slurm jobs (`n`/`Esc` cancel); you stay in the list |
+| `C-h` `C-j` `C-k` `C-l` | move to the pane in that direction (from pi, `C-h` goes to the list; in pi `C-j`/`C-k` stay newline/kill line; at an edge the key goes to the program) |
+| `prefix e` | pi ↔ nvim |
+| `prefix z` | zoom the focused pane |
+| `prefix h` (or `prefix C-h`), … | send a literal `C-h`, … |
+| `prefix d`, `prefix g` | detach (closes the popup) |
+
+| Session list | Does |
+| --- | --- |
+| `j` / `k` (or arrows, `C-n`/`C-p`) | move; the session's pi and nvim follow |
+| `Enter`, `C-l` | focus the session's pi (closed session: `Enter` resumes it, `C-l` reads its transcript in `less`) |
+| `Space` | show a session's subagents; fold a repo. A subagent of a deck session shows its agent view (as `/agents tree` → Enter) in the session's pi, `Enter`/`C-l` go there (`Esc` → the tree → the conversation); other subagents preview their transcript (`C-l` reads it in `less`) |
+| `d` | kill the session: confirm with `y`, or `s` to also scancel its Slurm jobs (`n`/`Esc` cancel) |
 | `a` | new session in the repo of the row or repo header |
-| `/` | filter by name, repo, cwd or last message (`Esc` stops typing) |
+| `i`, `/` | search by name, repo, cwd or last message (`Esc` back) |
 | `!` `@` `#` `&` / `0` | only running / waiting / idle / error; `0` shows all |
 | `?` | help |
-| `q` | close (`Esc` clears filters first) |
-
-The selected row is highlighted across the list, and the line above the key
-hints shows that session's state, current tool, time, cost, subagents and cwd.
-The preview shows the selected session's pi pane, or for a subagent row the
-end of that subagent's transcript (text, dimmed thinking, one line per tool
-call). A pane joined with `ctrl+l` goes back next to its nvim (or into a
-window of its own) when you switch, press `q`, `ctrl+c` or `Enter`. Killing the
-whole `fleet` window (`prefix &`) while a pane is joined kills that pi too.
+| `C-c` | detach (as `prefix d`; the deck keeps running) |
+| `C-d` | kill every deck session and the deck (asks first: `y`/`Enter` kill, `n`/`Esc` cancel; nvims with unsaved changes keep it up and are named) |
 
 **vim-mode** (`pi/extensions/vim-mode.ts`, `Esc` enters NORMAL mode). Leader
-keys work in NORMAL mode only and mirror nvim's `<leader>` keys. The mode
-line shows `␣…` while one is pending. Any other key, or 1 s with no key,
-cancels it.
+keys (`,`) work in NORMAL mode only. The mode line shows `,…` while one is
+pending. Any other key, or 1 s with no key, cancels it.
 
 | NORMAL mode | Does |
 | --- | --- |
-| `Space e` / `Space E` | the pi deck popup; in a deck pi, back to its list |
-| `Space v` | this session's nvim (started on first use); in the deck it replaces pi in the slot (`:PiFocus` or deck `prefix e` swap back) |
-| `Space f f` | file picker (session files, then the repo), opening in the paired nvim |
-| `Space f g` | git files only |
-| `Space f b` | files touched in this session |
-| `Space f s` | grep (`Grep >` prompt, ripgrep), opening the hit at its line |
-| `Space f h` | slash commands; the chosen one goes into the prompt |
-| `Space g s` | `:Git` (fugitive) in the paired nvim, then focus it |
-| `Space t` | tool output picker |
-| `v` / `V` | start a character / line selection; `y` copies |
+| `Space` | start a selection; `v` toggles it between characters and whole lines (`V` starts a line selection); `y` copies |
+| `, f f` | file picker (session files, then the repo), opening in the session's nvim |
+| `, f g` | git files only |
+| `, f b` | files touched in this session |
+| `, f s` | grep (`Grep >` prompt, ripgrep), opening the hit at its line |
+| `, f h` | slash commands; the chosen one goes into the prompt |
+| `, g s` | `:Git` (fugitive) in the session's nvim, then focus it |
+| `, t` | tool output picker |
 
 | INSERT mode | Does |
 | --- | --- |
@@ -189,7 +188,7 @@ cancels it.
 
 The agent's `ask_user_question` takes an optional `timeoutSeconds`: if nobody
 answers in time, the options marked "(Recommended)" are chosen and the agent is
-told so. Any keypress cancels the countdown. In the paired nvim, files are
+told so. Any keypress cancels the countdown. In the session's nvim, files are
 read-only: `:w!` saves and tells pi with your next message, and `:w!!` saves
 and tells it now. See [docs/nvim.md](docs/nvim.md#paired-nvim-pi-fleet).
 

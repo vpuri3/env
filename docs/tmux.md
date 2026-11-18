@@ -40,28 +40,34 @@ The mouse is on: click to focus, drag borders to resize, scroll to enter copy mo
 
 ## pi-fleet (pi sessions)
 
-Each pi session gets its own window, with pi on the left and its paired nvim
-on the right (see the README's pi-fleet section). These keys run
-`~/env/bin/pi-fleet`. Without it they do nothing.
+pi sessions live in the **pi deck**, a private tmux server (`tmux -L pifleet`,
+config `~/env/pi/deck.tmux.conf`) with three panes: the session list (top
+left), the selected session's nvim (bottom left) and its pi (right half). See
+the README's pi-fleet section. `pf` opens it (outside tmux in the terminal,
+inside tmux in a popup). These keys run `~/env/bin/pi-fleet` and
+`pi-deck-attach`; without them they do nothing.
 
-| Keys | Does |
+| Keys (your tmux) | Does |
 | --- | --- |
-| `prefix e` | jump between pi and its paired nvim. Pairing is by pane id, so panes you add or swap don't matter. From a pi whose nvim is gone, it pairs a new one |
-| `prefix g` | the `fleet` dashboard window; from the dashboard, back to the last window (in pi: `Space e`, `/sessions`) |
-| `prefix G` | the dashboard as a popup (95% × 90%); `q` closes it (in pi: `Space E`) |
-| `Ctrl+h` | in a pi pane joined into the dashboard window (dashboard `ctrl+l`): back to the list on its left. Everywhere else `Ctrl+h` goes to the program as usual |
-| `prefix 0`..`9` | the numbers in the status bar are real window indices, so they jump straight there |
+| `prefix g`, `prefix G` | the deck in a popup (95% × 90%); `prefix g`, `prefix d` or `Ctrl+c` in the list closes it (in pi: `/sessions`) |
+| `prefix e` | for a pi started by hand here: jump between it and its nvim split (made by `/view`). Pairing is by pane id, so panes you add or swap don't matter |
+
+| Keys (in the deck, prefix `Ctrl+s` too) | Does |
+| --- | --- |
+| `Ctrl+h` `Ctrl+j` `Ctrl+k` `Ctrl+l` | move to the pane on that side: list ↔ nvim with `Ctrl+j`/`Ctrl+k`, nvim → pi with `Ctrl+l`, pi → list with `Ctrl+h`. With no pane on that side the program gets the key (in pi `Ctrl+j`/`Ctrl+k` always stay pi's; in the list `Ctrl+l` is the list's: focus the pi) |
+| `prefix e` | focus pi ↔ nvim |
+| `prefix z` | zoom / unzoom the pane |
+| `prefix h` `j` `k` `l` (or `prefix Ctrl+h` …) | send a literal `Ctrl+h` … to the program |
+| `prefix d`, `prefix g` (or `Ctrl+c` in the list) | detach (closes the popup; the deck keeps running) |
+| `Ctrl+d` in the list | kill every deck session and the deck (asks first) |
+| `prefix [` | copy mode |
 
 - **Bell.** A pi that stops (waiting ◐, question ?, error ✕) rings the bell.
   tmux flags that window in the window list unless it is the current one
   (`monitor-bell on`, `bell-action other`, `visual-bell off`).
-- **Status bar.** `status-left` lists sessions that need you, newest first,
-  e.g. `π [3]? flare [5]◐ ckpt` (? orange, ◐ green, ✕ red). It refreshes
-  every 5 s. Window names are
-  `<glyph> <session name>`.
-- **Hooks.** Switching to a window or session (`session-window-changed`,
-  `client-session-changed`) runs `pi-fleet seen`, which marks its waiting
-  sessions as seen: ◐ becomes ○ and they leave the status bar.
+- **Status bar.** `status-left` shows `#{@pi_deck_bar}`, which the deck's list
+  sets when sessions need you, e.g. `π 1? 2◐` (? orange, ◐ green, ✕ red).
+  Nothing polls: the list writes it when a session changes state.
 
 ## Copy mode (vi keys)
 

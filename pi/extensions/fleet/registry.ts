@@ -27,7 +27,7 @@
  *   - subagentFile(root, path): a thread's own session file when its registry view has no
  *     `sessionFile` (folded threads carry it when it has).
  *
- * Transcript tails (the dashboard's subagent preview): TranscriptTails reads the last
+ * Transcript tails (the deck list's subagent preview): TranscriptTails reads the last
  * TAIL_BYTES of a session file asynchronously, cached by (size, mtime); transcriptItems() turns
  * them into assistant text, thinking and one-line tool calls.
  *
@@ -473,7 +473,7 @@ function sameHead(a: SessionHead, b: SessionHead): boolean {
 }
 
 /**
- * The session index of one process (the dashboard, or one /sessions picker). scan() is cheap
+ * The session index of one process (the deck list). scan() is cheap
  * when nothing changed: one readdir per project dir and one stat per file.
  */
 export class SessionIndex {
@@ -646,7 +646,7 @@ export class SessionIndex {
 
 // ---------------------------------------------------------------- transcript tails (§9)
 
-/** One line of a subagent's recent transcript, as the dashboard preview shows it. */
+/** One line of a subagent's recent transcript, as the deck list's preview shows it. */
 export interface TranscriptItem {
 	kind: "text" | "thinking" | "tool";
 	/** Raw text (text/thinking may hold line breaks); the view sanitizes it. */
@@ -705,7 +705,7 @@ export function transcriptItems(text: string, cut: boolean, max = 60): Transcrip
 
 /**
  * Transcript tails of session files: the last TAIL_BYTES read asynchronously, parsed once per
- * (size, mtime). One per dashboard (no module-level state).
+ * (size, mtime). One per deck list (no module-level state).
  */
 export class TranscriptTails {
 	private cache = new Map<string, { size: number; mtimeMs: number; items: TranscriptItem[] }>();

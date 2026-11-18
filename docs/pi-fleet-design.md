@@ -1,5 +1,11 @@
 # pi-fleet: many pi sessions, a dashboard, and a paired nvim pane
 
+> **Superseded in part.** The window-per-session layout, the dashboard, `pi-fleet bar`/`seen`, the tmux
+> hooks and the `Space` leader described here are gone: sessions live in the pi deck, a private tmux server
+> with the session list, the selected session's nvim and its pi
+> ([pi-deck-design.md](pi-deck-design.md), §15 for the current layout and keys). Status files, the
+> registry, the control socket, the nvim bridge, `/view` and edit delivery are as described below.
+
 Status: **design, not implemented**, revision 2 with the user's decisions (2026-11-17). Versions: pi 1.5.2, pi-subagent-manager 1.7.1, tmux 3.2a, nvim 0.12.6, node 22.23. agent-deck source studied at commit `80494e5` (2026-11-16).
 
 ## 1. Goals

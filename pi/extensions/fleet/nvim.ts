@@ -7,8 +7,8 @@
  *   --listen socket as msgpack-RPC `nvim_exec_lua` requests; the function name and paths
  *   travel as RPC arguments (data), never spliced into code or a shell string.
  *   This module never creates an nvim: it starts lazily on first use (pi-deck-design.md
- *   decision 1: `prefix e`, `Space v`, `/view`, `Space f …`, `Space g s`; view.ts, leader.ts,
- *   the deck). Agent edits reload the nvim wherever it is, also a hidden one in the deck's
+ *   §15: the deck makes it when the session is first shown; `/view`, `, f …`, `, g s`; view.ts,
+ *   leader.ts). Agent edits reload the nvim wherever it is, also a hidden one in the deck's
  *   pool; with no nvim (never opened, or quit) they do nothing, and the next use makes one.
  *   A peer found at session start or on a call is recorded (status nvimPane/nvimSock).
  *

@@ -111,7 +111,12 @@ export class Deck {
 			return { pane: f[0]!, where: f[1]!, role: f[2]!, session: f[3]!, dead: f[4] === "1", tty: f[5]! };
 		});
 	}
+	/** The pi slot (right half). */
 	slot(): Pane {
+		return this.panes().find((p) => p.where === "deck:deck.2")!;
+	}
+	/** The nvim slot (below the list). */
+	nvimSlot(): Pane {
 		return this.panes().find((p) => p.where === "deck:deck.1")!;
 	}
 	activeIndex(): string {
@@ -122,7 +127,7 @@ export class Deck {
 		return this.tmux(["capture-pane", "-p", "-t", "=deck:=deck.0"]);
 	}
 	slotScreen(): string {
-		return this.tmux(["capture-pane", "-p", "-t", "=deck:=deck.1"]);
+		return this.tmux(["capture-pane", "-p", "-t", "=deck:=deck.2"]);
 	}
 	/** Keys typed into the list pane. */
 	keys(...k: string[]): void {
@@ -165,6 +170,6 @@ export class Deck {
 			rmSync(join(socketDir, name), { force: true });
 		}
 		this.servers.clear();
-		rmSync(this.root, { recursive: true, force: true });
+		rmSync(this.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	}
 }

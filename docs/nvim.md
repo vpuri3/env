@@ -28,13 +28,15 @@ Leader is **`Space`**. `nv` is an alias for `nvim`.
 | `<leader>fh` | command palette (`:` commands) |
 
 Telescope skips `.git`, `node_modules`, `.venv`, `__pycache__`, caches,
-`wandb`, `build`/`dist` and similar directories.
+`wandb`, `build`/`dist` and similar directories. In a picker, `?` (normal
+mode) lists its keys; `q` or `Esc Esc` closes it. `Ctrl+h` is not mapped
+(tmux uses `Ctrl+h/j/k/l` to move between pi deck panes).
 
 ## Windows, buffers, tabs
 
 | Keys | Does |
 | --- | --- |
-| `Ctrl+h/j/k/l` | move to the split left / down / up / right |
+| `Ctrl+w h/j/k/l` | move to the split left / down / up / right (`Ctrl+h/j/k/l` are left to tmux) |
 | `Shift+h` / `Shift+l` | previous / next buffer |
 | `Ctrl+p` / `Ctrl+n` | previous / next tab |
 | `:T` | `:tabe` (new tab) |
@@ -87,7 +89,7 @@ LSP servers are installed by Mason on first use: `lua_ls`, `clangd`,
 | Completion keys (insert) | Does |
 | --- | --- |
 | `Tab` / `Shift+Tab` | next / previous item, or jump through snippet fields |
-| `Ctrl+j` / `Ctrl+k` | next / previous item |
+| `Ctrl+n` / `Ctrl+p` | next / previous item (`Ctrl+j/k` are left to tmux pane navigation) |
 | `Enter` | accept (the first item if none is selected) |
 | `Ctrl+Space` | open completion |
 | `Ctrl+e` | close |
@@ -99,7 +101,10 @@ over 100 KB.
 
 ## Paired nvim (pi-fleet)
 
-The nvim on the right of a pi-fleet window is **paired** with its pi. It
+Every session in the pi deck has its own nvim, shown below the session list
+while that session is selected (started the first time the session is shown;
+see the README's pi-fleet section). A pi started by hand in your tmux gets one
+split beside it on `/view`. That nvim is **paired** with its pi. It
 counts as paired when `pi-fleet` started it, i.e. when `$PI_FLEET_SESSION` and
 `$PI_FLEET_CTL_SOCK` are set and it is not running inside another nvim's
 terminal. Any other nvim, including one the agent starts through bash, behaves
@@ -116,7 +121,7 @@ normally. In a paired nvim:
 | `:w!!` | save + **interrupt**: pi gets the diff now (steer). It lands after the running tool call and never aborts a running command |
 | `:PiHelp` | explains the writes, reloads and conflicts (`q` closes) |
 | `:PiDiff` | compare your buffer with the version on disk (`q` closes) |
-| `:PiFocus` | back to the pi (same as tmux `prefix e`; in the pi deck the pi is swapped back into the slot) |
+| `:PiFocus` | back to the pi (in the pi deck the pi beside it, like `Ctrl+l` or `prefix e`; for a pi started by hand, like tmux `prefix e`) |
 
 **When pi edits a file that is open here:**
 
@@ -129,7 +134,9 @@ normally. In a paired nvim:
 
 Saves of one file within 2 s go to pi as one diff. pi blocks the agent's
 `edit` and `write` on a file you saved until the agent has read it again.
-`/view` and the pi leader keys open files here and then focus this pane.
+`/view` and the pi leader keys (`, f f` …) open files here and then focus this
+pane. In the deck `Ctrl+l` goes to the pi and `Ctrl+k` to the session list
+(nvim maps nothing to `Ctrl+h/j/k/l`).
 
 ## Troubleshooting
 

@@ -15,7 +15,7 @@
 --     (pi/extensions/fleet/nvim.ts, msgpack-RPC nvim_exec_lua; paths travel as data).
 --     Unmodified buffers reload silently; modified ones are left alone and marked as a
 --     conflict (:PiDiff, :e!). No W12 prompt ever blocks (FileChangedShell).
---   * :PiHelp, :PiDiff, :PiFocus (back to the pi; in the deck a swap), :PiWriteSteer.
+--   * :PiHelp, :PiDiff, :PiFocus (back to the pi's pane), :PiWriteSteer.
 
 local M = {}
 
@@ -474,11 +474,11 @@ When pi edits a file that is open here:
       :w!       keep yours (pi is told what you changed relative to its version)
 
 Other commands:
-  :PiFocus        back to the pi (in the deck: swap it back into this slot)
+  :PiFocus        back to the pi (in the deck: the pi beside this nvim; also C-l)
   :PiWriteSteer   what :w!! runs (accepts a file name)
   :PiHelp         this help
 
-Outside a pi-fleet window (no $PI_FLEET_SESSION) none of this is active.
+Outside pi-fleet (no $PI_FLEET_SESSION) none of this is active.
 Design: ~/env/docs/pi-fleet-design.md §11
 ]]
 
@@ -542,9 +542,9 @@ function M.diff()
     notify("left: pi's version on disk · right: your buffer · q closes · :e! takes pi's · :w! keeps yours")
 end
 
---- :PiFocus — back to the pi. In the pi deck ($PI_FLEET_DECK=1) this nvim and its pi share the
---- right slot, so the pi is swapped back into this pane's place (`prefix e` does the same);
---- elsewhere the pi's pane is selected.
+--- :PiFocus — back to the pi. In the pi deck ($PI_FLEET_DECK=1) this nvim sits in the nvim slot
+--- and its pi in the pi slot beside it, so the pi's pane is just focused (`C-l` and `prefix e` do
+--- the same); elsewhere the pi's window and pane are selected.
 function M.focus()
     local pane = env("PI_FLEET_PI_PANE")
     if not pane or not pane:match("^%%%d+$") then
@@ -556,9 +556,8 @@ function M.focus()
         return false
     end
     local cmd = { "tmux", "select-window", "-t", pane, ";", "select-pane", "-t", pane }
-    local me = env("TMUX_PANE")
-    if env("PI_FLEET_DECK") == "1" and me and me:match("^%%%d+$") then
-        cmd = { "tmux", "swap-pane", "-d", "-s", pane, "-t", me, ";", "select-pane", "-t", pane }
+    if env("PI_FLEET_DECK") == "1" then
+        cmd = { "tmux", "select-pane", "-t", pane }
     end
     vim.system(cmd, { text = true },
         function(res)

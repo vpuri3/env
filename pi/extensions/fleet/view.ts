@@ -9,19 +9,19 @@
  *   /view              one picker: touched files, then the last 10 tool calls.
  *
  * The paired nvim is found with nvim.ts's resolveNvim; if there is none (or its socket is dead)
- * and this is a TUI pi in tmux, one is made now (nvim starts on first use): in the pi deck a pool
- * pane (deck.ts deckPair), shown in the right slot in place of the pi once the file is open
- * (deck-client.ts focusNvim); elsewhere `pairPane` (cli.ts) splits one beside the pi, which is
- * then focused. Calls go through
+ * and this is a TUI pi in tmux, one is made now: in the pi deck a pool pane (deck.ts deckPair; the
+ * deck normally made it when the session was first shown), in the nvim slot below the list, focused
+ * once the file is open (deck-client.ts focusNvim); elsewhere (a pi started by hand in your tmux)
+ * `pairPane` (cli.ts) splits one beside the pi, which is then focused. Calls go through
  * `nvim_exec_lua` with fixed Lua; paths, lines and buffer text travel only as arguments.
  * Without a paired nvim (outside tmux, RPC without a socket, pairing failed) it falls back to
  * compact-tools' old behaviour, with a one-line notice: `nvim -R` in a new tmux window, else in
  * place of the TUI until nvim quits ($PAGER when there is no nvim).
  *
  * Exports for phase 8 (leader.ts; `pi` is the extension's pi, `ctx` a UI context):
- *   openFilePicker(pi, ctx, { scope: "all" | "git" | "session", query? })   Space f f / f g / f b
- *   openToolPicker(pi, ctx)                                                   Space t
- *   openGrepPicker(pi, ctx, pattern?)                                         Space f s
+ *   openFilePicker(pi, ctx, { scope: "all" | "git" | "session", query? })   , f f / f g / f b
+ *   openToolPicker(pi, ctx)                                                   , t
+ *   openGrepPicker(pi, ctx, pattern?)                                         , f s
  *   viewFile(pi, ctx, "path[:line]"), viewTool(pi, ctx, n), viewPicker(pi, ctx)
  * All dialogs run inside ownPrompt(); everything is a no-op without ctx.hasUI.
  * No module-level mutable state (per-session state: files.ts's filesOf(pi), register()'s closure).
@@ -158,7 +158,7 @@ function isTui(ctx: ExtensionContext): boolean {
 /**
  * Pair a new nvim with this pi (TUI in tmux only): in the deck a hidden pool pane, else a split
  * beside the pi. Waits up to 5 s for its socket and records it in the status file; undefined
- * when that is not possible. Also used by leader.ts (`Space v`, `Space g s`).
+ * when that is not possible. Also used by leader.ts (`, g s`).
  */
 export async function pairNew(pi: ExtensionAPI, ctx: ExtensionContext): Promise<NvimPeer | undefined> {
 	const pane = process.env.TMUX_PANE;
@@ -181,7 +181,7 @@ export async function pairNew(pi: ExtensionAPI, ctx: ExtensionContext): Promise<
 
 /**
  * Run `op` in the paired nvim, pairing (or re-pairing a dead one) when allowed, then focus it
- * (in the deck: show it in the slot).
+ * (in the deck: its nvim slot).
  * Returns false when there is no paired nvim to use (the caller falls back). nvim's own
  * errors are thrown.
  */
@@ -496,7 +496,7 @@ const SCOPE_TITLES: Record<FileScope, string> = {
 	session: "Open session file",
 };
 
-/** File picker for `Space f f` (all), `f g` (git/repo files), `f b` (session files). */
+/** File picker for `, f f` (all), `f g` (git/repo files), `f b` (session files). */
 export async function openFilePicker(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
@@ -520,7 +520,7 @@ function toolItems(calls: ToolCall[], cwd: string, limit: number): PickItem[] {
 	return calls.slice(0, limit).map((c, i) => ({ value: `tool:${i + 1}`, label: displayText(callLabel(c, i + 1, cwd)) }));
 }
 
-/** Tool output picker for `Space t`: every call on the branch, newest first. */
+/** Tool output picker for `, t`: every call on the branch, newest first. */
 export async function openToolPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	if (!ctx.hasUI) return;
 	const calls = callsOf(ctx);
@@ -548,7 +548,7 @@ export async function viewPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 	if (!(await viewFile(pi, ctx, item.value))) ctx.ui.notify(`/view: ${item.value} no longer exists`, "error");
 }
 
-/** `Space f s`: a `Grep >` input, then `rg --vimgrep` hits; the chosen hit opens at its line. */
+/** `, f s`: a `Grep >` input, then `rg --vimgrep` hits; the chosen hit opens at its line. */
 export async function openGrepPicker(pi: ExtensionAPI, ctx: ExtensionContext, pattern?: string): Promise<void> {
 	if (!ctx.hasUI) return;
 	const pat = pattern ?? (await ownPrompt(pi, () => ctx.ui.input("Grep >", "rg pattern")));
