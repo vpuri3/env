@@ -8,7 +8,7 @@ import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { locatePiPackages, usePiPackages } from "../../pi/extensions/fleet/cli.ts";
 import { IDS, buildFixture, plainStyle, type Fixture } from "./support/sessions-fixture.ts";
 
@@ -1073,5 +1073,66 @@ test("controller with a real fs.watch: a status write shows in the list within 3
 		(await import("node:fs")).rmSync(join(fx.statusDir, `${NEW}.json`), { force: true });
 		await controller.stop();
 		view.dispose();
+	}
+});
+
+// ---------------------------------------------------------------- A: new session in a directory
+
+test("A: path prompt prefilled with the repo's parent; Tab completes; Enter opens an existing dir only; Esc cancels; a on outside opens it", { skip }, async () => {
+	const { mkdtempSync } = await import("node:fs");
+	const { tmpdir } = await import("node:os");
+	const root = mkdtempSync(join(tmpdir(), "deck-path-"));
+	for (const d of ["project-one", "project-two", "solo", ".hidden", "repo/.git"]) mkdirSync(join(root, d), { recursive: true });
+	writeFileSync(join(root, "sofile"), "");
+	const { view, clock, of } = makeView({ height: 30 });
+	const box = () => screen(view).slice(-3, -2)[0]!;
+
+	view.selectSession(IDS.sweep);
+	const repo = view.rows.find((r) => r.id === IDS.sweep)!.repo!;
+	press(view, "A");
+	assert.equal(view.mode, "path");
+	assert.equal(view.pathText, `${dirname(repo)}/`, "the repo's parent dir");
+	assert.match(screen(view).at(-4)!, /PATH/);
+	assert.ok(box().includes(`▸ ${dirname(repo)}/▏`), box());
+	// Esc: nothing happens, the query untouched.
+	press(view, "x", KEY.esc);
+	assert.equal(view.mode, "normal");
+	assert.equal(view.query, "");
+	assert.equal(of("open").length, 0);
+
+	press(view, "A", "\x15", ...`${root}/pro`, "\t");
+	assert.equal(view.pathText, `${root}/project-`, "common prefix");
+	press(view, "o", "\t");
+	assert.equal(view.pathText, `${root}/project-one/`, "unique match");
+	press(view, "\x17", "s", "o", "\t");
+	assert.equal(view.pathText, `${root}/solo/`, "dirs only; C-w drops components");
+	// Suggestions: the git repo first, marked; hidden ones not shown.
+	press(view, "\x17");
+	const sugg = screen(view).filter((l) => l.includes(root));
+	assert.match(sugg[0]!, /repo\/  git/);
+	assert.ok(!sugg.some((l) => l.includes(".hidden")));
+	press(view, KEY.ctrlN, "\t");
+	assert.equal(view.pathText, `${root}/repo/`, "Tab takes the highlighted suggestion");
+
+	press(view, "\x15", ...`${root}/nope`, KEY.enter);
+	assert.equal(view.mode, "path");
+	assert.match(screen(view).at(-1)!, /no such directory/);
+	assert.equal(of("open").length, 0);
+
+	press(view, "\x15", ...`${root}/solo/`, KEY.enter);
+	await clock.advance(50);
+	assert.equal(view.mode, "normal");
+	assert.deepEqual(of("open").at(-1)![1], { cwd: join(root, "solo"), focus: true });
+
+	// a on the special outside header: the prompt, at ~/.
+	selectLine(view, "outside");
+	press(view, "a");
+	assert.equal(view.mode, "path");
+	assert.equal(view.pathText, "~/");
+	// Small panes keep their layout.
+	for (const h of [6, 7, 9]) {
+		const small = makeView({ height: h }).view;
+		press(small, "A");
+		assert.equal(small.render(60).length, h);
 	}
 });

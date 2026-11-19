@@ -10,6 +10,9 @@
  *
  * Layout (top to bottom): the list, the selected row's status line, the search bar in a box
  * (mode badge and `4/12` on its top border, the color legend on its bottom one), key hints.
+ * `A` (or `a` with no repo highlighted) turns the box into a PATH prompt: a directory with Tab
+ * completion and suggestions in the list's lower part (git repos not in the deck first); Enter opens
+ * a new session there.
  * Groups: one per repo (deck sessions, crashed ones,
  * sessions running outside tmux, other hosts' greyed, then that repo's closed sessions: grey, ◌, the
  * newest CLOSED_SHOWN, the rest behind a `+N closed` row), then `outside (your tmux)` (pis started
@@ -57,10 +60,10 @@
  */
 
 import { execFile } from "node:child_process";
-import { constants as fsc, existsSync, readFileSync, readdirSync, watch, type FSWatcher } from "node:fs";
+import { constants as fsc, existsSync, readFileSync, readdirSync, statSync, watch, type FSWatcher } from "node:fs";
 import { open as fsOpen, type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { isKeyRelease, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { ctlSockPath, guardedSocket, readStatus } from "./cli.ts";
@@ -384,7 +387,7 @@ const realTimers: Timers = {
 // ---------------------------------------------------------------- the view
 
 export type RowKind = "deck" | "outside" | "local" | "remote" | "crashed" | "closed";
-export type Mode = "normal" | "insert";
+export type Mode = "normal" | "insert" | "path";
 
 type Item =
 	| { kind: "group"; key: string; group: Group; collapsed: boolean; special?: "outside"; live: number; closed: number }
@@ -428,6 +431,8 @@ const HELP_LINES = [
 	"  Space             subagents of a session / fold a group",
 	"                    (on +N closed: a repo's older closed sessions)",
 	"  a                 new session in the row's repo",
+	"  A                 new session in a directory (path prompt: Tab completes,",
+	"                    Enter opens, Esc cancels)",
 	"  r                 refresh: sort the list again (rows otherwise keep their",
 	"                    place as their state changes; new sessions go last)",
 	"  d                 kill: y/⏎ kill · s kill + scancel Slurm · n/Esc no",
@@ -440,7 +445,35 @@ const HELP_LINES = [
 	"INSERT",
 	"  letters           fuzzy terms (all must match name, repo, cwd, message)",
 	"  C-n/C-p ↑/↓       move    Enter  open    Esc  back to NORMAL",
+	"PATH",
+	"  letters           a directory (~ is home)   C-u clear   C-w drop a component",
+	"  Tab               complete (or take the highlighted suggestion)",
+	"  C-n/C-p ↑/↓       move among suggestions (git: a repo not in the deck yet)",
+	"  Enter             new session there    Esc  back to NORMAL",
 ];
+
+/** Suggestion lines under the PATH prompt (at most). */
+const PATH_SUGGESTIONS = 8;
+
+/** `~` and `~/x` → home; anything else as typed (relative → under home). */
+function expandPath(text: string, home: string): string {
+	const t = text === "~" ? home : text.startsWith("~/") ? join(home, text.slice(2)) : text;
+	return resolve(home, t);
+}
+
+function isDir(path: string): boolean {
+	try {
+		return statSync(path).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+function commonPrefix(names: string[]): string {
+	let p = names[0] ?? "";
+	for (const n of names) while (!n.startsWith(p)) p = p.slice(0, -1);
+	return p;
+}
 
 /** The legend on the search box's border, most important first (as many as fit). */
 const BOX_LEGEND: Tone[] = ["active", "working", "done", "input", "error", "auto", "closed", "remote"];
@@ -496,6 +529,11 @@ export class DeckView implements Component {
 	rows: SessionRow[] = [];
 	mode: Mode = "normal";
 	query = "";
+	/** The PATH prompt's text (kept apart from the search query). */
+	pathText = "";
+	/** Highlighted suggestion in PATH mode, -1 for none. */
+	private pathSel = -1;
+	private pathCache: { text: string; list: { name: string; git: boolean }[] } | undefined;
 	statusFilter: StatusFilter | undefined;
 	private items: Item[] = [];
 	private selected = 0;
@@ -1197,6 +1235,7 @@ export class DeckView implements Component {
 		else if (this.confirm) this.handleConfirm(data);
 		else if (matchesKey(data, "ctrl+d")) this.askKillAll();
 		else if (this.mode === "insert") this.handleInsert(data);
+		else if (this.mode === "path") this.handlePath(data);
 		else this.handleNormal(data);
 		this.opts.requestRender();
 	}
@@ -1287,6 +1326,8 @@ export class DeckView implements Component {
 				return this.askKill();
 			case "a":
 				return this.newSession();
+			case "A":
+				return this.openPathPrompt();
 		}
 		if (ch && STATUS_FILTER_KEYS[ch]) {
 			const f = STATUS_FILTER_KEYS[ch];
@@ -1296,20 +1337,112 @@ export class DeckView implements Component {
 		}
 	}
 
-	private newSession(): void {
+	private home(): string {
+		return this.opts.home ?? homedir();
+	}
+
+	/** The highlighted row's repo (a header's, a session's repo or cwd); undefined for special/none. */
+	private rowRepo(): string | undefined {
 		const item = this.items[this.selected];
-		let cwd: string | undefined;
-		if (item?.kind === "group") {
-			if (item.special) return this.flash("a: highlight a repo or a session");
-			cwd = item.group.repo;
-		} else if (item?.kind === "more") cwd = item.group.repo;
-		else if (item && item.kind !== "note") cwd = item.row.repo || item.row.cwd;
-		cwd ||= this.opts.home ?? homedir();
+		if (item?.kind === "group") return item.special ? undefined : item.group.repo;
+		if (item?.kind === "more") return item.group.repo;
+		if (item && item.kind !== "note") return item.row.repo || item.row.cwd || undefined;
+		return undefined;
+	}
+
+	private newSession(): void {
+		const cwd = this.rowRepo();
+		if (!cwd) return this.openPathPrompt();
+		this.openIn(cwd);
+	}
+
+	/** `a` and the PATH prompt's Enter: a new session in `cwd`, shown and focused. */
+	private openIn(cwd: string): void {
 		this.flash(`new session in ${tilde(oneLine(cwd))}…`);
 		void this.run(async () => {
 			const r = await this.opts.ops.open({ cwd, focus: true });
 			return r.session;
 		});
+	}
+
+	/** PATH mode, starting at the highlighted repo's parent dir (`~/` without one). */
+	private openPathPrompt(): void {
+		const repo = this.rowRepo();
+		const parent = repo ? tilde(dirname(repo)) : "~";
+		this.pathText = parent.endsWith("/") ? parent : `${parent}/`;
+		this.pathSel = -1;
+		this.mode = "path";
+		this.help = false;
+	}
+
+	/** The typed path split into its directory (resolved) and the last component's prefix. */
+	private pathParts(text = this.pathText): { dirText: string; dir: string; prefix: string } {
+		const cut = text.lastIndexOf("/") + 1;
+		const dirText = text.slice(0, cut);
+		const prefix = text.slice(cut);
+		if (!cut && prefix === "~") return { dirText: "~/", dir: this.home(), prefix: "" };
+		return { dirText, dir: expandPath(dirText || ".", this.home()), prefix };
+	}
+
+	/** Directories in the typed dir matching the prefix: git repos not in the deck first, then by name. */
+	private pathSuggestions(): { name: string; git: boolean }[] {
+		if (this.pathCache?.text === this.pathText) return this.pathCache.list;
+		const { dir, prefix } = this.pathParts();
+		let list: { name: string; git: boolean }[] = [];
+		try {
+			const known = new Set(this.rows.map((r) => r.repo).filter(Boolean));
+			list = readdirSync(dir, { withFileTypes: true })
+				.filter((e) => e.name.startsWith(prefix) && (prefix.startsWith(".") || !e.name.startsWith(".")))
+				.filter((e) => e.isDirectory() || (e.isSymbolicLink() && isDir(join(dir, e.name))))
+				.map((e) => {
+					const full = join(dir, e.name);
+					return { name: e.name, git: existsSync(join(full, ".git")) && !known.has(full) };
+				})
+				.sort((a, b) => Number(b.git) - Number(a.git) || a.name.localeCompare(b.name));
+		} catch {}
+		this.pathCache = { text: this.pathText, list };
+		return list;
+	}
+
+	private setPath(text: string): void {
+		this.pathText = text;
+		this.pathSel = -1;
+	}
+
+	private handlePath(data: string): void {
+		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+			this.mode = "normal";
+			return;
+		}
+		const list = this.pathSuggestions();
+		if (matchesKey(data, "enter")) {
+			const { dirText } = this.pathParts();
+			const text = this.pathSel >= 0 && list[this.pathSel] ? `${dirText}${list[this.pathSel]!.name}` : this.pathText;
+			const cwd = expandPath(text.trim() || "~", this.home());
+			if (!isDir(cwd)) return this.flash(`no such directory: ${tilde(oneLine(cwd))}`);
+			this.mode = "normal";
+			return this.openIn(cwd);
+		}
+		if (matchesKey(data, "tab")) {
+			const { dirText, prefix } = this.pathParts();
+			if (this.pathSel >= 0 && list[this.pathSel]) return this.setPath(`${dirText}${list[this.pathSel]!.name}/`);
+			if (list.length === 1) return this.setPath(`${dirText}${list[0]!.name}/`);
+			const common = commonPrefix(list.map((c) => c.name));
+			if (list.length > 1 && common.length > prefix.length) this.setPath(`${dirText}${common}`);
+			return;
+		}
+		const shown = Math.min(list.length, PATH_SUGGESTIONS, this.listHeight() - 2);
+		if (matchesKey(data, "down") || matchesKey(data, "ctrl+n")) {
+			if (shown) this.pathSel = this.pathSel + 1 >= shown ? 0 : this.pathSel + 1;
+		} else if (matchesKey(data, "up") || matchesKey(data, "ctrl+p")) {
+			if (shown) this.pathSel = this.pathSel <= 0 ? shown - 1 : this.pathSel - 1;
+		} else if (matchesKey(data, "backspace")) this.setPath(this.pathText.slice(0, -1));
+		else if (matchesKey(data, "ctrl+u")) this.setPath("");
+		else if (matchesKey(data, "ctrl+w")) this.setPath(this.pathText.replace(/[^/]*\/?$/, ""));
+		else {
+			const text = printable(data);
+			if (text) this.setPath(this.pathText + text);
+		}
 	}
 
 	/** Run an action that may create or show a session; afterwards re-read panes and select it. */
@@ -1527,9 +1660,28 @@ export class DeckView implements Component {
 		const height = Math.max(DeckView.CHROME + 1, this.opts.height());
 		if (this.message && this.message.until < this.now()) this.message = undefined;
 		const bodyH = height - DeckView.CHROME;
-		const body = this.help ? this.helpLines(width) : this.listLines(width, bodyH);
-		while (body.length < bodyH) body.push("");
+		const sugg = this.mode === "path" ? this.pathLines(width, Math.min(PATH_SUGGESTIONS + 1, bodyH - 1)) : [];
+		const listH = bodyH - sugg.length;
+		const body = this.help ? this.helpLines(width) : this.listLines(width, listH);
+		while (body.length < listH) body.push("");
+		body.length = listH;
+		body.push(...sugg);
 		return [...body.slice(0, bodyH), this.statusLine(width), ...this.searchBox(width), this.hintLine(width)].map((l) => fit(l, width));
+	}
+
+	/** PATH mode: a rule, then matching directories (the highlighted one selected), in `height` lines. */
+	private pathLines(width: number, height: number): string[] {
+		if (height < 2) return [];
+		const style = this.opts.style;
+		const list = this.pathSuggestions().slice(0, height - 1);
+		const { dirText } = this.pathParts();
+		const lines = [fit(style.fg("border", `${"─".repeat(2)} ${list.length ? "directories" : "no matching directories"} ${"─".repeat(width)}`), width)];
+		list.forEach((c, i) => {
+			const text = ` ${dirText}${c.name}/${c.git ? `  ${style.fg("dim", "git")}` : ""}`;
+			const sel = i === this.pathSel;
+			lines.push(sel && style.selected ? style.selected(pad(text, width)) : fit(sel ? `›${text.slice(1)}` : text, width));
+		});
+		return lines;
 	}
 
 	private helpLines(width: number): string[] {
@@ -1545,9 +1697,10 @@ export class DeckView implements Component {
 	 */
 	private searchBox(width: number): string[] {
 		const style = this.opts.style;
-		const insert = this.mode === "insert";
+		const path = this.mode === "path";
+		const insert = this.mode === "insert" || path;
 		const line = (t: string) => (insert ? style.bold(style.fg("accent", t)) : style.fg("muted", t));
-		const badge = insert ? style.bold(style.fg("success", " INSERT ")) : style.bold(style.fg("accent", " NORMAL "));
+		const badge = path ? style.bold(style.fg("warning", " PATH ")) : insert ? style.bold(style.fg("success", " INSERT ")) : style.bold(style.fg("accent", " NORMAL "));
 		const total = this.rows.length;
 		const matched = this.query.trim() || this.statusFilter ? this.rows.filter((r) => this.matches(r)).length : total;
 		const count = style.fg("text", ` ${matched}/${total} `);
@@ -1558,7 +1711,9 @@ export class DeckView implements Component {
 		// │ ⌕ query▏ [filter] │
 		const cursor = insert ? style.fg("accent", "▏") : "";
 		const filter = this.statusFilter ? ` ${style.fg("accent", `[${this.statusFilter}]`)}` : "";
-		const query = fit(` ${style.fg(insert ? "accent" : "muted", "⌕")} ${style.fg("text", oneLine(this.query))}${cursor}${filter}`, inner);
+		const query = path
+			? fit(` ${style.fg("accent", "▸")} ${style.fg("text", oneLine(this.pathText))}${cursor}`, inner)
+			: fit(` ${style.fg(insert ? "accent" : "muted", "⌕")} ${style.fg("text", oneLine(this.query))}${cursor}${filter}`, inner);
 		const mid = `${line("│")}${query}${" ".repeat(Math.max(0, inner - visibleWidth(query)))}${line("│")}`;
 		// ╰─ ○ active  ● working … ─╯
 		let legendText = "";
@@ -1591,9 +1746,11 @@ export class DeckView implements Component {
 		}
 		if (this.message) return fit(` ${style.fg("warning", this.message.text)}`, width);
 		const chunks =
-			this.mode === "insert"
+			this.mode === "path"
+				? ["type a directory", "Tab complete", "⏎ new session", "C-n/C-p pick", "Esc cancel"]
+				: this.mode === "insert"
 				? ["type to search", "⏎ open", "C-n/C-p move", "Esc normal"]
-				: ["j/k move", ...this.openHints(), "a new", "d kill", "i / search", "? help", "C-c detach", "r refresh", "C-d kill all", "␣ subagents"];
+				: ["j/k move", ...this.openHints(), "a new", "d kill", "i / search", "? help", "C-c detach", "A new in…", "r refresh", "C-d kill all", "␣ subagents"];
 		// As many hints as fit, in order (detach before the rarer ones).
 		let hint = "";
 		for (const c of chunks) {

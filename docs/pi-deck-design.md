@@ -258,7 +258,8 @@ popup (direct attach) the row flashes "runs in your tmux (window N)".
 | | `Enter` | closed/crashed row: resume into the pool, then focus. Subagent: select its main |
 | | `C-l` | closed/crashed/subagent row: read its transcript in less in the right slot (above); `q` or `C-h` back to the list, Enter in less = Enter on the row |
 | | `Space` | expand subagents / collapse a repo group / show a repo's older closed sessions (`+N closed`) |
-| | `a` | new session in the highlighted row's repo (or header's) → shown and focused |
+| | `a` | new session in the highlighted row's repo (or header's) → shown and focused; on `outside`/an empty list: the PATH prompt |
+| | `A` | PATH prompt (the search box, badge PATH; the query is kept): starts at the row's repo's parent dir (`~/` without one); Tab completes a component (unique → `dir/`, else the common prefix), C-u clears, C-w drops a component; up to 8 matching directories below the list (git repos not in the deck first, marked `git`), C-n/C-p ↑/↓ pick one (Tab takes it); Enter: an existing directory → new session there, shown and focused (never creates one; else a flash); Esc cancels |
 | | `d` | kill with the inline confirm: `y`/Enter kill · `s` kill + scancel · `n`/Esc cancel (Slurm default: left running) |
 | | `i`, `/` | INSERT mode (search bar) |
 | | `!` `@` `#` `&` / `0` | status filters / clear (unchanged) |
