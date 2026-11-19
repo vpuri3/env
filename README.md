@@ -14,7 +14,7 @@ clusters (bash), with an idempotent bootstrap script.
 | [AGENTS.md](AGENTS.md) | rules for coding agents working in this repo (`CLAUDE.md` links to it) |
 | [skills/](skills/) | agent skills (`env-deploy`, `env-add-cluster`, `slurm-jobs`, `cluster-login`, `cluster-python-env`, `dataset-download`, `run-autonomously`), linked into `~/.agents/skills/` |
 | [bin/sjob](bin/sjob) | Slurm helper: `sjob alloc/run/shell/batch/chain/q/info/wait/cancel`; site values from `SJOB_*` vars |
-| [pi/agents/](pi/agents/) | pi subagent types (`slurm-operator`, `scout` and `coder-fast` on Sonnet, `coder-low`, thinking overlays), copied into `~/.pi/agent/subagent-manager/agents/`; `/agents reload` in a running pi picks up changes |
+| [pi/agents/](pi/agents/) | pi subagent types (`scout` and `coder-fast` on Sonnet, `slurm-operator` and `coder-low` on Opus low, thinking overlays), copied into `~/.pi/agent/subagent-manager/agents/`; `/agents reload` in a running pi picks up changes |
 | [pi/prompts/fanout.md](pi/prompts/fanout.md) | `/fanout <task>`: plan, fan the parts out to parallel Sonnet workers in worktrees, merge, test once |
 | [pi/AGENTS.md](pi/AGENTS.md) | global pi instructions for orchestrating subagents (lanes, review loop, tests), linked to `~/.pi/agent/AGENTS.md` |
 | [bin/agent-lane](bin/agent-lane) | one git worktree per parallel agent: `agent-lane new/path/list/merge/rm` (lanes live in `<repo>/.worktrees/`, hidden via `.git/info/exclude`) |

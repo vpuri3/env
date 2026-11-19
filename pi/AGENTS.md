@@ -19,7 +19,7 @@ agent hops, run independent work in parallel, and keep the main thread free.
 | `reviewer` | Opus, medium | Fresh-context review of a finished lane. Never edits. |
 | `scout` | Sonnet, low | Lookups, running slow test suites and reporting only the failures, log and session triage. Never edits. |
 | `tasker` | Opus, low | Small bounded jobs that edit files (one-site fixes, mechanical edits). |
-| `slurm-operator` | Sonnet, low | Cluster jobs, queues, installs, babysitting runs. Reports failures it can't explain instead of debugging them. |
+| `slurm-operator` | Opus, low | Cluster jobs, queues, installs, babysitting runs. Reports failures it can't explain instead of debugging them. |
 
 Choosing among these types is fine. Don't change a type's model or thinking level, per
 spawn or in config, without asking the user.

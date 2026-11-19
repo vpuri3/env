@@ -1,10 +1,10 @@
 ---
 name: slurm-operator
 description: Run work on a Slurm cluster so the parent's context stays clean - get interactive allocations or submit batch jobs, install environments on compute nodes, download/extract datasets, launch and babysit training, manage restart chains, watch queues. Returns a short report (job ids, log paths, status), not logs.
-# Sonnet, low thinking: the work is mostly launching, polling and reading logs (user decision 2026-11-18).
+# Opus, low thinking: cluster work needs Opus judgment; low thinking keeps it fast (user decision 2026-11-18).
 thinkingLevel: low
 models:
-  - anthropic/claude-sonnet-5-5
+  - anthropic/claude-opus-5-5
 color: warning
 tools:
   allow:
