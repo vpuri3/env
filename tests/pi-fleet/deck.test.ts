@@ -342,7 +342,7 @@ test("deck.tmux.conf: options and keys (list-keys, show -gv)", { skip: skipTmux 
 		assert.equal(d.tmux(["show", "-gv", "@deck_list_height_pct"]), "40");
 		assert.equal(d.tmux(["show", "-gv", "@deck_nvim_height_pct"]), "40");
 		assert.match(d.tmux(["show", "-sv", "terminal-features"]), /tmux\*:extkeys/);
-		assert.match(d.tmux(["show-hooks", "-wg"]), /pane-died\[0\] if-shell -F "#\{==:#\{@pi_fleet_role\},list\}" respawn-pane/);
+		assert.match(d.tmux(["show-hooks", "-wg"]), /pane-died\[0\] if-shell -F "#\{==:#\{@pi_fleet_role\},list\}" (\{ )?respawn-pane/);
 		// C-h/j/k/l: the neighbouring pane, else the key itself (pi: C-h always the list; list: C-l its own).
 		assert.match(d.tmux(["list-keys", "-T", "root", "C-h"]), /if-shell -F .*pane_at_left.*@pi_fleet_role\},pi.*send-keys C-h.*select-pane -t =deck:=deck\.0/);
 		assert.match(d.tmux(["list-keys", "-T", "root", "C-j"]), /if-shell -F .*pane_at_bottom.*send-keys C-j.*select-pane -D/);
