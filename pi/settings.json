@@ -1,7 +1,6 @@
 {
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-5-5",
-  "editorPaddingX": 2,
   "followUpMode": "one-at-a-time",
   "httpIdleTimeoutMs": 0,
   "hideThinkingBlock": true,
