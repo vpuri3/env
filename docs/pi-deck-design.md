@@ -461,7 +461,7 @@ window in the user's tmux and no `fleet` session.
    slot. **nvim per session, created on first show** (the first time the session is highlighted),
    cwd = session cwd. Rows without a live deck session (closed, subagent, outside, remote) show
    the preview/pager in the pi slot (as §6) and a second holder (`@pi_fleet_role=nvim-holder`,
-   blank/dim card) in the nvim slot. The `@pi_fleet_shown` pi↔nvim toggle is gone.
+   a default nvim, see §17.2) in the nvim slot. The `@pi_fleet_shown` pi↔nvim toggle is gone.
    Quitting the shown nvim by hand (`:qa`, exit 0) starts a new one for the same pi in the slot;
    an nvim that crashed, or that its exiting pi closed (`@pi_fleet_closing`), gives way to the holder.
 4. **Navigation** (deck root table, `C-h/j/k/l`): move to the neighbouring pane in that
@@ -545,9 +545,19 @@ click or the list's own Enter/C-l, clears the mark). pi side: fleet/agents-view.
 2. **Per-session shell** (`@pi_fleet_role=term`, `@pi_fleet_session`): the user's `$SHELL -l` in
    the session's cwd under `POOL_WRAP`, created on the session's first show with its nvim, kept in
    the pool at the terminal-slot size, swapped in with the pi and nvim in the same tmux call. Rows
-   without a live deck session show the `term-holder` (dim placeholder). A shell goes when it
+   without a live deck session show the `term-holder`. A shell goes when it
    exits or when its session's pi is gone (`/kill`, `d`, an exit; reconcile kills it whatever it
    runs; never waited for); `kill-deck` takes it with the server.
+   **Default shell and nvim.** The `term-holder` and `nvim-holder` are usable too: one shared
+   `$SHELL -l` (default `/bin/bash`) and one `PI_FLEET_NVIM_CMD` nvim (default `nvim`, the user's
+   config; the shell when it is not on PATH), both in `$HOME`, under `HOLDER_WRAP` (deck.ts). They are
+   panes like a session's nvim and shell (focus with `C-j`/`C-k`/`prefix e`, type), and keep their
+   state while the highlight moves between non-live rows (they wait in the pool while a live row
+   is shown). Exiting one (`exit`, `:qa`) marks it `@pi_fleet_exited` and wakes the list; reconcile
+   `respawn-pane -k`s it fresh in place, in the slot or the pool. One that fails at start (nonzero
+   within about a second) is not retried: its pane shows the old dim note over `sleep` instead
+   (`no shell` / `no editor: not a live deck session`). On list start, holders still running that
+   note from before this change (their start command lacks `pi-fleet-holder`) are respawned.
 3. **Navigation** (root table): `C-j`/`C-k` are `select-pane -D`/`-U` unless the pane is at the
    bottom/top edge (list → nvim → shell and back), `C-l` from the left column to the pi slot,
    `C-h` from the pi to the list; at an edge the key goes through (in the shell `C-h` and `C-j`;

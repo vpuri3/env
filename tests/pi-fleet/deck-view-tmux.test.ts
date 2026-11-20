@@ -236,6 +236,10 @@ test("a closed row: the holder previews its conversation; C-l opens it in less i
 		assert.equal(pagerOn(), "");
 		assert.deepEqual([d.slot().pane, deckWindow().length, d.slot().dead], [holder, 4, false]);
 		assert.equal(d.nvimSlot().role, "nvim-holder", "no editor for a closed row");
+		// The default shell and nvim below the list: the same processes while the highlight moves between non-live rows.
+		const holderPids = () => [d.nvimSlot(), d.termSlot()].map((p) => `${p.role} ${p.pane} ${d.tmux(["display-message", "-p", "-t", p.pane, "#{pane_pid}"])}`).join(", ");
+		const pidsBefore = holderPids();
+		assert.match(pidsBefore, /^nvim-holder \S+ \d+, term-holder \S+ \d+$/);
 		assert.ok(!d.panes().some((p) => p.role === "pi"), "q resumes nothing");
 		// C-l again, C-h (as the root binding does), move on: the holder gets its sleep back and shows the next frame.
 		d.keys("C-l");
@@ -244,6 +248,10 @@ test("a closed row: the holder previews its conversation; C-l opens it in less i
 		d.keys("k");
 		await waitList(d, "the holder restored", () => command() === "sleep" && pagerOn() === "" && !/q\/C-h back/.test(d.slotScreen()));
 		assert.deepEqual([d.slot().pane, deckWindow().length], [holder, 4]);
+		d.keys("j");
+		await waitList(d, "the card", () => /── transcript/.test(d.slotScreen()));
+		assert.equal(holderPids(), pidsBefore, "the holders were not respawned");
+		d.keys("k");
 		// Enter in less: resumed as a pi in the deck, shown and focused.
 		d.keys("j");
 		await waitList(d, "the card", () => /── transcript/.test(d.slotScreen()));

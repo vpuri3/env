@@ -674,6 +674,95 @@ test("a pi exiting 0 leaves the pool and the slot falls back to the holder; a de
 	}
 });
 
+test("the holders: a default shell and nvim in $HOME you can type into, kept across rows, respawned after a clean exit", { skip: skipTmux, timeout: 90_000 }, async () => {
+	const d = new Deck();
+	try {
+		// A fake nvim (PI_FLEET_NVIM_CMD): says where it runs, exits 0 on a line `q`.
+		const fake = join(d.root, "fake-nvim");
+		writeFileSync(fake, '#!/bin/sh\necho "fake-nvim $$ in $(pwd)"\nwhile read l; do [ "$l" = q ] && exit 0; echo "got $l"; done\n');
+		chmodSync(fake, 0o755);
+		d.env.PI_FLEET_NVIM_CMD = fake;
+		d.start();
+		const home = join(d.root, "home");
+		const cap = (pane: string) => d.tmux(["capture-pane", "-p", "-t", pane]);
+		const term = d.termSlot();
+		assert.equal(term.role, "term-holder");
+		assert.equal(d.tmux(["display-message", "-p", "-t", term.pane, "#{pane_current_path}"]), home);
+		// Focusable and typed into like a session's shell (no stty -echo, nothing refocuses the list).
+		d.tmux(["select-pane", "-t", "=deck:=deck.2"]);
+		assert.equal(d.activeIndex(), "2");
+		d.tmux(["send-keys", "-t", term.pane, "X=kept; echo hi$((40+2))", "Enter"]);
+		await waitFor("the shell's output", () => cap(term.pane).includes("hi42"));
+		const nvim = d.nvimSlot();
+		assert.equal(nvim.role, "nvim-holder");
+		await waitFor("the fake nvim in $HOME", () => cap(nvim.pane).includes(`in ${home}`));
+		d.tmux(["send-keys", "-t", nvim.pane, "abc", "Enter"]);
+		await waitFor("the nvim got the line", () => cap(nvim.pane).includes("got abc"));
+		// A deck session takes the slots, the holders wait in the pool with their state; back on a non-live row, the same ones.
+		const s = await d.open();
+		await waitFor("the session's shell in the slot", () => d.termSlot().role === "term" && d.termSlot().session === s.id);
+		assert.ok(d.panes().some((p) => p.pane === term.pane && p.where.startsWith("pool:") && !p.dead));
+		d.deckCall("d.showHolder()");
+		assert.equal(d.termSlot().pane, term.pane);
+		assert.equal(d.nvimSlot().pane, nvim.pane);
+		d.tmux(["send-keys", "-t", term.pane, "echo X=$X-$((1+1))", "Enter"]);
+		await waitFor("the shell kept its state", () => cap(term.pane).includes("X=kept-2"));
+		assert.ok(cap(nvim.pane).includes("got abc"), "the nvim too");
+		// `exit`: respawned fresh in place (same pane, in the slot, new process).
+		const pid = d.tmux(["display-message", "-p", "-t", term.pane, "#{pane_pid}"]);
+		d.tmux(["send-keys", "-t", term.pane, "exit", "Enter"]);
+		await waitFor("a fresh shell in the terminal slot", () => {
+			const t = d.termSlot();
+			return t.pane === term.pane && !t.dead && d.tmux(["display-message", "-p", "-t", term.pane, "#{pane_pid}"]) !== pid && !d.tmux(["show", "-pqv", "-t", term.pane, "@pi_fleet_exited"]);
+		});
+		d.tmux(["send-keys", "-t", term.pane, "echo X=$X-$((2+3))", "Enter"]);
+		await waitFor("the new shell answers, without the old state", () => cap(term.pane).includes("X=-5"));
+		// The nvim quits cleanly (:qa) while in the pool: respawned there.
+		await d.open();
+		await waitFor("the nvim holder in the pool", () => d.panes().some((p) => p.pane === nvim.pane && p.where.startsWith("pool:")));
+		const npid = d.tmux(["display-message", "-p", "-t", nvim.pane, "#{pane_pid}"]);
+		d.tmux(["send-keys", "-t", nvim.pane, "q", "Enter"]);
+		await waitFor("a fresh nvim in the pool", () => {
+			const p = d.panes().find((q) => q.pane === nvim.pane);
+			return p && !p.dead && p.where.startsWith("pool:") && d.tmux(["display-message", "-p", "-t", nvim.pane, "#{pane_pid}"]) !== npid;
+		});
+		await waitFor("the new nvim runs", () => cap(nvim.pane).includes(`in ${home}`) && !cap(nvim.pane).includes("got abc"));
+	} finally {
+		d.close();
+	}
+});
+
+test("the holders' fallbacks: no nvim on PATH → the shell; a shell that fails at start → the dim note, not a loop", { skip: skipTmux, timeout: 60_000 }, async () => {
+	const d = new Deck();
+	try {
+		d.env.PI_FLEET_NVIM_CMD = "pi-fleet-no-such-nvim";
+		d.env.SHELL = join(d.root, "failing-shell");
+		writeFileSync(d.env.SHELL, "#!/bin/sh\nexit 3\n");
+		chmodSync(d.env.SHELL, 0o755);
+		d.start();
+		const cap = (pane: string) => d.tmux(["capture-pane", "-p", "-t", pane]);
+		const term = d.termSlot();
+		const nvim = d.nvimSlot();
+		await waitFor("the terminal holder's note", () => cap(term.pane).includes("no shell: not a live deck session"));
+		await waitFor("the nvim holder (its shell failed too) shows its note", () => cap(nvim.pane).includes("no editor: not a live deck session"));
+		await waitEq("the note's sleep runs", () => d.tmux(["display-message", "-p", "-t", term.pane, "#{pane_current_command}"]), "sleep");
+		assert.ok(!d.termSlot().dead && !d.nvimSlot().dead);
+		assert.deepEqual([d.termSlot().pane, d.nvimSlot().pane], [term.pane, nvim.pane], "not respawned");
+	} finally {
+		d.close();
+	}
+	const e = new Deck();
+	try {
+		e.env.PI_FLEET_NVIM_CMD = "pi-fleet-no-such-nvim";
+		e.start();
+		const nvim = e.nvimSlot();
+		e.tmux(["send-keys", "-t", nvim.pane, "echo shell-$((3+4))", "Enter"]);
+		await waitFor("no nvim: the nvim holder runs the shell", () => e.tmux(["capture-pane", "-p", "-t", nvim.pane]).includes("shell-7"));
+	} finally {
+		e.close();
+	}
+});
+
 test("kill-deck asks each deck pi to quit, then kills only its own server", { skip: skipTmux, timeout: 60_000 }, async () => {
 	const d = new Deck();
 	try {

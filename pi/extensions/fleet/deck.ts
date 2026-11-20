@@ -13,9 +13,10 @@
  *   session `pool` (never attached): one window per hidden pane, window-size manual, each at the
  *     size of the slot its role is shown in: pi panes (run-pi), the preview holder (one) and the
  *     anchor at the pi-slot size; nvim panes (one per session, created on first show) and the nvim
- *     holder (one) at the nvim-slot size. The anchor keeps the session alive when every other pane
- *     is shown or gone.
- *   Pane options: @pi_fleet_role list|pi|nvim|preview|nvim-holder|anchor, @pi_fleet_session,
+ *     holder (one: a default nvim in $HOME) at the nvim-slot size; shells (one per session) and the
+ *     terminal holder (one: a default shell in $HOME) at the terminal-slot size. The anchor keeps the
+ *     session alive when every other pane is shown or gone.
+ *   Pane options: @pi_fleet_role list|pi|nvim|term|preview|nvim-holder|term-holder|anchor, @pi_fleet_session,
  *     @pi_fleet_peer (pi <-> nvim), @pi_fleet_nvim_sock. Global options: @deck_tui_pid, @deck_bin,
  *     @deck_list_pct, @deck_list_height_pct,
  *     @deck_outer (`socket|client` of the last popup, bin/pi-deck-attach), @deck_jump, @deck_sock (the
@@ -85,10 +86,25 @@ export const DECK_SOCK_IDLE_MS = 2000;
 const SLEEP_FOREVER = "exec sleep 2147483647";
 /** The preview holder: a silent tty the list writes frames to (`#{pane_tty}`). */
 export const HOLDER_CMD = `stty -echo -icanon 2>/dev/null; printf '\\033[?25l'; ${SLEEP_FOREVER}`;
-/** The nvim holder: what the nvim slot shows for a row without a live deck session. */
+/** The nvim holder's fallback (its nvim or shell failed at start, see HOLDER_WRAP): a dim note over `sleep`. */
 export const NVIM_HOLDER_CMD = `stty -echo -icanon 2>/dev/null; printf '\\033[?25l\\033[2J\\033[H\\033[2m  no editor: not a live deck session\\033[0m'; ${SLEEP_FOREVER}`;
-/** The terminal holder: what the terminal slot shows for a row without a live deck session. */
+/** The terminal holder's fallback (its shell failed at start, see HOLDER_WRAP): a dim note over `sleep`. */
 export const TERM_HOLDER_CMD = `stty -echo -icanon 2>/dev/null; printf '\\033[?25l\\033[2J\\033[H\\033[2m  no shell: not a live deck session\\033[0m'; ${SLEEP_FOREVER}`;
+/** $0 of HOLDER_WRAP: marks a holder pane's start command as the current kind (initDeck replaces older ones). */
+export const HOLDER_WRAP_NAME = "pi-fleet-holder";
+/**
+ * The nvim and terminal holders (what those slots show for a row without a live deck session) run a
+ * default nvim / shell in $HOME under this sh: `sh -c HOLDER_WRAP pi-fleet-holder FALLBACK PROGRAM...`.
+ * When the program exits it marks the pane @pi_fleet_exited and wakes the list like POOL_WRAP, and
+ * reconcile respawns the holder in place (slot or pool). A program that fails at start (nonzero within
+ * about a second: no such shell, a broken config) is not retried: the pane runs FALLBACK (the old dim
+ * note over `sleep`) instead, so a holder never loops.
+ */
+export const HOLDER_WRAP =
+	'cd "$HOME" 2>/dev/null; f=$1; shift; s=$(date +%s); trap : INT QUIT; "$@"; r=$?; trap - INT QUIT; ' +
+	'if [ "$r" -ne 0 ] && [ $(($(date +%s) - s)) -le 1 ]; then exec sh -c "$f"; fi; ' +
+	'tmux set-option -p -t "$TMUX_PANE" @pi_fleet_exited "$r" \\; ' +
+	"run-shell -b 'kill -USR2 #{@deck_tui_pid} 2>/dev/null; true' >/dev/null 2>&1; exit \"$r\"";
 const ANCHOR_CMD = SLEEP_FOREVER;
 
 /**
@@ -285,6 +301,8 @@ export interface DeckPane {
 	gone: boolean;
 	/** An nvim its pi asked to :qa as the pi exited (cli.ts closePeerNvim): not replaced by a new one. */
 	closing: boolean;
+	/** tmux's #{pane_start_command} (what the pane was created or last respawned with). */
+	startCommand?: string;
 	/** In the pi slot (the right half). */
 	inSlot: boolean;
 	/** In the nvim slot (left, below the list). */
@@ -318,6 +336,7 @@ const DECK_PANE_FORMAT = [
 	"#{pane_left}",
 	"#{pane_top}",
 	"#{@pi_fleet_closing}",
+	"#{pane_start_command}",
 ].join("\t");
 
 function parseDeckPane(line: string): DeckPane {
@@ -349,6 +368,7 @@ function parseDeckPane(line: string): DeckPane {
 		top: Number(f[18] ?? 0),
 		isList: inDeckWindow && f[4] === "0",
 		closing: !!f[19],
+		startCommand: f.slice(20).join("\t"),
 	};
 }
 
@@ -586,12 +606,36 @@ export async function ensurePool(size: SlotSize | undefined, env: NodeJS.Process
 	}
 }
 
-/** Each slot's holder (role, command): what the slot shows for a row without a live deck session. */
-const HOLDERS: Record<SlotName, { role: DeckRole; cmd: string; kind: string }> = {
-	pi: { role: "preview", cmd: HOLDER_CMD, kind: "holder" },
-	nvim: { role: "nvim-holder", cmd: NVIM_HOLDER_CMD, kind: "nvim-holder" },
-	term: { role: "term-holder", cmd: TERM_HOLDER_CMD, kind: "term-holder" },
+/** Each slot's holder (role, pool window name): what the slot shows for a row without a live deck session. */
+const HOLDERS: Record<SlotName, { role: DeckRole; kind: string }> = {
+	pi: { role: "preview", kind: "holder" },
+	nvim: { role: "nvim-holder", kind: "nvim-holder" },
+	term: { role: "term-holder", kind: "term-holder" },
 };
+
+/**
+ * How slot `name`'s holder is started (new-window, split-window, respawn-pane): the preview holder
+ * HOLDER_CMD; the terminal holder the user's `$SHELL -l` (default /bin/bash), the nvim holder
+ * PI_FLEET_NVIM_CMD (default `nvim`, the user's config; the shell if it is not on PATH), both in $HOME
+ * under HOLDER_WRAP with the deck panes' environment. One of each for every non-live row, so its state
+ * stays while the highlight moves between such rows.
+ */
+export function holderSpawn(name: SlotName, env: NodeJS.ProcessEnv = process.env): { args: string[]; command: string[] } {
+	if (name === "pi") return { args: [], command: ["sh", "-c", HOLDER_CMD] };
+	const shell = env.SHELL && env.SHELL.startsWith("/") ? env.SHELL : "/bin/bash";
+	let program = [shell, "-l"];
+	if (name === "nvim") {
+		const nvimCmd = words(env.PI_FLEET_NVIM_CMD, "nvim");
+		const bin = which(nvimCmd[0], env);
+		if (bin) program = [bin, ...nvimCmd.slice(1)];
+	}
+	const fallback = name === "nvim" ? NVIM_HOLDER_CMD : TERM_HOLDER_CMD;
+	const home = env.HOME || homedir();
+	return {
+		args: ["-c", fmtLiteral(home), ...deckPaneEnv(env)],
+		command: ["sh", "-c", HOLDER_WRAP, HOLDER_WRAP_NAME, fallback, ...program],
+	};
+}
 
 /**
  * The deck window has exactly, in this pane order, the list, the nvim slot, the terminal slot (the left
@@ -640,7 +684,8 @@ export async function ensureLayout(env: NodeJS.ProcessEnv = process.env): Promis
 		const flags = ["-d", dir, ...(full ? ["-f"] : []), "-l", `${Math.max(1, Math.min(99, size))}%`];
 		if (holder) await deckTmux(["join-pane", ...flags, "-s", holder.pane, "-t", target], env);
 		else {
-			const made = await deckTmux(["split-window", ...flags, "-t", target, "-P", "-F", "#{pane_id}", "sh", "-c", h.cmd], env);
+			const spawn = holderSpawn(name, env);
+			const made = await deckTmux(["split-window", ...flags, "-t", target, ...spawn.args, "-P", "-F", "#{pane_id}", ...spawn.command], env);
 			await deckTmux(["set-option", "-p", "-t", made.split("\n")[0]!, "@pi_fleet_role", h.role], env);
 		}
 		({ panes, inWindow } = await read());
@@ -663,7 +708,8 @@ async function ensureSlotHolder(name: SlotName, env: NodeJS.ProcessEnv): Promise
 	const holder = (await deckPanes(env)).find((p) => p.role === h.role);
 	if (holder) return holder.pane;
 	const sizes = name === "pi" ? undefined : await currentSizes(env);
-	return newPoolWindow(h.kind, { options: { "@pi_fleet_role": h.role }, command: ["sh", "-c", h.cmd], size: sizes?.[name], restore: sizes?.pi }, env);
+	const spawn = holderSpawn(name, env);
+	return newPoolWindow(h.kind, { envArgs: spawn.args, options: { "@pi_fleet_role": h.role }, command: spawn.command, size: sizes?.[name], restore: sizes?.pi }, env);
 }
 /** The preview holder pane (created in the pool if there is none). */
 export function ensureHolder(env: NodeJS.ProcessEnv = process.env): Promise<string> {
@@ -703,7 +749,18 @@ export async function initDeck(listPane: string, env: NodeJS.ProcessEnv = proces
 	await ensureHolder(env);
 	await ensureNvimHolder(env);
 	await ensureTermHolder(env);
+	// A deck started before the holders ran a shell / nvim still has the old dim-note ones: replace them.
+	const old = (await deckPanes(env)).filter((p) => (p.role === "nvim-holder" || p.role === "term-holder") && p.startCommand !== undefined && !p.startCommand.includes(HOLDER_WRAP_NAME));
+	for (const p of old) await deckTmux(respawnHolderArgs(p, env), env).catch(() => "");
 	await applySizes(env);
+}
+
+/** respawn-pane (-k) for a holder or the anchor, its @pi_fleet_exited cleared (one tmux call's arguments). */
+function respawnHolderArgs(p: DeckPane, env: NodeJS.ProcessEnv): string[] {
+	if (p.role === "anchor") return ["respawn-pane", "-t", p.pane, "sh", "-c", ANCHOR_CMD];
+	if (p.role === "preview") return ["respawn-pane", "-t", p.pane, "sh", "-c", HOLDER_CMD];
+	const spawn = holderSpawn(slotOf(p.role), env);
+	return ["set-option", "-pu", "-t", p.pane, "@pi_fleet_exited", ";", "respawn-pane", "-k", "-t", p.pane, ...spawn.args, ...spawn.command];
 }
 
 // ---------------------------------------------------------------- slots
@@ -1124,8 +1181,8 @@ export async function reconcile(
 		}
 		if (!p.gone) continue;
 		if (p.role === "preview" || p.role === "nvim-holder" || p.role === "term-holder" || p.role === "anchor") {
-			const cmd = p.role === "anchor" ? ANCHOR_CMD : HOLDERS[slotOf(p.role)].cmd;
-			cmds.push(["respawn-pane", "-t", p.pane, "sh", "-c", cmd]);
+			// A holder's nvim or shell the user quit (:qa, exit) comes back fresh in place, in the slot or the pool.
+			cmds.push(respawnHolderArgs(p, env));
 			result.respawned.push(p.pane);
 			continue;
 		}

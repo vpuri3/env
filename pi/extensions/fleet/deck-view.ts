@@ -3,8 +3,8 @@
  * window. A telescope-like list of every pi session of this login node, grouped by repo; the
  * highlighted row's session is in the slots (its real pi pane in the right half, its nvim and its shell
  * below the list, swapped in by deck.ts; nvim and shell are created on the session's first show), or,
- * for rows without a deck pane, a preview frame written into the preview holder's tty (and the nvim
- * and shell holders below the list). The order of the rows is fixed when the list starts (the sort
+ * for rows without a deck pane, a preview frame written into the preview holder's tty (and below the
+ * list the nvim and shell holders: one default nvim and one shell in $HOME, shared by those rows). The order of the rows is fixed when the list starts (the sort
  * rules below); later changes update rows in place, new sessions go last in their group; `r` sorts
  * again.
  *
