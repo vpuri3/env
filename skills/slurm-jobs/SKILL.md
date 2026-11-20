@@ -30,11 +30,10 @@ Set them in one of:
 
 Check with `sjob config`. Discover site limits with `sjob limits`.
 
-## Prefer interactive allocations
+## Allocations
 
-Interactive partitions usually start in seconds to minutes; batch can wait hours.
-Use interactive unless the work outlives the interactive time limit or you hit the
-per-user interactive job limit.
+Every job races the queues in the cluster file's race list by default (see "Racing queues" below;
+never only one queue). Report the race up front: per racer, queue, job id and state.
 
 ```bash
 sjob alloc -n myproj.install -t 1:00:00 > out 2>&1 &   # prints JOBID=<id> once granted; poll squeue

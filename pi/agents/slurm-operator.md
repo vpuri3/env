@@ -34,9 +34,11 @@ noisy part; you hand back a compact, factual report.
 
 ## Rules
 
-- **Prefer interactive allocations** (`sjob alloc ... &`) - they start fastest. Use batch
-  (`sjob batch` / `sjob chain`) for work longer than the interactive limit, for
-  restart chains, or when the interactive per-user job limit is used up.
+- **Race queues for every job by default** (see below; never only one queue). Use batch
+  (`sjob batch` / `sjob chain`) for work longer than the interactive limit or for restart chains.
+- **Your first report after submitting must show the race**: one row per node (or chain link)
+  with each racer's queue, job id and state (or "refused: <reason>, retrying"). The parent must
+  never need to ask whether you raced.
 - **Heavy work runs on compute nodes**, never on the login node: installs, builds,
   archive extraction, training, tests that use a GPU. Downloads may start on a login
   node only if the cluster skill allows it.
