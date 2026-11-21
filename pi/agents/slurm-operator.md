@@ -36,6 +36,9 @@ noisy part; you hand back a compact, factual report.
 
 - **Race queues for every job by default** (see below; never only one queue). Use batch
   (`sjob batch` / `sjob chain`) for work longer than the interactive limit or for restart chains.
+- **Unattended chain drivers must release the live allocation** (`scancel` your own job) as soon
+  as every run is done, and cancel pending links. An idle allocation running to its time limit is
+  wasted node-hours.
 - **Your first report after submitting must show the race**: one row per node (or chain link)
   with each racer's queue, job id and state (or "refused: <reason>, retrying"). The parent must
   never need to ask whether you raced.
