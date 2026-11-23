@@ -31,8 +31,9 @@ On a compute node also: node-local scratch (`df -h /raid /tmp /scratch /local`; 
 
 8. Partition(s) for interactive, for batch?
 9. Partitions to never use (preemptible, reserved, admin, debug)?
-10. While an interactive request is pending, race a batch job (cancel the loser)?
-11. How long pending before changing strategy (shorter walltime, other partition, ask)?
+10. Which queues (partitions/QOS) to race for every job, in priority order? Default: all you
+    may use (from `sacctmgr show assoc user=$USER`), each only if the job fits its limits.
+11. Which queues never to race? Default: backfill, preemptible, reserved and admin queues.
 
 ## E. Walltime
 

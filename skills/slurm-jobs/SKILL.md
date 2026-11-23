@@ -95,6 +95,22 @@ Give it: the project path, the cluster skill to read, the exact goal, whether to
 keep or release the allocation, and where to write logs/status. Expect back job ids,
 paths and a one-line status.
 
+## Racing queues (default for every job)
+
+Submit the same request to every queue listed as raced in `~/.config/env/cluster.md` (priority
+order; skip any whose walltime/node limits the job exceeds, and never backfill, preemptible,
+reserved, admin or "never" queues). Keep the first that starts, cancel the rest at once:
+
+```bash
+sjob alloc -n myproj.train -t 2:00:00 -- -p batch &          # non-blocking, output to files
+sjob alloc -n myproj.train -t 2:00:00 -- --qos=short &
+squeue -u $USER -n myproj.train                               # poll every 30-60 s
+sjob cancel <loser-id>                                        # each loser, own jobs only
+```
+
+Same with `sjob batch`. `sjob cancel` refuses `$SLURM_JOB_ID` without `--force`, so a racer
+inside an allocation can't cancel itself.
+
 ## Safety
 
 - Never `scancel` the allocation your own shell runs in (`sjob cancel` refuses

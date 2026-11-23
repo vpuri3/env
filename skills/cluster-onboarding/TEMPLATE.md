@@ -23,7 +23,7 @@ export SJOB_ACCOUNT=<account> SJOB_PARTITION=<interactive partition> SJOB_BATCH_
 ## Partitions
 
 - Use: <...>. Never use: <...>.
-- Pending interactive request: <race a batch job? cancel the loser?>
+- Race: <queues in priority order>; never: <...>
 
 ## Walltime
 

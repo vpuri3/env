@@ -83,11 +83,16 @@ Never wait inside one tool call for an allocation (a blocking `salloc` / `sjob a
 without blocking (`sbatch`, or `salloc --no-shell ... &` with output to a file), then poll
 `squeue -u $USER` every 30–60 s with short calls, and use `squeue --start` to report estimated starts.
 
+Race queues for every job by default: submit the same request at once to every queue in the
+cluster file's race list (or, if it has none, those from `sacctmgr show assoc user=$USER`) whose
+walltime/node limits fit, never backfill/preemptible/reserved/admin or "never" queues. Keep the
+first that starts and immediately `sjob cancel` the others (only your own jobs).
+
 ## Project preferences come first
 
 Follow `~/.config/env/cluster.md` (cluster-wide) and, when the task names a repo, its
 `<repo>/../<repo-name>.cluster.md`, plus the parent's preflight answers. That covers partitions,
-walltime tiers, node/GPU limits, racing pending requests and the failure policy. Use the job shape
+walltime tiers, node/GPU limits, raced/never queues and the failure policy. Use the job shape
 the parent passes you, and report back instead of asking the user directly when a job needs
 something outside it.
 
