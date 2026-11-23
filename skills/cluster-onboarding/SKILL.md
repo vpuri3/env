@@ -18,6 +18,7 @@ Questions: [`QUESTIONS.md`](QUESTIONS.md). Layout: [`TEMPLATE.md`](TEMPLATE.md).
 
 | Situation | Action |
 | --- | --- |
+| `~/.config/env/cluster.md` missing but an old-style `<repo>/../<repo-name>.cluster.md` exists (it has the `SJOB_*` block) | Migrate: draft `~/.config/env/cluster.md` from its cluster-wide sections (TEMPLATE.md), reduce the repo file to repo-only items, add the race list / backfill queue (cluster) and Backfill instructions (repo) as questions; show both drafts, write after the user confirms |
 | `~/.config/env/cluster.md` missing | Full onboarding, interactively with the user, **before** any allocation, job, install or training run |
 | It has `TODO (ask user)` items | Ask them in batches when the user has time (offer once per session); ask right away only if the next job depends on one |
 | User changes a standing preference | Propose the exact edit, confirm (see Editing) |
