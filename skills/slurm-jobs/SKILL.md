@@ -5,7 +5,7 @@ description: Get interactive Slurm allocations, submit batch jobs and restart ch
 
 # Slurm jobs with `sjob`
 
-`sjob` (in `~/env/bin`, on `PATH` after bootstrap) wraps `salloc`/`sbatch`/`srun`/
+`sjob` (on PATH; source ~/env/bin/sjob) wraps `salloc`/`sbatch`/`srun`/
 `squeue`/`sacct` in independent subcommands. `sjob help` lists them.
 
 Site values are **not** in this repo. They come from `SJOB_*` variables:
@@ -22,12 +22,11 @@ Site values are **not** in this repo. They come from `SJOB_*` variables:
 
 Set them in one of:
 
-- the export block in `~/.config/env/cluster.md` (untracked, one per cluster; written by
-  the `cluster-onboarding` skill, which must exist before any job - run `slurm-preflight`
-  before the first job of a session);
-- a project wrapper that exports them and `exec sjob "$@"` (e.g. a repo's
-  `scripts/slurm.sh` + `scripts/clusters/<cluster>.sh`) - preferred for project work;
-- `~/.config/env/slurm.sh` (untracked, per machine; still read by `sjob`) for personal defaults.
+- **default:** the export block in `~/.config/env/cluster.md` (untracked, one per cluster; written
+  by `cluster-onboarding`; run `slurm-preflight` before the first job of a session). Load it with
+  `eval "$(sed -n '/^```bash/,/^```/{/^```/d;p}' ~/.config/env/cluster.md)"`;
+- a repo wrapper, only where a repo has one (exports them and `exec sjob "$@"`);
+- `~/.config/env/slurm.sh`: legacy (sjob still reads it).
 
 Check with `sjob config`. Discover site limits with `sjob limits`.
 
@@ -38,7 +37,7 @@ Use interactive unless the work outlives the interactive time limit or you hit t
 per-user interactive job limit.
 
 ```bash
-sjob alloc -n myproj.install -t 1:00:00     # blocks until granted, prints JOBID=<id>
+sjob alloc -n myproj.install -t 1:00:00 > out 2>&1 &   # prints JOBID=<id> once granted; poll squeue
 sjob run <id> -- nvidia-smi -L               # step on the node with all its CPUs
 sjob run <id> --log /path/install.log -- bash scripts/install.sh
 sjob run <id> --bg --log /path/train.log -- bash train.sh   # detached; prints PID and LOG
@@ -52,8 +51,8 @@ dataloaders do not get squeezed onto one core. Several `run` steps can share one
 allocation (e.g. install in one, download in another). `--bg` steps survive the
 calling shell; their srun exits when the command ends or the allocation expires.
 
-Agents: `sjob alloc` blocks while queued. Run it with a timeout
-(`timeout 900 sjob alloc ...`) or in the background and `sjob wait <id>`.
+Agents: never block on the queue. Run `sjob alloc ... > out 2>&1 &`, then poll `squeue -u $USER`
+every 30-60 s (report every 2-5 min); `out` gets `JOBID=<id>` when granted.
 
 ## Batch jobs and restart chains
 
@@ -77,7 +76,7 @@ sjob tail <id> 40; sjob info <id>; sjob hist 2
 
 - `sjob q` for the queue, `sjob info <id>` for one job (state, reason, nodes, stdout).
 - Long jobs: confirm launch (log has first steps, `sjob gpus <id>` shows load), then
-  poll every 2-5 minutes from a loop that appends to a status file; look at it
+  poll every 30-60 s and report every 2-5 min, appending to a status file; look at it
   rather than streaming logs. Scan logs with
   `rg -n 'Traceback|CUDA error|NaN|Inf|Killed|OOM' LOG | tail -20`.
 
@@ -97,28 +96,40 @@ paths and a one-line status.
 
 ## Racing queues (default for every job)
 
-Submit the same request to every queue listed as raced in `~/.config/env/cluster.md` (priority
-order; skip any whose walltime/node limits the job exceeds, and never backfill, reservation-only,
-reserved, admin or "never" queues). Keep the first that starts, cancel the rest at once.
-
-Backfill is never raced. It is used only when the user asks for it, with the repo prefs file's
-"Backfill" instructions (e.g. frequent checkpoints, compile off, auto-restart on requeue).
+Submit the same request to every queue in the cluster file's race list (priority order; skip any
+whose walltime/node caps the job exceeds, and never backfill, reservation-only, reserved, admin or
+"never" queues). All racers are the same kind: `alloc` everywhere for interactive-style work
+(`sjob run` steps), `batch` everywhere for batch scripts; never mix. The per-queue choice
+(QOS/partition) is **not** in `SJOB_ALLOC_ARGS`; each racer adds its own. Keep the one that starts
+and cancel the rest at once; if several start together, keep the one highest in the race order.
 
 ```bash
-sjob alloc -n myproj.train -t 2:00:00 -- -p batch > race-batch.out 2>&1 &
+eval "$(sed -n '/^```bash/,/^```/{/^```/d;p}' ~/.config/env/cluster.md)"
 sjob alloc -n myproj.train -t 2:00:00 -- --qos=short > race-short.out 2>&1 &
-SJOB_ALLOC_ARGS="$SJOB_ALLOC_ARGS --qos=normal" \
-  sjob batch -n myproj.train -t 2:00:00 train.sh > race-normal.out 2>&1 &
-squeue -u $USER -n myproj.train                               # poll every 30-60 s
-sjob cancel <loser-id>                                        # each loser, own jobs only
+sjob alloc -n myproj.train -t 2:00:00 -- --qos=normal > race-normal.out 2>&1 &
+sjob alloc -n myproj.train -t 2:00:00 -- --qos=long > race-long.out 2>&1 &
+squeue -u $USER -n myproj.train          # poll every 30-60 s, report every 2-5 min
+sjob cancel <loser-id>                   # each loser, own jobs only
+# batch racers (no `--` passthrough): per-command SJOB_ALLOC_ARGS
+SJOB_ALLOC_ARGS="$SJOB_ALLOC_ARGS --qos=short" sjob batch -n myproj.train -t 2:00:00 train.sh > race-short.out 2>&1 &
 ```
 
-`sjob batch`/`chain` take no `--` passthrough: set the queue via `-p` or per-command `SJOB_ALLOC_ARGS`. `sjob cancel` refuses `$SLURM_JOB_ID` without `--force`, so a racer
-inside an allocation can't cancel itself.
+`sjob cancel` refuses `$SLURM_JOB_ID` without `--force`.
+
+## Backfill (only on request, never raced)
+
+Backfill runs only as `sjob batch` (never alloc: a requeued salloc has no script to rerun), with
+`--requeue` and the backfill QOS; the script runs the repo's auto-restart launch with the repo
+prefs file's Backfill flags. It may pend indefinitely: the cluster file states a max wait; past it,
+cancel and report.
+
+```bash
+eval "$(sed -n '/^```bash/,/^```/{/^```/d;p}' ~/.config/env/cluster.md)"
+SJOB_ALLOC_ARGS="$SJOB_ALLOC_ARGS --qos=<backfill> --requeue" sjob batch -n myproj.train -t 4:00:00 train.sh
+```
 
 ## Safety
 
-- Never `scancel` the allocation your own shell runs in (`sjob cancel` refuses
-  `$SLURM_JOB_ID` without `--force`), nor jobs you did not start.
+- Never cancel the allocation your shell runs in (`$SLURM_JOB_ID`), nor others' jobs.
 - To stop misbehaving work inside an allocation, kill that step's processes, not the job.
 - Do not run installs, builds or training on login nodes.

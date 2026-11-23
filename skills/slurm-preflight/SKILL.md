@@ -17,7 +17,7 @@ Goal: at most one or two short `ask_user_question` calls per interactive session
    - Session scope: "OK to run follow-up jobs of this kind without asking again this session?"
    Never ask what the files already fix (account, partitions, racing, polling).
 4. **Record answers** in `<SJOB_STAGE_DIR>/session-notes/<YYYY-MM-DD>-<repo>.md` (outside git): date, answers, scope covered.
-5. **Hand settings to subagents** explicitly in the `slurm-operator` task: job shape, walltime, nodes, packing, race list (operators race all listed queues by default and cancel losers), "never block on the queue". Operators don't ask the user and don't invent preferences: if a file is missing or a needed item is TODO, they stop and report the questions to you.
+5. **Hand settings to subagents** explicitly in the `slurm-operator` task: job shape, walltime, nodes, packing, race list with caps (operators race all listed queues by default, same kind each, and cancel losers; backfill only as `sjob batch --requeue`, on request), "never block on the queue". Operators don't ask the user and don't invent preferences: if a file is missing or a needed item is TODO, they stop and report the questions to you.
 
 ## Re-ask only when
 

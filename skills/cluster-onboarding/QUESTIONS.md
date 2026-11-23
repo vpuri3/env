@@ -33,8 +33,11 @@ On a compute node also: node-local scratch (`df -h /raid /tmp /scratch /local`; 
 9. Partitions to never use (preemptible, reserved, admin, debug)?
 10. Which queues (partitions/QOS) to race for every job, in priority order? Default: all you
     may use except backfill (from `sacctmgr show assoc user=$USER`), each only if the job fits its limits.
+    Also record each one's walltime/node caps (`sacctmgr qos` MaxWall, partition MaxTime) so agents skip
+    queues the job doesn't fit. The race QOS/partition is never put in `SJOB_ALLOC_ARGS` (shape args only,
+    e.g. `--exclusive`, `--gpus-per-node`); racers add their own.
 11. Which queues never to race (default: backfill, reserved, admin)? Which queue is backfill
-    (preemptible; never raced, used only on request with the repo's backfill instructions)?
+    (preemptible; never raced, used only on request with the repo's backfill instructions; only as `sjob batch` + `--requeue`)? Max minutes it may pend before cancel and report?
 
 ## E. Walltime
 
@@ -86,5 +89,5 @@ R2. Repo checkout path, shared data root, cache root, run-output location on thi
 R3. Sweep packing: runs per GPU, GPUs per run default for this repo's workloads.
 R4. Per-repo walltime habits (typical smoke, sweep, training durations).
 R5. Repo-specific approvals (e.g. benchmark studies) and restart conventions.
-R6. Backfill instructions for this repo (used only when the user asks for backfill): checkpoint cadence
-    and its flag (default ~10 min), compile on/off (default off), restart on requeue.
+R6. Backfill for this repo (only when the user asks): the full example command (env vars + launcher +
+    flags) with checkpoint cadence (default ~10 min), compile off, auto-restart on requeue.

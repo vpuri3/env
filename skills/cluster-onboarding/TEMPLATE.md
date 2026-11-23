@@ -7,8 +7,9 @@ Saved as `~/.config/env/cluster.md`. **Not in git**, one per cluster. Cluster-wi
 ## Slurm settings (source before any `sjob` call; `sjob config` shows them)
 
 ```bash
+# load: eval "$(sed -n '/^```bash/,/^```/{/^```/d;p}' ~/.config/env/cluster.md)"
 export SJOB_ACCOUNT=<account> SJOB_PARTITION=<interactive partition> SJOB_BATCH_PARTITION=<batch partition> \
-  SJOB_TIME=<default walltime> SJOB_NAME_PREFIX=<job-name prefix> SJOB_ALLOC_ARGS=<e.g. --exclusive> \
+  SJOB_TIME=<default walltime> SJOB_NAME_PREFIX=<job-name prefix> SJOB_ALLOC_ARGS=<shape only, e.g. --exclusive; no race QOS> \
   SJOB_STAGE_DIR=<staging/log dir>
 ```
 
@@ -23,8 +24,8 @@ export SJOB_ACCOUNT=<account> SJOB_PARTITION=<interactive partition> SJOB_BATCH_
 ## Partitions
 
 - Use: <...>. Never use: <...>.
-- Race: <queues in priority order>; never: <backfill, ...>
-- Backfill queue: <queue> (never raced; only on request, with the repo prefs file's Backfill section)
+- Race (in order; keep highest on ties): <q1> (max <t>, <n> nodes/user), <q2> (...), ...; never: <backfill, ...>
+- Backfill queue: <qos/partition> (never raced; only on request; sjob batch + --requeue; max wait <N> min)
 
 ## Walltime
 
@@ -93,7 +94,7 @@ Per repo, per cluster, outside git. Repo-specific only (QUESTIONS.md R1-R6); sam
 - Sweep packing: <runs per GPU, GPUs per run>
 - Walltime habits: <smoke / sweep / training>
 - Approvals: <repo-specific>
-- Backfill (only on request): checkpoint every <N> min (<flag>); compile <on/off> (<flag>); restart <...>
+- Backfill (only on request): `SJOB_ALLOC_ARGS="$SJOB_ALLOC_ARGS --qos=<backfill> --requeue" sjob batch -t <t> <script>`, script runs `<ENV=... launcher> <flags: checkpoint every N min, compile off, auto-restart>`
 ## Open questions
 - <question>: TODO (ask user)
 ## Change log

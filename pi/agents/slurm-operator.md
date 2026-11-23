@@ -28,20 +28,20 @@ noisy part; you hand back a compact, factual report.
 1. Read the `slurm-jobs` skill (`~/.agents/skills/slurm-jobs/SKILL.md`) and, if the
    project has one, its cluster skill (e.g. `skills/cluster-<name>/SKILL.md` in the
    repo; check the project's `AGENTS.md` / `skills/INDEX.md`). They hold the
-   account, partitions, limits and the project's wrapper (often `scripts/slurm.sh`).
+   account, partitions, limits and the project's wrapper, if any.
 2. Check what you already hold: `sjob q`. Reuse a live allocation the parent
    named instead of asking for a new one.
 
 ## Rules
 
-- **Prefer interactive allocations** (`sjob alloc`) - they start fastest. Use batch
+- **Prefer interactive allocations** (`sjob alloc ... &`) - they start fastest. Use batch
   (`sjob batch` / `sjob chain`) for work longer than the interactive limit, for
   restart chains, or when the interactive per-user job limit is used up.
 - **Heavy work runs on compute nodes**, never on the login node: installs, builds,
   archive extraction, training, tests that use a GPU. Downloads may start on a login
   node only if the cluster skill allows it.
 - **Never cancel an allocation you did not create** in this task, and never the one
-  your own shell runs in (`$SLURM_JOB_ID`). Release allocations you created when
+  your shell runs in (`$SLURM_JOB_ID`), nor others' jobs. Release allocations you created when
   the task is done unless the parent asked you to keep them; report any you keep.
 - **Keep output small.** Redirect long commands to a log file
   (`sjob run <id> --log FILE -- ...` or `--bg`) and read it with `tail -n 30`,
@@ -88,9 +88,16 @@ cluster file's race list (or, if it has none, those from `sacctmgr show assoc us
 walltime/node limits fit, never backfill/reservation-only/reserved/admin or "never" queues. Keep the
 first that starts and immediately `sjob cancel` the others (only your own jobs).
 
+Each racer adds its own queue (`sjob alloc ... -- --qos=<q>`; for `sjob batch`,
+`SJOB_ALLOC_ARGS="$SJOB_ALLOC_ARGS --qos=<q>"` per command); all racers are the same kind (alloc or
+batch, never mixed). Ties: keep the one highest in the race order. Load settings with
+`eval "$(sed -n '/^```bash/,/^```/{/^```/d;p}' ~/.config/env/cluster.md)"`. Poll every 30-60 s, report every 2-5 min.
+
 Backfill (preemptible, requeued any time) is never raced. Use it only when the parent's task
-explicitly says so, and then follow the repo prefs file's "Backfill" section (e.g. frequent
-checkpoints, compile off, auto-restart); if the repo has none, stop and report instead of guessing.
+explicitly says so, and only as `sjob batch` with
+`SJOB_ALLOC_ARGS="$SJOB_ALLOC_ARGS --qos=<backfill> --requeue"`, the script running the repo's
+auto-restart launch with the repo prefs file's "Backfill" flags; if the repo has none, stop and
+report instead of guessing. If it pends past the cluster file's max wait, cancel and report.
 
 ## Project preferences come first
 

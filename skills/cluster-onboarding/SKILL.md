@@ -29,10 +29,11 @@ Questions: [`QUESTIONS.md`](QUESTIONS.md). Layout: [`TEMPLATE.md`](TEMPLATE.md).
 
 1. Gather facts yourself (QUESTIONS.md §A); don't ask what you can look up. Draft `Cluster facts`.
 2. Show the facts; the user confirms or corrects before any preference questions. Only approved facts go in the file.
-3. Ask sections B-K with `ask_user_question`: up to 4 related questions per call, 2-4 options, recommended first, ~6-8 calls. Skipped questions become `TODO (ask user)`.
-4. Write `~/.config/env/cluster.md` from TEMPLATE.md. Preferences that say "ask each time" become the per-session questions for `slurm-preflight`.
-5. When in a repo, also do the repo prefs file (repo-specific questions only).
-6. Summarize, get confirmation, and only then launch anything.
+3. Note: the race QOS/partition must not be baked into `SJOB_ALLOC_ARGS` (only shape args like `--gpus-per-node`/`--exclusive`); each racer adds its own.
+4. Ask sections B-K with `ask_user_question`: up to 4 related questions per call, 2-4 options, recommended first, ~6-8 calls. Skipped questions become `TODO (ask user)`.
+5. Write `~/.config/env/cluster.md` from TEMPLATE.md. Preferences that say "ask each time" become the per-session questions for `slurm-preflight`.
+6. When in a repo, also do the repo prefs file (repo-specific questions only).
+7. Summarize, get confirmation, and only then launch anything.
 
 ## Editing (standing rule)
 
