@@ -105,9 +105,9 @@ priority) but can be preempted/requeued any time, so its command line adds the r
 auto-restart resumes from the latest checkpoint.
 
 ```bash
-sjob alloc -n myproj.train -t 2:00:00 -- -p batch &          # non-blocking, output to files
-sjob alloc -n myproj.train -t 2:00:00 -- --qos=short &
-sjob batch -n myproj.train -t 2:00:00 -- -p backfill train.sh --ckpt-every-min 10 --no-compile &
+sjob alloc -n myproj.train -t 2:00:00 -- -p batch > race-batch.out 2>&1 &
+sjob alloc -n myproj.train -t 2:00:00 -- --qos=short > race-short.out 2>&1 &
+sjob batch -n myproj.train -t 2:00:00 -- -p backfill train.sh --ckpt-every-min 10 --no-compile > race-backfill.out 2>&1 &
 squeue -u $USER -n myproj.train                               # poll every 30-60 s
 sjob cancel <loser-id>                                        # each loser, own jobs only
 ```
