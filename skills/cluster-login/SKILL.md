@@ -35,7 +35,7 @@ hostname; echo "job=${SLURM_JOB_ID:-none}"; nvidia-smi -L 2>/dev/null | head -2
 Use the `slurm-jobs` skill (`sjob`):
 
 ```bash
-sjob alloc -n dev -t 2:00:00     # or the project's wrapper, e.g. scripts/slurm.sh alloc
+sjob alloc -n dev -t 2:00:00     # after loading the SJOB_* block from ~/.config/env/cluster.md
 sjob shell <jobid>               # interactive shell on that node, all CPUs
 sjob run <jobid> -- <cmd>        # one command, no shell
 ovl <jobid>                      # same as shell, minimal (bin/ovl)
