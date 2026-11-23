@@ -85,12 +85,12 @@ without blocking (`sbatch`, or `salloc --no-shell ... &` with output to a file),
 
 Race queues for every job by default: submit the same request at once to every queue in the
 cluster file's race list (or, if it has none, those from `sacctmgr show assoc user=$USER`) whose
-walltime/node limits fit, never reservation-only/reserved/admin or "never" queues. Keep the first that starts and
-immediately `sjob cancel` the others (only your own jobs). Backfill is raced too (lowest
-priority) but can be preempted/requeued any time, so its submission adds its own flags:
-checkpoint every ~10 min and torch.compile off unless the cluster/repo file says on; on requeue
-the repo's auto-restart resumes from the latest checkpoint. Use the
-repo prefs file's checkpoint/compile flags for that submission.
+walltime/node limits fit, never backfill/reservation-only/reserved/admin or "never" queues. Keep the
+first that starts and immediately `sjob cancel` the others (only your own jobs).
+
+Backfill (preemptible, requeued any time) is never raced. Use it only when the parent's task
+explicitly says so, and then follow the repo prefs file's "Backfill" section (e.g. frequent
+checkpoints, compile off, auto-restart); if the repo has none, stop and report instead of guessing.
 
 ## Project preferences come first
 

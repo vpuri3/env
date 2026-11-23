@@ -23,8 +23,8 @@ export SJOB_ACCOUNT=<account> SJOB_PARTITION=<interactive partition> SJOB_BATCH_
 ## Partitions
 
 - Use: <...>. Never use: <...>.
-- Race: <queues in priority order>; never: <...>
-- Backfill: <queue>; checkpoint every <N> min; compile <on/off>
+- Race: <queues in priority order>; never: <backfill, ...>
+- Backfill queue: <queue> (never raced; only on request, with the repo prefs file's Backfill section)
 
 ## Walltime
 
@@ -93,7 +93,7 @@ Per repo, per cluster, outside git. Repo-specific only (QUESTIONS.md R1-R6); sam
 - Sweep packing: <runs per GPU, GPUs per run>
 - Walltime habits: <smoke / sweep / training>
 - Approvals: <repo-specific>
-- Backfill flags: checkpoint cadence <flag>; compile on/off <flag>
+- Backfill (only on request): checkpoint every <N> min (<flag>); compile <on/off> (<flag>); restart <...>
 ## Open questions
 - <question>: TODO (ask user)
 ## Change log

@@ -98,17 +98,17 @@ paths and a one-line status.
 ## Racing queues (default for every job)
 
 Submit the same request to every queue listed as raced in `~/.config/env/cluster.md` (priority
-order; skip any whose walltime/node limits the job exceeds, and never reservation-only, reserved, admin or
-"never" queues). Keep the first that starts, cancel the rest at once. Backfill is raced too (lowest
-priority) but can be preempted/requeued any time, so its command line adds the repo's flags for
-~10 min checkpoints (not ~30) and compile off (unless the cluster/repo file says on); the repo's
-auto-restart resumes from the latest checkpoint.
+order; skip any whose walltime/node limits the job exceeds, and never backfill, reservation-only,
+reserved, admin or "never" queues). Keep the first that starts, cancel the rest at once.
+
+Backfill is never raced. It is used only when the user asks for it, with the repo prefs file's
+"Backfill" instructions (e.g. frequent checkpoints, compile off, auto-restart on requeue).
 
 ```bash
 sjob alloc -n myproj.train -t 2:00:00 -- -p batch > race-batch.out 2>&1 &
 sjob alloc -n myproj.train -t 2:00:00 -- --qos=short > race-short.out 2>&1 &
-SJOB_ALLOC_ARGS="$SJOB_ALLOC_ARGS --qos=free" \
-  sjob batch -n myproj.train -t 2:00:00 train.sh <repo ckpt-10min + compile-off flags> > race-backfill.out 2>&1 &
+SJOB_ALLOC_ARGS="$SJOB_ALLOC_ARGS --qos=normal" \
+  sjob batch -n myproj.train -t 2:00:00 train.sh > race-normal.out 2>&1 &
 squeue -u $USER -n myproj.train                               # poll every 30-60 s
 sjob cancel <loser-id>                                        # each loser, own jobs only
 ```

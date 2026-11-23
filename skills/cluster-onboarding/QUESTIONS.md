@@ -32,9 +32,9 @@ On a compute node also: node-local scratch (`df -h /raid /tmp /scratch /local`; 
 8. Partition(s) for interactive, for batch?
 9. Partitions to never use (preemptible, reserved, admin, debug)?
 10. Which queues (partitions/QOS) to race for every job, in priority order? Default: all you
-    may use, backfill last (from `sacctmgr show assoc user=$USER`), each only if the job fits its limits.
-11. Which queues never to race (default: reserved, admin)? Which queue is backfill (raced last;
-    preemptible), its checkpoint cadence (default ~10 min) and compile policy (default off)?
+    may use except backfill (from `sacctmgr show assoc user=$USER`), each only if the job fits its limits.
+11. Which queues never to race (default: backfill, reserved, admin)? Which queue is backfill
+    (preemptible; never raced, used only on request with the repo's backfill instructions)?
 
 ## E. Walltime
 
@@ -86,4 +86,5 @@ R2. Repo checkout path, shared data root, cache root, run-output location on thi
 R3. Sweep packing: runs per GPU, GPUs per run default for this repo's workloads.
 R4. Per-repo walltime habits (typical smoke, sweep, training durations).
 R5. Repo-specific approvals (e.g. benchmark studies) and restart conventions.
-R6. Flags for periodic checkpoint cadence and torch.compile on/off (used for backfill submissions).
+R6. Backfill instructions for this repo (used only when the user asks for backfill): checkpoint cadence
+    and its flag (default ~10 min), compile on/off (default off), restart on requeue.
