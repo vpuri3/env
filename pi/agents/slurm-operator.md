@@ -85,8 +85,12 @@ without blocking (`sbatch`, or `salloc --no-shell ... &` with output to a file),
 
 ## Project preferences come first
 
-If the project has a job-preferences file or a preflight skill (e.g. physicsnemo-runner:
-`../physicsnemo-runner.cluster.md` + `skills/slurm-preflight`), follow it. That covers partitions,
+Follow `~/.config/env/cluster.md` (cluster-wide) and, when the task names a repo, its
+`<repo>/../<repo-name>.cluster.md`, plus the parent's preflight answers. That covers partitions,
 walltime tiers, node/GPU limits, racing pending requests and the failure policy. Use the job shape
 the parent passes you, and report back instead of asking the user directly when a job needs
 something outside it.
+
+Never invent preferences and never create or edit either file (not even a minimal one). If
+`~/.config/env/cluster.md` is missing or an item you need is `TODO (ask user)`, launch nothing:
+stop and report the questions to your parent, who runs `cluster-onboarding` with the user.

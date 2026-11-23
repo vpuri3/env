@@ -15,6 +15,7 @@ in untracked files on each machine:
 | `~/.config/env/local.sh` | this machine: `MACHINE`, `PY_WD`, `STORAGE_DIR`, `CACHE_ROOT`, ... (written by bootstrap) |
 | `~/.config/env/clusters/<name>.sh` | per-cluster values read by `bin/env-deploy` (laptop only) |
 | `~/.ssh/config.local` | private ssh hosts, e.g. cluster login nodes |
+| `~/.config/env/cluster.md` | per-cluster Slurm preferences and `SJOB_*` export block (skills `cluster-onboarding`, `slurm-preflight`) |
 | `~/.config/env/slurm.sh` | optional `SJOB_*` defaults for `bin/sjob` (account, partitions); project repos may set these instead |
 
 Check `git diff --cached` for such strings before every commit. Examples in

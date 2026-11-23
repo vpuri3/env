@@ -22,9 +22,12 @@ Site values are **not** in this repo. They come from `SJOB_*` variables:
 
 Set them in one of:
 
+- the export block in `~/.config/env/cluster.md` (untracked, one per cluster; written by
+  the `cluster-onboarding` skill, which must exist before any job - run `slurm-preflight`
+  before the first job of a session);
 - a project wrapper that exports them and `exec sjob "$@"` (e.g. a repo's
   `scripts/slurm.sh` + `scripts/clusters/<cluster>.sh`) - preferred for project work;
-- `~/.config/env/slurm.sh` (untracked, per machine) for personal defaults.
+- `~/.config/env/slurm.sh` (untracked, per machine; still read by `sjob`) for personal defaults.
 
 Check with `sjob config`. Discover site limits with `sjob limits`.
 

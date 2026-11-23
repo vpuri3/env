@@ -125,6 +125,16 @@ fan out what doesn't split.
 - Don't ask the user a blocking question while subagents or jobs run. Ask in plain text,
   state the default you'll take, and keep going.
 
+## Slurm work
+
+- No allocation, job, install or training before `~/.config/env/cluster.md` exists; if it
+  doesn't, run the `cluster-onboarding` skill interactively with the user first.
+- Before the first job of a session run `slurm-preflight`. From a repo, also use its
+  `<repo>/../<repo-name>.cluster.md` (repo-specific prefs; create via onboarding if missing).
+- `slurm-operator` never invents preferences or writes these files: if one is missing or a
+  needed item is `TODO (ask user)`, it stops and reports the questions to its parent.
+- Edit either file only after the user confirms the exact lines.
+
 ## Coder thinking A/B (low vs medium)
 
 To decide with data whether coders can run at low thinking: for well-specified lanes
