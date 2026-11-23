@@ -85,8 +85,9 @@ without blocking (`sbatch`, or `salloc --no-shell ... &` with output to a file),
 
 Race queues for every job by default: submit the same request at once to every queue in the
 cluster file's race list (or, if it has none, those from `sacctmgr show assoc user=$USER`) whose
-walltime/node limits fit, never backfill/preemptible/reserved/admin or "never" queues. Keep the
-first that starts and immediately `sjob cancel` the others (only your own jobs).
+walltime/node limits fit, never reserved/admin or "never" queues. Keep the first that starts and
+immediately `sjob cancel` the others (only your own jobs). Backfill is raced too (lowest priority) but its jobs can be preempted/requeued any time, so its submission carries its own flags: checkpoint every ~10 min (not ~30) and torch.compile off unless the cluster/repo file says on; restarts use the repo's auto-restart from the latest checkpoint. Use the
+repo prefs file's checkpoint/compile flags for that submission.
 
 ## Project preferences come first
 

@@ -98,12 +98,16 @@ paths and a one-line status.
 ## Racing queues (default for every job)
 
 Submit the same request to every queue listed as raced in `~/.config/env/cluster.md` (priority
-order; skip any whose walltime/node limits the job exceeds, and never backfill, preemptible,
-reserved, admin or "never" queues). Keep the first that starts, cancel the rest at once:
+order; skip any whose walltime/node limits the job exceeds, and never reserved, admin or "never"
+queues). Keep the first that starts, cancel the rest at once. Backfill is raced too (lowest
+priority) but can be preempted/requeued any time, so its command line adds the repo's flags for
+~10 min checkpoints (not ~30) and compile off (unless the cluster/repo file says on); the repo's
+auto-restart resumes from the latest checkpoint.
 
 ```bash
 sjob alloc -n myproj.train -t 2:00:00 -- -p batch &          # non-blocking, output to files
 sjob alloc -n myproj.train -t 2:00:00 -- --qos=short &
+sjob batch -n myproj.train -t 2:00:00 -- -p backfill train.sh --ckpt-every-min 10 --no-compile &
 squeue -u $USER -n myproj.train                               # poll every 30-60 s
 sjob cancel <loser-id>                                        # each loser, own jobs only
 ```

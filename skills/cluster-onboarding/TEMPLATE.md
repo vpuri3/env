@@ -24,6 +24,7 @@ export SJOB_ACCOUNT=<account> SJOB_PARTITION=<interactive partition> SJOB_BATCH_
 
 - Use: <...>. Never use: <...>.
 - Race: <queues in priority order>; never: <...>
+- Backfill: <queue>; checkpoint every <N> min; compile <on/off>
 
 ## Walltime
 
@@ -83,7 +84,7 @@ Gathered by the agent, approved by the user.
 
 # Repo prefs file template: `<repo>/../<repo-name>.cluster.md`
 
-Per repo, per cluster, outside git. Repo-specific only (QUESTIONS.md R1-R5); same editing rule. Repo AGENTS.md points at this and at `~/.config/env/cluster.md`.
+Per repo, per cluster, outside git. Repo-specific only (QUESTIONS.md R1-R6); same editing rule. Repo AGENTS.md points at this and at `~/.config/env/cluster.md`.
 
 ```markdown
 # <repo-name> preferences: <CLUSTER NAME>
@@ -92,6 +93,7 @@ Per repo, per cluster, outside git. Repo-specific only (QUESTIONS.md R1-R5); sam
 - Sweep packing: <runs per GPU, GPUs per run>
 - Walltime habits: <smoke / sweep / training>
 - Approvals: <repo-specific>
+- Backfill flags: checkpoint cadence <flag>; compile on/off <flag>
 ## Open questions
 - <question>: TODO (ask user)
 ## Change log
