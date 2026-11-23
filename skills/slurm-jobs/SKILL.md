@@ -98,8 +98,8 @@ paths and a one-line status.
 ## Racing queues (default for every job)
 
 Submit the same request to every queue listed as raced in `~/.config/env/cluster.md` (priority
-order; skip any whose walltime/node limits the job exceeds, and never reserved, admin or "never"
-queues). Keep the first that starts, cancel the rest at once. Backfill is raced too (lowest
+order; skip any whose walltime/node limits the job exceeds, and never reservation-only, reserved, admin or
+"never" queues). Keep the first that starts, cancel the rest at once. Backfill is raced too (lowest
 priority) but can be preempted/requeued any time, so its command line adds the repo's flags for
 ~10 min checkpoints (not ~30) and compile off (unless the cluster/repo file says on); the repo's
 auto-restart resumes from the latest checkpoint.
@@ -107,12 +107,13 @@ auto-restart resumes from the latest checkpoint.
 ```bash
 sjob alloc -n myproj.train -t 2:00:00 -- -p batch > race-batch.out 2>&1 &
 sjob alloc -n myproj.train -t 2:00:00 -- --qos=short > race-short.out 2>&1 &
-sjob batch -n myproj.train -t 2:00:00 -- -p backfill train.sh --ckpt-every-min 10 --no-compile > race-backfill.out 2>&1 &
+SJOB_ALLOC_ARGS="$SJOB_ALLOC_ARGS --qos=free" \
+  sjob batch -n myproj.train -t 2:00:00 train.sh <repo ckpt-10min + compile-off flags> > race-backfill.out 2>&1 &
 squeue -u $USER -n myproj.train                               # poll every 30-60 s
 sjob cancel <loser-id>                                        # each loser, own jobs only
 ```
 
-Same with `sjob batch`. `sjob cancel` refuses `$SLURM_JOB_ID` without `--force`, so a racer
+`sjob batch`/`chain` take no `--` passthrough: set the queue via `-p` or per-command `SJOB_ALLOC_ARGS`. `sjob cancel` refuses `$SLURM_JOB_ID` without `--force`, so a racer
 inside an allocation can't cancel itself.
 
 ## Safety
