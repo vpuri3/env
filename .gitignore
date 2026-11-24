@@ -1,2 +1,3 @@
 .claude/settings.local.json
 .bootstrap-test.*
+/bin/gh

@@ -27,6 +27,7 @@ bootstrap on the cluster with the cluster's values pre-filled (see
 | `ENV_GIT_NAME`, `ENV_GIT_EMAIL` | git identity used when the machine has none (set by `env-deploy`; an existing `user.name` / `user.email` is kept) |
 | `ENV_CACHE_ROOT=/path` | put caches here instead of `$STORAGE_DIR/cache` (e.g. scratch); remembered in `local.sh` |
 | `PI_CODING_AGENT_DIR` | where pi's config lives (default `~/.pi/agent`) |
+| `GH_TOKEN`, `GITHUB_TOKEN` | a GitHub token the `install-gh` step logs `gh` in with (stored by gh, so later shells don't need the variable) |
 
 ## Guarantees
 
@@ -96,11 +97,20 @@ bootstrap on the cluster with the cluster's values pre-filled (see
     | pi | yes | official installer (`pi.dev/install.sh`), run without a terminal so it doesn't prompt: managed install in `~/.pi/agent`, launcher `~/.local/bin/pi`, upgrade with `pi update`. Uses the shared Node.js (below), so the installer never reaches for Homebrew or root |
     | Julia (juliaup, julia-vim, startup.jl) | if chosen in step 3 | `JULIA_DEPOT_PATH` |
     | pi packages in `pi/packages.txt` | when pi is installed | `pi install` |
+    | GitHub CLI (`gh`), latest release | yes | `~/env/bin/gh` (gitignored; `~/bin` is on `PATH`). Updated on each run when a newer release is out (no question then); skipped when a gh elsewhere on `PATH` is at least as new, or on macOS whenever one exists (Homebrew updates it). Offline it keeps what is there, with a note |
 
     Codex CLI, pi and pi's packages share one Node.js: any node 22.19+ with
     npm already on `PATH`, otherwise Node.js LTS in `~/.local/node`. Bootstrap
     asks about that at most once per run, and pi's installer never fetches its
     own copy.
+
+    After installing, `gh` is logged in to github.com when it is not already
+    (a stored login; `GH_TOKEN` in the environment doesn't count): with the
+    token in `GH_TOKEN`, `GITHUB_TOKEN` or `~/.config/env/gh_token` (made mode
+    600), passed on stdin to `gh auth login --with-token`, then
+    `git_protocol ssh`. `env-deploy` fills that file from the laptop's
+    `gh auth token`. Without a token it prints the command to log in by hand:
+    `gh auth login -h github.com -p ssh -w`.
 
     Existing tools are left alone. Neovim is replaced only after asking,
     when the user-local copy is a different version.
@@ -131,6 +141,7 @@ run. Add `--defaults` when there's no terminal, e.g. from an agent.
 | `install-nvim` | Neovim, plugins, treesitter parsers |
 | `install-uv`, `install-codex`, `install-claude` | those tools |
 | `install-pi` | pi (if missing) and the packages in `pi/packages.txt` |
+| `install-gh` | GitHub CLI in `~/env/bin/gh` (latest release), then gh login from a token if one is available |
 
 Steps that need the machine questions (`PY_WD`, `STORAGE_DIR`, Julia,
 moving editor servers) are not available alone; run the full bootstrap.

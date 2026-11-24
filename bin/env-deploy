@@ -2,7 +2,9 @@
 # Sets up ~/env on a cluster from this machine.
 #
 #   env-deploy CLUSTER           install your ssh key, then clone/update ~/env
-#                                there and run bootstrap.sh with the values below
+#                                there and run bootstrap.sh with the values below;
+#                                forwards this machine's `gh auth token` (if any)
+#                                to the cluster's ~/.config/env/gh_token first
 #   env-deploy CLUSTER --probe   only show what the cluster looks like
 #
 # Values live on this machine only (not in the public repo), in
@@ -196,6 +198,19 @@ remote_env="ENV_BRANCH=$(q "$branch") ENV_MACHINE=$(q "$MACHINE") ENV_MACHINE_NA
 remote_env="$remote_env ENV_PY_WD=$(q "$PY_WD")"
 remote_env="$remote_env ENV_STORAGE_DIR=$(q "$STORAGE_DIR") ENV_CACHE_ROOT=$(q "$CACHE_ROOT")"
 remote_env="$remote_env ENV_GIT_NAME=$(q "$GIT_NAME") ENV_GIT_EMAIL=$(q "$GIT_EMAIL")"
+
+# This machine's gh token, if it has one, goes to the cluster's private
+# ~/.config/env/gh_token, where bootstrap logs gh in with it. Only through a
+# variable and stdin: never on a command line, never printed.
+if command -v gh >/dev/null 2>&1 && gh_token=$(gh auth token -h github.com 2>/dev/null) \
+    && [ -n "$gh_token" ]; then
+    printf '== forwarding your gh token to %s\n' "$SSH_HOST"
+    if ! printf '%s\n' "$gh_token" | ssh "${cm[@]}" "$SSH_HOST" \
+        'umask 077; mkdir -p "$HOME/.config/env" && cat > "$HOME/.config/env/gh_token.new" && mv -f "$HOME/.config/env/gh_token.new" "$HOME/.config/env/gh_token"'; then
+        printf 'env-deploy: could not forward the gh token; log in on the cluster with gh auth login\n' >&2
+    fi
+fi
+unset gh_token
 
 printf '== bootstrapping ~/env (branch %s) on %s\n' "$branch" "$SSH_HOST"
 # shellcheck disable=SC2029

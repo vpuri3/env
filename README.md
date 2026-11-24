@@ -42,7 +42,16 @@ Bootstrap only writes under `$HOME` and the Python work directory. It never
 uses `sudo` or a system package manager, and it leaves an existing Homebrew
 (personal or IT-managed) alone, so it is safe on company-managed machines and
 shared clusters. Optional tools (Neovim, uv, Codex CLI, Claude Code, Julia)
-are installed user-local under `~/.local`.
+are installed user-local under `~/.local`; the GitHub CLI goes to
+`~/env/bin/gh` (gitignored, on `PATH` as `~/bin/gh`), kept at the latest
+release on each run.
+
+`gh` logs itself in when it can: a token in `GH_TOKEN` / `GITHUB_TOKEN` or in
+the private file `~/.config/env/gh_token` (mode 600) is stored with
+`gh auth login --with-token`, git protocol ssh. `env-deploy` puts the laptop's
+`gh auth token` in that file on the cluster (over ssh stdin, never on a
+command line). Otherwise bootstrap prints `gh auth login -h github.com -p ssh -w`.
+Re-run just this: `~/env/bootstrap.sh --defaults --only install-gh`.
 
 Neovim and the tree-sitter CLI are pinned (`NVIM_VERSION`, `TREE_SITTER_VERSION`
 at the top of `bootstrap.sh`); bump them and re-run to upgrade every machine.

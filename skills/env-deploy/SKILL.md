@@ -49,7 +49,20 @@ values from `~/.config/env/clusters/<cluster>.sh` (private, not in the repo).
 | `== installing ~/.ssh/id_ed25519.pub on X` | first deploy; a password prompt follows. Override the key with `ENV_DEPLOY_KEY=` |
 | `key login still fails; X may not accept keys` | the cluster may require passwords or 2FA; deploy still works over the shared connection |
 | `local ~/env differs from origin/<branch>` | unpushed or unpulled commits; the cluster gets origin |
+| `== forwarding your gh token to X` | the laptop's `gh auth token` went (over ssh stdin) to the cluster's `~/.config/env/gh_token`, mode 600; bootstrap's `install-gh` step logs gh in with it |
+| `could not forward the gh token` | harmless; log in on the cluster with `gh auth login -h github.com -p ssh -w` |
 | `== bootstrapping ~/env (branch B) on X` | handed over to bootstrap.sh on the cluster |
+
+## GitHub CLI login
+
+If `gh auth token` works on the laptop, env-deploy copies the token to the
+cluster's `~/.config/env/gh_token` (umask 077, through stdin, never on a
+command line or in output) before bootstrap runs. Bootstrap installs gh in
+`~/env/bin/gh` and runs `gh auth login --with-token` with it unless gh is
+already logged in there. No gh login on the laptop means no forwarding; then
+bootstrap prints `gh auth login -h github.com -p ssh -w` for the user to run.
+Never print, paste or commit the token. To refresh only gh on a cluster after
+deploying: `ssh <SSH_HOST> '~/env/bootstrap.sh --defaults --only install-gh'`.
 
 ## After deploying
 

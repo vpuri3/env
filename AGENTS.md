@@ -17,6 +17,7 @@ in untracked files on each machine:
 | `~/.ssh/config.local` | private ssh hosts, e.g. cluster login nodes |
 | `~/.config/env/cluster.md` | per-cluster Slurm preferences and `SJOB_*` export block (skills `cluster-onboarding`, `slurm-preflight`) |
 | `~/.config/env/slurm.sh` | optional `SJOB_*` defaults for `bin/sjob` (account, partitions); project repos may set these instead |
+| `~/.config/env/gh_token` | optional GitHub token (mode 600) that bootstrap's `install-gh` step logs `gh` in with; `env-deploy` writes it from the laptop's `gh auth token` |
 
 Check `git diff --cached` for such strings before every commit. Examples in
 docs and skills use placeholders (`mycluster`, `/project/me`).
@@ -27,7 +28,7 @@ docs and skills use placeholders (`mycluster`, `/project/me`).
 | --- | --- |
 | `bootstrap.sh` | sets up a machine; re-runnable |
 | `shellrc`, `vars.sh`, `aliases.sh` | shell startup (bash + zsh); `aliases.sh` is interactive-only |
-| `bin/` | small scripts on `PATH`; `env-deploy` sets up clusters from the laptop; `sjob` drives Slurm (site values only via `SJOB_*` env / `~/.config/env/slurm.sh`) |
+| `bin/` | small scripts on `PATH`; `env-deploy` sets up clusters from the laptop (and forwards the laptop's gh token); `sjob` drives Slurm (site values only via `SJOB_*` env / `~/.config/env/slurm.sh`); `bin/gh` is the GitHub CLI binary installed by bootstrap's `install-gh` step (gitignored, never commit it) |
 | `nvim/` | Neovim config; `nvconf` (terminal) vs `nvconf_vscode` (vscode-neovim) |
 | `vimrc`, `tmux.conf`, `emacs.conf` | symlinked dotfiles |
 | `vscode_settings.json`, `vscode_keybindings.json` | linked into Cursor and VS Code |
@@ -45,7 +46,8 @@ docs and skills use placeholders (`mycluster`, `/project/me`).
   `skills/`. `--help` lists the steps. A new step that needs no machine
   questions belongs in `STEP_NAMES` and `run_step`.
 - **User-level only.** No `sudo`, no system package managers, no Homebrew
-  installs; CI greps for these. Tools go under `~/.local`.
+  installs; CI greps for these. Tools go under `~/.local` (exception: the
+  GitHub CLI at `~/env/bin/gh`, gitignored).
 - **Idempotent.** A second run must change nothing (the tests check this).
 - **Touch other files minimally.** Edit rc files, `~/.gitconfig` and
   `~/.ssh/config` only inside the `# >>> env ... >>>` managed blocks.

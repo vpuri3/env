@@ -29,7 +29,7 @@ BACKUP_DIR=""
 LEGACY_PY_WD=""
 ONLY_STEPS=""
 ONLY=0
-STEP_NAMES="dotfiles editors git ssh codex pi skills shell macos install-nvim install-uv install-codex install-claude install-pi"
+STEP_NAMES="dotfiles editors git ssh codex pi skills shell macos install-nvim install-uv install-codex install-claude install-pi install-gh"
 
 usage() {
     cat << 'EOF'
@@ -43,7 +43,7 @@ Usage: ~/env/bootstrap.sh [--defaults] [--skip-installs] [--only STEP,...]
 
 Steps for --only:
   dotfiles editors git ssh codex pi skills shell macos
-  install-nvim install-uv install-codex install-claude install-pi
+  install-nvim install-uv install-codex install-claude install-pi install-gh
 EOF
 }
 
@@ -1274,6 +1274,188 @@ maybe_install_claude() {
     fi
 }
 
+# GitHub CLI: the latest release, in ~/env/bin/gh (on PATH as ~/bin/gh,
+# gitignored). Kept current on each run; a gh elsewhere on PATH that is at
+# least as new (or any on macOS, where Homebrew keeps it current) is used instead.
+# Offline, whatever is installed stays. Then logs gh in when it can.
+GH_TOKEN_FILE="$HOME/.config/env/gh_token"
+
+# Prints the version of a gh binary (e.g. 2.83.1), or nothing if it does not run.
+gh_version_of() {
+    [ -n "$1" ] || return 0
+    "$1" --version 2>/dev/null | sed -n '1s/^gh version \([0-9][0-9.]*\).*/\1/p' || true
+}
+
+# Prints the latest gh release (e.g. 2.105.0), or nothing when GitHub is out of reach.
+gh_latest_version() {
+    local url version
+    url=$(curl -fsSLI --max-time 20 -o /dev/null -w '%{url_effective}' \
+        https://github.com/cli/cli/releases/latest 2>/dev/null) || return 0
+    version=${url##*/tag/v}
+    case "$version" in
+        [0-9]*.[0-9]*) case "$version" in *[!0-9.]*) ;; *) printf '%s\n' "$version" ;; esac ;;
+    esac
+}
+
+# True if dotted version $1 >= $2.
+version_at_least() {
+    local a b i x y
+    IFS=. read -r -a a <<< "$1"
+    IFS=. read -r -a b <<< "$2"
+    for i in 0 1 2 3; do
+        x=${a[$i]:-0}
+        y=${b[$i]:-0}
+        if [ "$((10#$x))" -gt "$((10#$y))" ]; then return 0; fi
+        if [ "$((10#$x))" -lt "$((10#$y))" ]; then return 1; fi
+    done
+    return 0
+}
+
+# The first gh on PATH that is not ~/env/bin/gh, if any.
+other_gh() {
+    local candidate ours
+    ours=$(resolve_path "$ENV_REPO_DIR/bin/gh" 2>/dev/null || true)
+    while IFS= read -r candidate; do
+        [ -n "$candidate" ] || continue
+        if [ "$(resolve_path "$candidate" 2>/dev/null || true)" != "$ours" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done <<< "$(type -ap gh 2>/dev/null || true)"
+}
+
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{ print $1 }'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{ print $1 }'
+    fi
+}
+
+install_gh() {
+    local version="$1" os arch asset base tmp_dir sum want target="$ENV_REPO_DIR/bin/gh"
+    case "$(uname -s)" in
+        Linux) os=linux ;;
+        Darwin) os=macOS ;;
+        *) warn "no gh build for $(uname -s)"; return 1 ;;
+    esac
+    case "$(uname -m)" in
+        x86_64|amd64) arch=amd64 ;;
+        aarch64|arm64) arch=arm64 ;;
+        *) warn "no gh build for $(uname -m)"; return 1 ;;
+    esac
+    base="gh_${version}_${os}_${arch}"
+    if [ "$os" = macOS ]; then asset="$base.zip"; else asset="$base.tar.gz"; fi
+
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-gh.XXXXXX")
+    if ! download_to "https://github.com/cli/cli/releases/download/v$version/$asset" "$tmp_dir/$asset"; then
+        warn "gh download failed"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    if download_to "https://github.com/cli/cli/releases/download/v$version/gh_${version}_checksums.txt" "$tmp_dir/checksums.txt"; then
+        want=$(awk -v f="$asset" '$2 == f { print $1 }' "$tmp_dir/checksums.txt")
+        sum=$(sha256_of "$tmp_dir/$asset")
+        if [ -n "$sum" ] && [ "$sum" != "$want" ]; then
+            warn "gh $asset does not match its published checksum; not installing"
+            rm -rf "$tmp_dir"
+            return 1
+        fi
+    fi
+    if [ "$os" = macOS ]; then
+        unzip -q "$tmp_dir/$asset" -d "$tmp_dir" || true
+    else
+        tar -C "$tmp_dir" -xzf "$tmp_dir/$asset" || true
+    fi
+    if [ -z "$(gh_version_of "$tmp_dir/$base/bin/gh")" ]; then
+        warn "downloaded gh does not run on this machine; keeping the current install"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    # Copied next to the target first, so the final mv is atomic.
+    cp "$tmp_dir/$base/bin/gh" "$target.new"
+    chmod 755 "$target.new"
+    mv -f "$target.new" "$target"
+    rm -rf "$tmp_dir"
+    hash -r
+    info "installed gh $version in $target"
+}
+
+# Prints the gh to use: ~/env/bin/gh if present, else the first one on PATH.
+find_gh() {
+    if [ -x "$ENV_REPO_DIR/bin/gh" ]; then
+        printf '%s\n' "$ENV_REPO_DIR/bin/gh"
+    else
+        other_gh
+    fi
+}
+
+maybe_install_gh() {
+    local ours="$ENV_REPO_DIR/bin/gh" other other_version ours_version latest
+    other=$(other_gh)
+    other_version=$(gh_version_of "$other")
+    ours_version=$(gh_version_of "$ours")
+    latest=$(gh_latest_version)
+    if [ -n "$other_version" ] && [ "$(uname -s)" = Darwin ]; then
+        info "gh $other_version found at $other; skipping"
+    elif [ -z "$latest" ]; then
+        if [ -n "$ours_version" ] || [ -n "$other_version" ]; then
+            info "gh: cannot reach GitHub to check for a newer release; keeping gh ${ours_version:-$other_version}"
+        else
+            warn "gh: cannot reach GitHub; skipping the gh install"
+        fi
+    elif [ -n "$other_version" ] && version_at_least "$other_version" "$latest"; then
+        info "gh $other_version found at $other; skipping"
+    elif [ "$ours_version" = "$latest" ]; then
+        info "gh $latest is current in $ours"
+    elif [ -n "$ours_version" ] || ask_yes_no "Install GitHub CLI (gh) in ~/env/bin?" y; then
+        install_gh "$latest" || warn "gh install failed"
+    fi
+    configure_gh_auth
+}
+
+# Logs gh in to github.com, from GH_TOKEN / GITHUB_TOKEN or the private file
+# ~/.config/env/gh_token (env-deploy forwards the laptop's token there).
+# The token only ever travels on stdin.
+configure_gh_auth() {
+    local gh_bin from
+    gh_bin=$(find_gh)
+    [ -n "$gh_bin" ] || return 0
+    # A stored login, not one borrowed from the token variables.
+    if env -u GH_TOKEN -u GITHUB_TOKEN "$gh_bin" auth status -h github.com >/dev/null 2>&1; then
+        info "gh: logged in to github.com"
+        return 0
+    fi
+    if [ -n "${GH_TOKEN:-}" ]; then
+        from=GH_TOKEN
+    elif [ -n "${GITHUB_TOKEN:-}" ]; then
+        from=GITHUB_TOKEN
+    elif [ -s "$GH_TOKEN_FILE" ]; then
+        from="$GH_TOKEN_FILE"
+        chmod 600 "$GH_TOKEN_FILE"
+    else
+        info "gh: not logged in; run: gh auth login -h github.com -p ssh -w"
+        return 0
+    fi
+    if gh_login_from "$from" | env -u GH_TOKEN -u GITHUB_TOKEN \
+            "$gh_bin" auth login --with-token -h github.com 2>&1 | sed 's/^/  /' \
+        && env -u GH_TOKEN -u GITHUB_TOKEN "$gh_bin" auth status -h github.com >/dev/null 2>&1; then
+        env -u GH_TOKEN -u GITHUB_TOKEN "$gh_bin" config set -h github.com git_protocol ssh || true
+        info "gh: logged in to github.com with the token from $from"
+    else
+        warn "gh: login with the token from $from failed; run: gh auth login -h github.com -p ssh -w"
+    fi
+}
+
+# Writes the token from $1 (a variable name or the token file) to stdout.
+gh_login_from() {
+    case "$1" in
+        GH_TOKEN) printf '%s\n' "$GH_TOKEN" ;;
+        GITHUB_TOKEN) printf '%s\n' "$GITHUB_TOKEN" ;;
+        *) cat "$1" ;;
+    esac
+}
+
 install_julia() {
     local version
     mkdir -p "$HOME/.vim/pack/plugins/start"
@@ -1378,6 +1560,7 @@ install_tools() {
     maybe_install_claude
     maybe_install_pi
     install_pi_packages
+    maybe_install_gh
     if [ "$INSTALL_JULIA" = 1 ]; then
         install_julia
     fi
@@ -1401,6 +1584,7 @@ run_step() {
         install-codex) maybe_install_codex ;;
         install-claude) maybe_install_claude ;;
         install-pi) maybe_install_pi; install_pi_packages ;;
+        install-gh) maybe_install_gh ;;
         *) die "unknown step '$1' (see --help)" ;;
     esac
 }

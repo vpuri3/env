@@ -56,7 +56,7 @@ base_path="/usr/bin:/bin:/usr/sbin:/sbin"
 # (bootstrap and the checks never write a repo file in place), or a copy where cp -l is missing.
 template="$work/env-template"
 mkdir -p "$template"
-(cd "$repo" && tar --exclude=./.git --exclude=./.worktrees --exclude='.bootstrap-test.*' -cf - .) | (cd "$template" && tar -xf -)
+(cd "$repo" && tar --exclude=./.git --exclude=./.worktrees --exclude='.bootstrap-test.*' --exclude=./bin/gh -cf - .) | (cd "$template" && tar -xf -)
 git init -q "$template"
 
 new_home() {
@@ -343,6 +343,39 @@ home=$(new_home only-bad)
 check "--only rejects an unknown step" bash -c "! env -i HOME='$home' PATH='$base_path' SHELL='$SHELL' bash '$home/env/bootstrap.sh' --defaults --only pi,nope </dev/null >/dev/null 2>&1"
 check "--only rejects an empty list" bash -c "! env -i HOME='$home' PATH='$base_path' SHELL='$SHELL' bash '$home/env/bootstrap.sh' --defaults --only '' </dev/null >/dev/null 2>&1"
 check "--only with an unknown step runs nothing" is_absent "$home/.pi"
+
+# install-gh with a stub gh on PATH and GitHub out of reach: no download, and
+# the token file reaches `gh auth login` on stdin, never on its command line.
+home=$(new_home only-gh)
+mkdir -p "$home/stub" "$home/.config/env"
+cat > "$home/stub/gh" << 'STUB'
+#!/bin/sh
+case "$1" in
+    --version) echo "gh version 99.0.0 (stub)" ;;
+    auth)
+        case "$2" in
+            status) [ -f "$HOME/gh-stub.loggedin" ] ;;
+            login) echo "login $*" >> "$HOME/gh-stub.log"; cat > "$HOME/gh-stub.stdin"; touch "$HOME/gh-stub.loggedin" ;;
+        esac ;;
+    config) echo "config $*" >> "$HOME/gh-stub.log" ;;
+esac
+STUB
+chmod +x "$home/stub/gh"
+printf 'dummy-token-123\n' > "$home/.config/env/gh_token"
+gh_only() {
+    run_in_home "$home" PATH="$home/stub:$base_path" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 -- \
+        bash "$home/env/bootstrap.sh" --defaults --only install-gh </dev/null >/dev/null 2>&1
+}
+check "--only install-gh succeeds offline" gh_only
+check "install-gh downloads nothing when gh is on PATH" is_absent "$home/env/bin/gh"
+check "install-gh logs in with the token file on stdin" grep -Fqx dummy-token-123 "$home/gh-stub.stdin"
+check "install-gh keeps the token off the command line" sh -c '! grep -q dummy-token "$1"' _ "$home/gh-stub.log"
+check "install-gh sets the ssh git protocol" grep -Fq "config set -h github.com git_protocol ssh" "$home/gh-stub.log"
+mode=$(stat -c %a "$home/.config/env/gh_token" 2>/dev/null || stat -f %Lp "$home/.config/env/gh_token")
+check "gh token file is private (600)" [ "$mode" = 600 ]
+rm "$home/gh-stub.log"
+check "install-gh re-run succeeds" gh_only
+check "install-gh re-run leaves a stored login alone" is_absent "$home/gh-stub.log"
 
 ###
 ### refusals: nothing may be written
