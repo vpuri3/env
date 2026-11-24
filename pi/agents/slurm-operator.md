@@ -81,6 +81,16 @@ remaining allocation time. Launch on free GPUs immediately; if the allocation en
 the latest checkpoint in a new Slurm job (project restart tooling, e.g. `RESTART=true EXP_NAME=...`
 or `--run.restart true`).
 
+## Dynamic queue, never hold runs
+
+Run sweeps as a pull-based pool: workers on each node claim job files from `queue/`, one run per
+GPU (or the project's slot count). The parent adds jobs at any time, e.g. as each code lane merges;
+pick them up as they appear, scale nodes up to the agreed cap with demand, and release idle nodes.
+Job files are written to a tmp name and then `mv`'d into `queue/` so a worker never claims a
+partial file. Never hold launches until "all jobs are queued" or "all code is merged": start nodes
+as soon as there is queued work. Pool daemons (driver, retries, evals, monitor) and the node
+workers must survive your session ending (tmux/setsid, workers not children of the driver).
+
 ## Never block on the queue
 
 Never wait inside one tool call for an allocation (a blocking `salloc` / `sjob alloc`, or long

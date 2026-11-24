@@ -134,6 +134,12 @@ fan out what doesn't split.
 - `slurm-operator` never invents preferences or writes these files: if one is missing or a
   needed item is `TODO (ask user)`, it stops and reports the questions to its parent.
 - Edit either file only after the user confirms the exact lines.
+- **Never hold runs until all code lanes are merged.** As soon as one lane is merged, snapshot
+  that commit and queue the experiments that only need it; queue the next lane's experiments when
+  it merges (each with its own snapshot). The pool keeps running while code is still in progress.
+- The `slurm-operator` runs a dynamic pool: jobs are added to its queue at any time (write to a
+  tmp name, then `mv` into `queue/`), it picks them up, scales nodes up to the agreed cap with
+  demand, and releases idle nodes. Don't tell it to wait for the full job list.
 
 ## Coder thinking A/B (low vs medium)
 
