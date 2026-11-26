@@ -622,6 +622,8 @@ watch_pass() {
         done
         touch "$D/watch/.init"
     fi
+    # dir initialised by a watchdog that predates item_done: baseline done/ silently once
+    [ -f "$D/watch/done.seen" ] || NOTIFY_DONE_REGEX="" done_diff
     seen_diff failed item_failed
     seen_diff retries item_retry
     done_diff
