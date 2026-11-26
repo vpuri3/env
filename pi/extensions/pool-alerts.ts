@@ -24,7 +24,7 @@ export const MAX_LINES = 20;
 
 export const STALE_MS = 10 * 60_000;
 
-export interface Alert { pool: string; kind: string; item: string; msg: string; dir: string; owners: string[] }
+export interface Alert { pool: string; kind: string; item: string; msg: string; dir: string; owners: string[]; off?: number }
 export type Scope = "session" | "repo" | "cluster";
 export interface PoolEntry { dir: string; repo: string; scope: Scope; owner: string }
 
@@ -73,19 +73,37 @@ export function staleStep(wasStale: boolean, driverAge: number, watchdogAge: num
 }
 
 /** Parse complete JSONL lines; malformed or non-object lines are skipped. */
-export function parseAlerts(text: string, dir = ""): Alert[] {
+export function parseAlerts(text: string, dir = "", base = 0): Alert[] {
 	const out: Alert[] = [];
+	let pos = base;
 	for (const line of text.split("\n")) {
+		const off = pos;
+		pos += Buffer.byteLength(line) + 1;
 		if (!line.trim()) continue;
 		try {
 			const o = JSON.parse(line);
 			if (!o || typeof o !== "object" || Array.isArray(o)) continue;
 			const s = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
 			out.push({ pool: s(o.pool), kind: s(o.kind), item: s(o.item), msg: s(o.msg), dir: s(o.dir) || dir,
-				owners: Array.isArray(o.owners) ? o.owners.map(s).filter(Boolean) : [] });
+				owners: Array.isArray(o.owners) ? o.owners.map(s).filter(Boolean) : [], off });
 		} catch { /* skip */ }
 	}
 	return out;
+}
+
+/** Byte offset stored by `sjob pool alerts DIR --ack` in DIR/alerts.ack (0 if missing/invalid). */
+export function readAckOffset(dir: string): number {
+	try { const n = parseInt(readFileSync(join(dir, "alerts.ack"), "utf8").trim(), 10); return Number.isFinite(n) && n > 0 ? n : 0; } catch { return 0; }
+}
+
+/** Drop alerts whose line starts before the pool's acked offset (alerts without `off`, e.g. stale, are kept). */
+export function dropAcked(alerts: Alert[], ackOf: (dir: string) => number): Alert[] {
+	const cache = new Map<string, number>();
+	return alerts.filter((a) => {
+		if (a.off == null) return true;
+		if (!cache.has(a.dir)) cache.set(a.dir, ackOf(a.dir));
+		return a.off >= cache.get(a.dir)!;
+	});
 }
 
 export function formatBatch(alerts: Alert[]): string {
@@ -189,14 +207,14 @@ export default function (pi: ExtensionAPI) {
 				const r = readNew(file, offsets.get(file)!);
 				offsets.set(file, r.offset);
 				if (!r.text) continue;
-				pending.push(...parseAlerts(r.text, e.dir).filter((a) => shouldDeliver(a.owners, me, e.scope, inRepo)));
+				pending.push(...parseAlerts(r.text, e.dir, r.offset - Buffer.byteLength(r.text)).filter((a) => shouldDeliver(a.owners, me, e.scope, inRepo)));
 			} catch { /* never throw */ }
 		}
 		for (const f of [...offsets.keys()]) if (!seen.has(f)) offsets.delete(f);
 		if (pending.length && !flush) {
 			flush = setTimeout(() => {
 				flush = undefined;
-				const batch = pending;
+				const batch = dropAcked(pending, readAckOffset);
 				pending = [];
 				if (!batch.length) return;
 				try {

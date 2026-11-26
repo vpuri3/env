@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cwdInRepo, formatBatch, parseAlerts, parseRegistry, readNew, shouldDeliver, receivesPoolAlerts, staleStep, parsePoolOwner, STALE_MS } from "../../pi/extensions/pool-alerts.ts";
+import { cwdInRepo, formatBatch, parseAlerts, parseRegistry, readNew, shouldDeliver, receivesPoolAlerts, staleStep, parsePoolOwner, STALE_MS, dropAcked } from "../../pi/extensions/pool-alerts.ts";
 
 test("parse skips malformed lines and formats a capped batch", () => {
 	const al = parseAlerts('junk\n{"pool":"p","kind":"item_failed","item":"a","msg":"boom","dir":"/d"}\n[1]\n{"pool":', "/x");
@@ -64,4 +64,14 @@ test("stale episode fires once and resets", () => {
 	r = staleStep(r.stale, 5, old);
 	assert.deepEqual(r, { stale: false, fire: false });
 	assert.ok(staleStep(r.stale, old, old).fire);
+});
+
+test("acked alerts are dropped by byte offset", () => {
+	const l1 = '{"kind":"a","msg":"é"}\n', l2 = '{"kind":"b"}\n';
+	const al = parseAlerts(l1 + l2, "/d", 100);
+	assert.deepEqual(al.map((a) => a.off), [100, 100 + Buffer.byteLength(l1)]);
+	const stale = { pool: "p", kind: "stale", item: "", msg: "", dir: "/d", owners: [] };
+	assert.deepEqual(dropAcked([...al, stale], () => 100 + Buffer.byteLength(l1)).map((a) => a.kind), ["b", "stale"]);
+	assert.equal(dropAcked(al, () => 0).length, 2);
+	assert.equal(dropAcked(al, () => 10_000).length, 0);
 });
