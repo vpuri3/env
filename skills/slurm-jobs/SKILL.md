@@ -79,6 +79,43 @@ sjob tail <id> 40; sjob info <id>; sjob hist 2
   rather than streaming logs. Scan logs with
   `rg -n 'Traceback|CUDA error|NaN|Inf|Killed|OOM' LOG | tail -20`.
 
+## Work pools (`sjob pool`)
+
+For many independent items (a sweep, eval batches, preprocessing shards, downloads), use a
+pull-based pool instead of hand-rolled loops: `sjob pool help`. Any Slurm work, not only GPUs.
+
+```bash
+sjob pool init [DIR] --slots 8 --slot-bind gpu --max-nodes 4 --race "interactive:2:00:00 batch:4:00:00" \
+    [--plugin <repo plugin>] [--scope session|repo|cluster]
+sjob pool start DIR                  # driver + watchdog, detached (setsid nohup); refuses a 2nd copy
+sjob pool add DIR 010-a train_a.sh   # name sort order = claim order; add any time
+sjob pool status DIR; sjob pool alerts DIR [--ack]; sjob pool stop DIR [--drain|--release]
+```
+
+- **Scope:** default `session` = one pool per agent session (DIR defaults to
+  `$SJOB_STAGE_DIR/pools/s-<session8>-<repo>`; `stop` it when the session's sweep ends). Standing
+  pools are allowed with `--scope repo` (name = repo basename) or `--scope cluster` (name `cluster`).
+- **Shape:** each node runs SLOTS slot loops; `--slot-bind gpu` gives slot i its own
+  CUDA_VISIBLE_DEVICES (`--gpus-per-slot`), `none` only sets POOL_SLOT/POOL_SLOTS. Node shape =
+  `--alloc-args` (default SJOB_ALLOC_ARGS). Items needing another shape go in another pool.
+- **Item contract:** a bash script run as `cd $POOL_REPO && POOL_DIR=.. POOL_ITEM=.. POOL_SLOT=..
+  bash running/<file>`, output appended to `logs/<name>.log`. Exit 0 = done, 75 = requeue (resume
+  later; checkpoint before the allocation ends), other = retried once, then `failed/`. A dead
+  allocation's items go back to the queue, so long items must be resumable. Header
+  `# pool: min_left=30` lowers the minutes left needed to claim it (default `--min-left 45`).
+  Items may enqueue follow-ups with `sjob pool add "$POOL_DIR" ...`. `add` records the adding
+  session as `# pool-owner: <id>`.
+- **Plugin** (repo file, `--plugin`): `ALERT_REGEX`, `ALERT_IGNORE_REGEX`, `PROGRESS_REGEX`,
+  `STALL_MIN`, `NO_NODES_MIN`; functions `pool_on_done NAME`, `pool_status_extra`.
+- **Alerts:** the watchdog (every 150 s; driver and watchdog restart each other) appends to
+  `DIR/alerts.jsonl`: `item_failed`, `item_retry`, `log_alert`, `stall`, `no_nodes`, `pool_done`,
+  `driver_restarted`, `watchdog_restarted`, each with `owners` (item alerts: the item's owner; pool
+  alerts: the session that owns the pool, else the owners of active items).
+- **Waiting:** after the first items pass warmup, nobody polls. An operator subagent calls
+  `agent_pause`; the pi `pool-alerts` extension delivers new alerts to the owning main session
+  (subagents share its session id but never receive alerts), which wakes it; it resumes the operator
+  or handles them itself: `sjob pool alerts DIR`, `sjob pool status DIR`, act, `--ack`.
+
 ## Delegate to a `slurm-operator` subagent
 
 Hand these to a `slurm-operator` (pi subagent type from `~/env/pi/agents`), not the

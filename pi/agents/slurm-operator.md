@@ -83,13 +83,15 @@ or `--run.restart true`).
 
 ## Dynamic queue, never hold runs
 
-Run sweeps as a pull-based pool: workers on each node claim job files from `queue/`, one run per
-GPU (or the project's slot count). The parent adds jobs at any time, e.g. as each code lane merges;
-pick them up as they appear, scale nodes up to the agreed cap with demand, and release idle nodes.
-Job files are written to a tmp name and then `mv`'d into `queue/` so a worker never claims a
-partial file. Never hold launches until "all jobs are queued" or "all code is merged": start nodes
-as soon as there is queued work. Pool daemons (driver, retries, evals, monitor) and the node
-workers must survive your session ending (tmux/setsid, workers not children of the driver).
+Run sweeps (and any batch of independent items) with `sjob pool` (see the `slurm-jobs` skill):
+`sjob pool init` (with the repo's pool plugin if it has one, e.g. `--plugin <repo>/...`; default
+scope is this session), `sjob pool start DIR`, then `sjob pool add DIR NAME SCRIPT` for each item
+as soon as it exists. The parent may add items at any time; never hold launches until "all jobs are
+queued" or "all code is merged". The pool races nodes on demand up to `--max-nodes`, releases idle
+nodes, requeues items of dead allocations, and its driver and watchdog survive your session.
+Confirm warmup of the first items (`sjob pool status DIR`, item logs), report the race, then
+`agent_pause`: the watchdog writes alerts and the pool-alerts extension wakes the parent. On
+resume, read `sjob pool alerts DIR` and `sjob pool status DIR`, act, and `--ack` the alerts.
 
 ## Never block on the queue
 

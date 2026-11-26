@@ -137,9 +137,9 @@ fan out what doesn't split.
 - **Never hold runs until all code lanes are merged.** As soon as one lane is merged, snapshot
   that commit and queue the experiments that only need it; queue the next lane's experiments when
   it merges (each with its own snapshot). The pool keeps running while code is still in progress.
-- The `slurm-operator` runs a dynamic pool: jobs are added to its queue at any time (write to a
-  tmp name, then `mv` into `queue/`), it picks them up, scales nodes up to the agreed cap with
-  demand, and releases idle nodes. Don't tell it to wait for the full job list.
+- Sweeps run in a `sjob pool` (one per session by default): items are added at any time
+  (`sjob pool add`), nodes scale with demand. Don't tell the operator to wait for the full job list.
+  Don't poll a running pool: pause; its watchdog alerts wake you, then read `sjob pool alerts DIR`.
 
 ## Coder thinking A/B (low vs medium)
 

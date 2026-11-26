@@ -1,0 +1,876 @@
+#!/usr/bin/env bash
+# sjob-pool: a pull-based Slurm work pool (`sjob pool ...`).
+#
+# One pool = one directory. Items are bash scripts in queue/; a driver (login
+# node) races allocations on demand and starts one worker per allocation; the
+# worker runs SLOTS slot loops that each claim one item at a time (file-name sort
+# order). A watchdog supervises the driver (and vice versa) and appends alerts to
+# alerts.jsonl. Not GPU-specific: SLOT_BIND=gpu only adds CUDA_VISIBLE_DEVICES.
+# Run `sjob pool help` for commands; layout and item contract are in usage().
+export LC_ALL=C
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+HERE="$(dirname "$SELF")"
+
+usage() {
+    cat <<'EOF'
+Usage: sjob pool <command> DIR [args]
+
+  init [DIR] [--scope session|repo|cluster] [--name NAME] [--repo REPO] [--max-nodes 4] [--slots 1]
+       [--slot-bind none|gpu] [--gpus-per-slot 1] [--alloc-args '...'] [--race 'part:walltime ...']
+       [--plugin FILE] [--min-left 45] [--idle-release-min 5]
+                          create DIR (or, if it exists, update only the given pool.env keys).
+                          Scope (default session): one pool per agent session (POOL_OWNER = session
+                          id); repo / cluster: a standing pool. Defaults: REPO = git root of cwd,
+                          NAME = s-<session8>-<repo> | <repo> | cluster,
+                          DIR = $SJOB_STAGE_DIR/pools/NAME
+  start DIR               start driver + watchdog detached (refuses a second copy)
+  stop DIR [--drain] [--release]
+                          stop driver + watchdog; --drain: workers stop claiming (running items
+                          finish); --release: also scancel the pool's allocations, requeue items
+  status DIR              print DIR/status.md (regenerated if older than 5 min)
+  add DIR NAME SCRIPT|-   enqueue SCRIPT as queue/NAME.job (atomic); NAME order = claim order;
+                          records the adding session as `# pool-owner: <id>` after the shebang
+  alerts DIR [--all] [--ack]
+                          print unacked alerts (--all: all); --ack marks them read
+
+Item contract: a bash script run on a pool node as
+  cd $POOL_REPO && POOL_DIR=.. POOL_ITEM=.. POOL_SLOT=i POOL_SLOTS=n [CUDA_VISIBLE_DEVICES=..] bash running/<file>
+output appended to logs/<NAME>.log. Exit 0 -> done/ (then plugin pool_on_done NAME);
+75 -> back to queue/ (resume later); other -> retried once (retries/NAME), then failed/.
+Header line `# pool: min_left=MIN` overrides MIN_LEFT (allocation minutes left needed to claim).
+Items needing a different node shape go in a different pool (slots are homogeneous).
+
+Plugin (pool.env PLUGIN, sourced; all optional): ALERT_REGEX ALERT_IGNORE_REGEX PROGRESS_REGEX
+STALL_MIN NO_NODES_MIN; functions pool_on_done NAME, pool_status_extra.
+Alerts: DIR/alerts.jsonl (driver_restarted watchdog_restarted item_failed item_retry log_alert
+stall no_nodes pool_done), each with "owners": item alerts -> the item's pool-owner; pool alerts ->
+POOL_OWNER (session scope) else the owners of queued/running items (pool_done: of this episode).
+Session id: $PI_FLEET_SESSION, else $PI_SESSION_ID. Heartbeats: DIR/driver.hb, DIR/watchdog.hb.
+Registry: ${XDG_STATE_HOME:-~/.local/state}/sjob-pool/NAME.pool (dir= repo= scope= owner=).
+EOF
+}
+
+die() { echo "sjob pool: $*" >&2; exit 1; }
+ts() { date '+%F %T'; }
+now() { date +%s; }
+host() { hostname -s; }
+mtime() { stat -c %Y "$1" 2>/dev/null || echo 0; }
+age() { echo $(( $(now) - $(mtime "$1") )); }
+max() { if [ "$1" -gt "$2" ]; then echo "$1"; else echo "$2"; fi; }
+SUBDIRS=(queue running done failed retries workers logs races tmp staging watch)
+ENV_KEYS=(POOL_NAME POOL_DIR POOL_REPO POOL_SCOPE POOL_OWNER MAX_NODES SLOTS SLOT_BIND GPUS_PER_SLOT ALLOC_ARGS RACE MIN_LEFT IDLE_RELEASE_MIN PLUGIN)
+
+# ---------------------------------------------------------------- environment
+
+load_cluster_env() {
+    # The env convention: SJOB_* settings live in the bash block of ~/.config/env/cluster.md.
+    local f="$HOME/.config/env/cluster.md"
+    [ -f "$f" ] && eval "$(sed -n '/^```bash/,/^```/{/^```/d;p}' "$f")"
+    return 0
+}
+
+load_pool() {
+    local d
+    d="$(cd "$1" 2>/dev/null && pwd -P)" || die "no pool dir: $1"
+    [ -f "$d/pool.env" ] || die "$d/pool.env missing (run: sjob pool init $1 ...)"
+    # shellcheck source=/dev/null
+    . "$d/pool.env"
+    POOL_DIR="$d"
+    [ -n "${POOL_NAME:-}" ] || die "POOL_NAME missing in $d/pool.env"
+    : "${POOL_REPO:=}" "${POOL_SCOPE:=session}" "${POOL_OWNER:=}" "${MAX_NODES:=4}" "${SLOTS:=1}" "${SLOT_BIND:=none}" "${GPUS_PER_SLOT:=1}"
+    : "${ALLOC_ARGS:=}" "${RACE:=}" "${MIN_LEFT:=45}" "${IDLE_RELEASE_MIN:=5}" "${PLUGIN:=}"
+    ALERT_REGEX="${ALERT_REGEX-Traceback|CUDA error|out of memory|NaN|Inf\\b}"
+    : "${ALERT_IGNORE_REGEX:=}" "${PROGRESS_REGEX:=}" "${STALL_MIN:=30}" "${NO_NODES_MIN:=60}"
+    if [ -n "$PLUGIN" ]; then
+        # shellcheck source=/dev/null
+        if [ -f "$PLUGIN" ]; then . "$PLUGIN"; else echo "sjob pool: plugin not found: $PLUGIN" >&2; fi
+    fi
+    # Timing; env overrides (tests use seconds-scale values).
+    : "${POOL_TICK_SEC:=60}" "${WATCH_EVERY_SEC:=150}" "${POOL_IDLE_SLEEP_SEC:=30}"
+    : "${POOL_RACE_RETRY_SEC:=90}" "${POOL_STATUS_EVERY:=3}" "${POOL_RELEASE_WAIT_SEC:=30}"
+    : "${STALL_SEC:=$((STALL_MIN * 60))}" "${NO_NODES_SEC:=$((NO_NODES_MIN * 60))}"
+    : "${IDLE_RELEASE_SEC:=$((IDLE_RELEASE_MIN * 60))}"
+    D="$POOL_DIR"
+    SJOB="$(command -v sjob || echo "$HERE/sjob")"
+    USER="${USER:-$(id -un)}"
+}
+
+registry_file() { echo "${XDG_STATE_HOME:-$HOME/.local/state}/sjob-pool/$POOL_NAME.pool"; }
+
+session_id() { echo "${PI_FLEET_SESSION:-${PI_SESSION_ID:-}}"; }
+
+# Owner (adding session) of an item, from its `# pool-owner:` header.
+item_owner() {
+    local f
+    for f in "$D/queue/$1.job" "$D/running/$1@"*.job "$D/done/$1.job" "$D/failed/$1.job"; do
+        [ -f "$f" ] || continue
+        sed -n '1,5{s/^# pool-owner:[[:space:]]*//p}' "$f" | head -1
+        return
+    done
+}
+# Distinct owners of queued + running items.
+active_owners() {
+    local f
+    for f in "$D"/queue/*.job "$D"/running/*.job; do
+        [ -f "$f" ] && sed -n '1,5{s/^# pool-owner:[[:space:]]*//p}' "$f" | head -1
+    done | sed '/^$/d' | sort -u
+}
+# Routing: item alert -> item owner; pool alert -> POOL_OWNER (session scope) else active owners
+# (pool_done: owners seen during this episode).
+alert_owners() {
+    local kind="$1" item="$2"
+    if [ -n "$item" ]; then item_owner "$item"
+    elif [ "$POOL_SCOPE" = session ] && [ -n "$POOL_OWNER" ]; then echo "$POOL_OWNER"
+    elif [ "$kind" = pool_done ]; then cat "$D/watch/episode.owners" 2>/dev/null
+    else active_owners; fi
+}
+
+# Single-line JSON append (O_APPEND, one write) to alerts.jsonl.
+alert() {
+    local kind="$1" item="$2" msg="$3"
+    python3 - "$D/alerts.jsonl" "$POOL_NAME" "$POOL_REPO" "$POOL_DIR" "$kind" "$item" "$msg" \
+        "$(alert_owners "$kind" "$item")" <<'PY'
+import datetime, json, os, sys
+f, pool, repo, d, kind, item, msg, owners = sys.argv[1:9]
+fix = lambda s: s.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+msg = " ".join(fix(msg).split())
+owners = sorted({o.strip() for o in fix(owners).splitlines() if o.strip()})
+ts = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+rec = dict(ts=ts, pool=pool, repo=repo, dir=d, kind=kind, item=fix(item), msg=msg, owners=owners)
+fd = os.open(f, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+os.write(fd, (json.dumps(rec) + "\n").encode())
+os.close(fd)
+PY
+}
+
+# Slurm time-left string -> minutes.
+mins() {
+    local s="$1" d=0 h=0 m=0 days=0 p
+    case "$s" in ''|INVALID|NOT_SET) echo 0; return ;; UNLIMITED) echo 99999; return ;; esac
+    [[ "$s" =~ ^[0-9:-]+$ ]] || { echo 0; return; }
+    if [[ "$s" == *-* ]]; then d="${s%%-*}"; s="${s#*-}"; days=1; fi
+    IFS=: read -r -a p <<<"$s"
+    case "${#p[@]}" in
+        3) h="${p[0]}"; m="${p[1]}" ;;
+        2) if [ "$days" = 1 ]; then h="${p[0]}"; m="${p[1]}"; else m="${p[0]}"; fi ;;
+        1) [ "$days" = 1 ] && h="${p[0]}" ;;
+    esac
+    echo $((10#$d * 1440 + 10#$h * 60 + 10#$m))
+}
+
+# This pool's allocations: id|name|partition|state|left|nodes|reason. Fails if squeue fails.
+pool_jobs() {
+    local out
+    out="$(squeue -u "$USER" -h -o '%i|%j|%P|%T|%L|%N|%r')" || return 1
+    printf '%s\n' "$out" | awk -F'|' -v p="${SJOB_NAME_PREFIX:-}${POOL_NAME}.g" \
+        'index($2, p) == 1 && substr($2, length(p) + 1) ~ /^[0-9]+$/'
+}
+
+count() { local n=0 f; for f in "$@"; do [ -e "$f" ] && n=$((n + 1)); done; echo "$n"; }
+item_min_left() {
+    local v
+    v="$(sed -n '1,30{s/^#[[:space:]]*pool:.*min_left=\([0-9][0-9]*\).*/\1/p}' "$1" 2>/dev/null | head -1)"
+    echo "${v:-$MIN_LEFT}"
+}
+
+# ---------------------------------------------------------------- supervision
+
+# role_state ROLE EVERY: 0 alive, 1 dead, 2 hung (pid alive on this host, heartbeat stale).
+# Same host: pid check; other host: heartbeat younger than 3 intervals (min 60 s).
+role_state() {
+    local role="$1" every="$2" pid h stale
+    stale="$(max $((3 * every)) 60)"
+    pid="$(cat "$D/$role.pid" 2>/dev/null)"
+    h="$(cat "$D/$role.host" 2>/dev/null)"
+    if [ -n "$pid" ] && [ "$h" = "$(host)" ]; then
+        kill -0 "$pid" 2>/dev/null || return 1
+        [ -f "$D/$role.hb" ] && [ "$(age "$D/$role.hb")" -gt "$stale" ] && return 2
+        return 0
+    fi
+    [ -f "$D/$role.hb" ] && [ "$(age "$D/$role.hb")" -le "$stale" ] && return 0
+    return 1
+}
+role_alive() { role_state "$@"; }
+
+spawn_role() {
+    setsid nohup bash "$SELF" "_$1" "$D" >>"$D/logs/$1.out" 2>&1 </dev/null &
+}
+
+# supervise ROLE EVERY: restart a dead peer and alert.
+supervise() {
+    local role="$1" every="$2"
+    [ -f "$D/DRIVER_STOP" ] && return 0
+    [ -f "$D/$role.pid" ] || return 0   # not started yet (start spawns both) or stopped cleanly
+    role_state "$role" "$every"
+    case $? in
+        0) return 0 ;;
+        2) kill "$(cat "$D/$role.pid")" 2>/dev/null; plog "$role heartbeat stale: killed" ;;
+    esac
+    local old oldh
+    old="$(cat "$D/$role.pid" 2>/dev/null)"; oldh="$(cat "$D/$role.host" 2>/dev/null)"
+    spawn_role "$role"
+    wait_pid_file "$role" "$old" >/dev/null   # so the next pass doesn't spawn a second copy
+    plog "restarted $role"
+    alert "${role}_restarted" "" "$role was not running (pid ${old:-none} on ${oldh:-?}); restarted on $(host)"
+}
+
+claim_role() {
+    # Exit if another live copy of ROLE exists; else write pid/host files.
+    local role="$1" every="$2" pid
+    pid="$(cat "$D/$role.pid" 2>/dev/null)"
+    if [ -n "$pid" ] && [ "$pid" != "$$" ] && role_alive "$role" "$every"; then
+        plog "$role: another copy alive (pid $pid), exiting"; exit 0
+    fi
+    echo "$$" >"$D/$role.pid"; host >"$D/$role.host"; touch "$D/$role.hb"
+    # killed by `stop` (DRIVER_STOP set): drop the pid file; otherwise keep it so the peer restarts us
+    trap '[ -f "$D/DRIVER_STOP" ] && release_role '"$role"'; exit 0' TERM INT
+}
+release_role() { [ "$(cat "$D/$1.pid" 2>/dev/null)" = "$$" ] && rm -f "$D/$1.pid"; return 0; }
+nap() { sleep "$1" & wait $!; }
+
+# ---------------------------------------------------------------- driver
+
+plog() { echo "[$(ts)] ${ROLE:-pool}: $*" >>"$D/logs/${ROLE:-driver}.log"; }
+
+race_rank() {
+    local i=0 e
+    for e in $RACE; do [ "${e%%:*}" = "$1" ] && { echo "$i"; return; }; i=$((i + 1)); done
+    echo 99
+}
+
+launch_racer() {
+    local g="$1" spec="$2" part wall args=()
+    part="${spec%%:*}"; wall=""; [ "$spec" != "$part" ] && wall="${spec#*:}"
+    [ -n "$part" ] && args+=(-p "$part")
+    [ -n "$wall" ] && args+=(-t "$wall")
+    SJOB_ALLOC_ARGS="${ALLOC_ARGS:-${SJOB_ALLOC_ARGS:-}}" setsid nohup "$SJOB" alloc "${args[@]}" \
+        -n "$POOL_NAME.$g" >"$D/races/$g.${part:-default}.out" 2>&1 </dev/null &
+}
+
+start_worker() {
+    local id="$1"
+    rm -f "$D/workers/$id.exited"
+    "$SJOB" run "$id" --bg --log "$D/logs/worker_$id.log" -- bash "$SELF" _worker "$D" >>"$D/logs/driver.log" 2>&1
+    touch "$D/workers/$id.started"
+}
+
+release_alloc() {
+    touch "$D/workers/$1.stop"
+    scancel "$1" && plog "released $2 node job $1 ($3)"
+}
+
+driver_tick() {
+    local Q run_ids r b j n f g G line id nm part st left nodes win wrank rk o spec
+    Q="$(pool_jobs)" || { plog "squeue failed; skipping tick"; return; }
+    run_ids="$(printf '%s\n' "$Q" | awk -F'|' '$4 == "RUNNING" {print $1}')"
+    # 1. reclaim orphans: running items whose allocation is gone
+    for r in "$D"/running/*.job; do
+        [ -e "$r" ] || continue
+        b="$(basename "$r" .job)"; n="${b%@*}"; j="${b##*@}"; j="${j%%.*}"
+        printf '%s\n' "$run_ids" | grep -qx "$j" && continue
+        mv "$r" "$D/queue/$n.job" 2>/dev/null && plog "reclaimed $n from dead job $j"
+    done
+    # 2. refused racers -> retry marker
+    for f in "$D"/races/g*.out; do
+        [ -e "$f" ] || continue
+        grep -q 'JOBID=' "$f" && continue
+        grep -qi 'error\|allocation failed' "$f" || continue
+        b="$(basename "$f" .out)"; g="${b%%.*}"; part="${b#*.}"
+        if [ ! -f "$D/races/$g.won" ]; then
+            [ -f "$D/races/$g.$part.retry" ] || plog "group $g: $part refused: $(grep -im1 error "$f" | cut -c1-200)"
+            touch "$D/races/$g.$part.retry"
+        fi
+        mv "$f" "$f.refused.$(now)"
+    done
+    # 3. groups: keep the highest-listed RUNNING racer, cancel the rest, start its worker
+    local groups winners="" npend=0 ngroups=0
+    groups="$(printf '%s\n' "$Q" | awk -F'|' 'NF {n = $2; sub(/.*\.g/, "g", n); print n}' | sort -u)"
+    for g in $groups; do
+        ngroups=$((ngroups + 1))
+        G="$(printf '%s\n' "$Q" | awk -F'|' -v s=".$g" 'substr($2, length($2) - length(s) + 1) == s')"
+        win=""; wrank=100
+        while IFS='|' read -r id nm part st left nodes _; do
+            [ "$st" = RUNNING ] || continue
+            rk="$(race_rank "$part")"
+            if [ "$rk" -lt "$wrank" ]; then win="$id"; wrank="$rk"; fi
+        done <<<"$G"
+        if [ -n "$win" ]; then
+            for o in $(printf '%s\n' "$G" | awk -F'|' -v w="$win" '$1 != w {print $1}'); do
+                scancel "$o" && plog "group $g: $win won, cancelled racer $o"
+            done
+            touch "$D/races/$g.won"; rm -f "$D/races/$g".*.retry
+            line="$(printf '%s\n' "$G" | awk -F'|' -v w="$win" '$1 == w')"
+            winners+="$line"$'\n'
+            if [ ! -f "$D/workers/$win.started" ] || { [ -f "$D/workers/$win.exited" ] && [ ! -f "$D/workers/$win.stop" ]; }; then
+                start_worker "$win"
+                plog "group $g: started worker on $win ($(echo "$line" | cut -d'|' -f6))"
+            elif [ -f "$D/workers/$win.exited" ] && [ -f "$D/workers/$win.stop" ]; then
+                scancel "$win" && plog "group $g: worker stopped, released $win"
+            fi
+        else
+            npend=$((npend + 1))
+            [ -f "$D/races/$g.won" ] && continue
+            for spec in $RACE; do
+                part="${spec%%:*}"
+                printf '%s\n' "$G" | awk -F'|' -v p="$part" '$3 == p {f = 1} END {exit !f}' && continue
+                f="$D/races/$g.$part.retry"
+                [ -f "$f" ] && [ "$(age "$f")" -ge "$POOL_RACE_RETRY_SEC" ] || continue
+                touch "$f"; launch_racer "$g" "$spec"; plog "group $g: retry $part racer"
+            done
+        fi
+    done
+    # groups launched moments ago may not be in squeue yet: count them as pending
+    local grace
+    grace="$(max 30 $((2 * POOL_TICK_SEC)))"
+    for f in "$D"/races/g*.launched; do
+        [ -e "$f" ] || continue
+        g="$(basename "$f" .launched)"
+        if printf '%s\n' "$groups" | grep -qx "$g" || [ -f "$D/races/$g.won" ]; then rm -f "$f"; continue; fi
+        [ "$(age "$f")" -lt "$grace" ] && { ngroups=$((ngroups + 1)); npend=$((npend + 1)); }
+    done
+    # 4. demand / supply, releases
+    local nq minq=99999 demand supply=0 lm nidle nrun need
+    nq=0
+    for f in "$D"/queue/*.job; do
+        [ -e "$f" ] || continue
+        nq=$((nq + 1)); need="$(item_min_left "$f")"; [ "$need" -lt "$minq" ] && minq="$need"
+    done
+    demand="$nq"
+    while IFS='|' read -r id nm part st left nodes _; do
+        [ -n "$id" ] || continue
+        lm="$(mins "$left")"
+        nidle="$(count "$D/workers/$id".*.idle)"
+        nrun="$(count "$D/running/"*"@$id".*.job)"
+        if [ $((nidle + nrun)) -eq 0 ] && [ "$(age "$D/workers/$id.started")" -lt "$(max 120 $((3 * POOL_TICK_SEC)))" ]; then
+            nidle="$SLOTS"   # worker still coming up
+        fi
+        if [ "$lm" -ge "$MIN_LEFT" ]; then supply=$((supply + nidle)); else demand=$((demand + nrun)); fi
+        if [ "$nrun" -eq 0 ] && [ "$(count "$D/workers/$id".*.idle)" -eq "$SLOTS" ]; then
+            if [ "$lm" -lt "$MIN_LEFT" ] && { [ "$nq" -eq 0 ] || [ "$lm" -lt "$minq" ]; }; then
+                release_alloc "$id" "expiring idle" "$nodes, $lm min left"; continue
+            fi
+            if [ "$nq" -eq 0 ]; then
+                if [ -f "$D/workers/$id.idlesince" ]; then
+                    [ "$(age "$D/workers/$id.idlesince")" -ge "$IDLE_RELEASE_SEC" ] && release_alloc "$id" idle "$nodes"
+                else touch "$D/workers/$id.idlesince"; fi
+                continue
+            fi
+        fi
+        rm -f "$D/workers/$id.idlesince"
+    done <<<"$winners"
+    supply=$((supply + SLOTS * npend))
+    if [ "$demand" -gt "$supply" ] && [ "$ngroups" -lt "$MAX_NODES" ]; then
+        n=$(( $(cat "$D/races/counter" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$D/races/counter"
+        g="$(printf g%03d "$n")"; touch "$D/races/$g.launched"
+        for spec in ${RACE:-default}; do [ "$spec" = default ] && spec=""; launch_racer "$g" "$spec"; done
+        plog "demand=$demand supply=$supply groups=$ngroups -> new race group $g (${RACE:-default})"
+    fi
+}
+
+driver_main() {
+    ROLE=driver
+    load_pool "$1"; load_cluster_env; cd "$D" || exit 1
+    [ -f "$D/DRIVER_STOP" ] && { plog "DRIVER_STOP present, not starting"; exit 0; }
+    claim_role driver "$POOL_TICK_SEC"
+    plog "driver start pid $$ on $(host) sjob=$SJOB"
+    # legacy (reference pool) retry marker races/gNNN.retry = first racer refused
+    local f first="${RACE%% *}"; first="${first%%:*}"
+    for f in "$D"/races/g[0-9]*.retry; do
+        [ -e "$f" ] && [ -n "$first" ] && [[ "$(basename "$f")" =~ ^g[0-9]+\.retry$ ]] && mv "$f" "${f%.retry}.$first.retry"
+    done
+    local tick=0
+    while :; do
+        [ -f "$D/DRIVER_STOP" ] && { plog "DRIVER_STOP found, exiting"; break; }
+        touch "$D/driver.hb"
+        supervise watchdog "$WATCH_EVERY_SEC"
+        driver_tick
+        if [ $((tick % POOL_STATUS_EVERY)) -eq 0 ]; then write_status; fi
+        tick=$((tick + 1))
+        nap "$POOL_TICK_SEC"
+    done
+    release_role driver
+}
+
+# ---------------------------------------------------------------- worker
+
+worker_main() {
+    ROLE=worker
+    load_pool "$1"
+    JOB="${SLURM_JOB_ID:?worker must run inside an allocation}"; NODE="$(host)"
+    local i
+    for ((i = 0; i < SLOTS; i++)); do slot_loop "$i" & done
+    wait
+    rm -f "$D/workers/$JOB".*.idle; touch "$D/workers/$JOB.exited"
+}
+
+left_min() {
+    mins "$(squeue -h -j "$JOB" -o %L 2>/dev/null)"
+}
+
+event() { echo "[$(ts)] $*" >>"$D/logs/events.log"; }
+
+slot_loop() {
+    local i="$1" word=slot idle f name r rc lm env
+    [ "$SLOT_BIND" = gpu ] && word=gpu
+    idle="$D/workers/$JOB.$i.idle"
+    env=(POOL_DIR="$D" POOL_SLOTS="$SLOTS" POOL_SLOT="$i")
+    if [ "$SLOT_BIND" = gpu ]; then
+        env+=(CUDA_VISIBLE_DEVICES="$(seq -s, $((i * GPUS_PER_SLOT)) $((i * GPUS_PER_SLOT + GPUS_PER_SLOT - 1)))")
+    fi
+    while :; do
+        [ -f "$D/workers/$JOB.stop" ] && break
+        lm="$(left_min)"; r=""
+        for f in "$D"/queue/*.job; do
+            [ -e "$f" ] || continue
+            [ "$lm" -lt "$(item_min_left "$f")" ] && continue
+            name="$(basename "$f" .job)"
+            r="$D/running/$name@$JOB.$i.job"
+            mv "$f" "$r" 2>/dev/null && break
+            r=""
+        done
+        if [ -z "$r" ]; then touch "$idle"; sleep "$POOL_IDLE_SLEEP_SEC"; continue; fi
+        rm -f "$idle"; touch "$r"
+        event "$NODE $word$i job$JOB start $name"
+        (cd "$POOL_REPO" && env "${env[@]}" POOL_ITEM="$name" bash "$r") >>"$D/logs/$name.log" 2>&1 </dev/null
+        rc=$?
+        [ -f "$D/workers/$JOB.stop" ] && [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ] && rc=75   # killed by release
+        if [ "$rc" -eq 0 ]; then mv "$r" "$D/done/$name.job"
+        elif [ "$rc" -eq 75 ]; then mv "$r" "$D/queue/$name.job"
+        elif [ ! -f "$D/retries/$name" ]; then echo "$rc $(ts)" >"$D/retries/$name"; mv "$r" "$D/queue/$name.job"
+        else mv "$r" "$D/failed/$name.job"; fi
+        event "$NODE $word$i job$JOB end $name rc=$rc"
+        if [ "$rc" -eq 0 ] && declare -F pool_on_done >/dev/null; then
+            (cd "$POOL_REPO" && export POOL_DIR="$D" POOL_ITEM="$name" && pool_on_done "$name") >>"$D/logs/$name.log" 2>&1 </dev/null
+        fi
+    done
+    rm -f "$idle"
+}
+
+# ---------------------------------------------------------------- watchdog
+
+seen_diff() {
+    # seen_diff SUBDIR KIND: alert for entries new since the last pass
+    local sub="$1" kind="$2" seen="$D/watch/$1.seen" cur n rc last
+    cur="$(ls "$D/$sub" 2>/dev/null | sed 's/\.job$//' | sort)"
+    for n in $(comm -13 <(sort "$seen" 2>/dev/null) <(printf '%s\n' "$cur" | sed '/^$/d')); do
+        last="$(tr '\r' '\n' <"$D/logs/$n.log" 2>/dev/null | sed '/^[[:space:]]*$/d' | tail -1 | cut -c1-200)"
+        if [ "$kind" = item_failed ]; then
+            rc="$(grep -F " end $n rc=" "$D/logs/events.log" 2>/dev/null | tail -1 | sed 's/.*rc=//')"
+            alert "$kind" "$n" "failed twice (rc=${rc:-?}); log $D/logs/$n.log; last line: $last"
+        else
+            alert "$kind" "$n" "exit rc=$(cut -d' ' -f1 "$D/retries/$n" 2>/dev/null), retrying once; log $D/logs/$n.log; last line: $last"
+        fi
+    done
+    printf '%s\n' "$cur" | sed '/^$/d' >"$seen"
+}
+
+scan_log() {
+    # scan_log NAME: alert on ALERT_REGEX matches in complete lines added since the last scan
+    local n="$1" log="$D/logs/$1.log" off_f="$D/watch/$1.off" off size tmp nl part complete m nm
+    [ -f "$log" ] || return 0
+    size="$(stat -c %s "$log")"
+    off="$(cat "$off_f" 2>/dev/null || echo 0)"
+    [ "$size" -lt "$off" ] && off=0
+    [ "$size" -gt "$off" ] || return 0
+    tmp="$D/watch/.chunk.$$"
+    tail -c +$((off + 1)) "$log" | head -c $((size - off)) >"$tmp"
+    nl="$(tail -c 1 "$tmp" | wc -l)"
+    part=0; [ "$nl" -eq 0 ] && part="$(tail -n 1 "$tmp" | wc -c)"
+    complete=$((size - off - part))
+    if [ "$complete" -le 0 ]; then rm -f "$tmp"; return 0; fi
+    m="$(head -c "$complete" "$tmp" | tr '\r' '\n' | grep -aE -- "$ALERT_REGEX" |
+        { if [ -n "$ALERT_IGNORE_REGEX" ]; then grep -avE -- "$ALERT_IGNORE_REGEX"; else cat; fi; })"
+    rm -f "$tmp"
+    echo $((off + complete)) >"$off_f"
+    [ -n "$m" ] || return 0
+    nm="$(printf '%s\n' "$m" | wc -l)"
+    alert log_alert "$n" "$(printf '%s\n' "$m" | head -1 | cut -c1-300)$([ "$nm" -gt 1 ] && echo " (+$((nm - 1)) more)")"
+}
+
+watch_pass() {
+    local init="$1" r b n log t nq nrun Q nalloc
+    if [ "$init" = 1 ]; then
+        # first run on this dir: don't alert on history
+        ls "$D/failed" 2>/dev/null | sed 's/\.job$//' | sort >"$D/watch/failed.seen"
+        ls "$D/retries" 2>/dev/null | sort >"$D/watch/retries.seen"
+        for log in "$D"/logs/*.log; do
+            [ -e "$log" ] || continue
+            stat -c %s "$log" >"$D/watch/$(basename "$log" .log).off"
+        done
+        touch "$D/watch/.init"
+    fi
+    seen_diff failed item_failed
+    seen_diff retries item_retry
+    for r in "$D"/running/*.job; do
+        [ -e "$r" ] || continue
+        b="$(basename "$r" .job)"; n="${b%@*}"; log="$D/logs/$n.log"
+        scan_log "$n"
+        t="$(max "$(mtime "$log")" "$(mtime "$r")")"
+        if [ $(( $(now) - t )) -ge "$STALL_SEC" ]; then
+            if [ ! -f "$D/watch/$n.stall" ]; then
+                touch "$D/watch/$n.stall"
+                alert stall "$n" "no log output for $(( ($(now) - t) / 60 )) min ($b); log $log"
+            fi
+        else rm -f "$D/watch/$n.stall"; fi
+    done
+    for r in "$D"/watch/*.stall; do
+        [ -e "$r" ] || continue
+        n="$(basename "$r" .stall)"
+        [ "$(count "$D/running/$n@"*.job)" -eq 0 ] && rm -f "$r"
+    done
+    nrun="$(count "$D"/running/*.job)"; nq="$(count "$D"/queue/*.job)"
+    if Q="$(pool_jobs)"; then
+        nalloc="$(printf '%s\n' "$Q" | awk -F'|' '$4 == "RUNNING"' | grep -c .)"
+        if [ "$nq" -gt 0 ] && [ "$nalloc" -eq 0 ]; then
+            [ -f "$D/watch/no_nodes.since" ] || touch "$D/watch/no_nodes.since"
+            if [ "$(age "$D/watch/no_nodes.since")" -ge "$NO_NODES_SEC" ] && [ ! -f "$D/watch/no_nodes.alerted" ]; then
+                touch "$D/watch/no_nodes.alerted"
+                alert no_nodes "" "$nq queued, no RUNNING allocation for $(( $(age "$D/watch/no_nodes.since") / 60 )) min; $(printf '%s\n' "$Q" | awk -F'|' 'NF {printf "%s %s %s %s; ", $1, $3, $4, $7}')"
+            fi
+        else rm -f "$D/watch/no_nodes.since" "$D/watch/no_nodes.alerted"; fi
+    fi
+    if [ $((nq + nrun)) -gt 0 ]; then
+        touch "$D/watch/had_items"
+        { active_owners; cat "$D/watch/episode.owners" 2>/dev/null; } | sort -u >"$D/watch/episode.owners.tmp"
+        mv "$D/watch/episode.owners.tmp" "$D/watch/episode.owners"
+    elif [ -f "$D/watch/had_items" ]; then
+        sleep 1   # an item may be between queue/ and running/: confirm
+        if [ "$(count "$D"/running/*.job "$D"/queue/*.job)" -eq 0 ]; then
+            rm -f "$D/watch/had_items"
+            alert pool_done "" "queue and running empty: done=$(count "$D"/done/*.job) failed=$(count "$D"/failed/*.job)"
+            rm -f "$D/watch/episode.owners"
+        fi
+    fi
+}
+
+watchdog_main() {
+    ROLE=watchdog
+    load_pool "$1"; load_cluster_env; cd "$D" || exit 1
+    [ -f "$D/DRIVER_STOP" ] && exit 0
+    mkdir -p "$D/watch"
+    claim_role watchdog "$WATCH_EVERY_SEC"
+    plog "watchdog start pid $$ on $(host)"
+    local init=0
+    [ -f "$D/watch/.init" ] || init=1
+    while :; do
+        [ -f "$D/DRIVER_STOP" ] && { plog "DRIVER_STOP found, exiting"; break; }
+        touch "$D/watchdog.hb"
+        supervise driver "$POOL_TICK_SEC"
+        watch_pass "$init"; init=0
+        nap "$WATCH_EVERY_SEC"
+    done
+    release_role watchdog
+}
+
+# ---------------------------------------------------------------- status
+
+progress() {
+    local log="$1" l
+    [ -f "$log" ] || { echo "no log yet"; return; }
+    if [ -n "$PROGRESS_REGEX" ]; then
+        l="$(tail -c 16384 "$log" | tr '\r' '\n' | grep -aE -- "$PROGRESS_REGEX" | tail -1)"
+    else
+        l="$(tail -c 16384 "$log" | tr '\r' '\n' | sed '/^[[:space:]]*$/d' | tail -1)"
+    fi
+    echo "${l:-init}" | cut -c1-160
+}
+
+up() { if role_alive "$1" "$2"; then echo "up (pid $(cat "$D/$1.pid" 2>/dev/null) on $(cat "$D/$1.host" 2>/dev/null))"; else echo DOWN; fi; }
+
+status_body() {
+    local r b n ack
+    echo "# $POOL_NAME pool status $(ts)"
+    echo "repo: $POOL_REPO · dir: $D · slots/node: $SLOTS (bind $SLOT_BIND) · max nodes: $MAX_NODES · race: ${RACE:-default}"
+    ack="$(cat "$D/alerts.ack" 2>/dev/null || echo 0)"
+    echo "driver: $(up driver "$POOL_TICK_SEC") · watchdog: $(up watchdog "$WATCH_EVERY_SEC") · unacked alerts: $(tail -c +$((ack + 1)) "$D/alerts.jsonl" 2>/dev/null | grep -c .)"
+    [ -f "$D/DRIVER_STOP" ] && echo "DRIVER_STOP present (pool stopped)"
+    echo; echo "## allocations (id name partition state left nodes reason)"
+    pool_jobs 2>/dev/null | tr '|' ' '
+    echo; echo "## counts: queue=$(count "$D"/queue/*.job) running=$(count "$D"/running/*.job) done=$(count "$D"/done/*.job) failed=$(count "$D"/failed/*.job) retries=$(count "$D"/retries/*)"
+    echo; echo "## running"
+    for r in "$D"/running/*.job; do
+        [ -e "$r" ] || continue
+        b="$(basename "$r" .job)"; n="${b%@*}"
+        echo "- $b :: $(progress "$D/logs/$n.log")"
+    done
+    echo; echo "## queue"; ls "$D/queue" | sed 's/\.job$//' | tr '\n' ' '; echo
+    echo; echo "## failed"; ls "$D/failed" | sed 's/\.job$//' | tr '\n' ' '; echo
+    echo; echo "## last events"; tail -n 8 "$D/logs/events.log" 2>/dev/null
+    if declare -F pool_status_extra >/dev/null; then echo; pool_status_extra; fi
+}
+
+write_status() {
+    (status_body) >"$D/tmp/status.md.$$" 2>&1
+    mv "$D/tmp/status.md.$$" "$D/status.md"
+}
+
+# ---------------------------------------------------------------- commands
+
+env_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+
+env_set() {
+    # env_set FILE KEY VALUE: replace KEY=... line or append
+    local f="$1" k="$2" v
+    v="$(env_quote "$3")"
+    if grep -q "^$k=" "$f" 2>/dev/null; then
+        K="$k" V="$v" python3 - "$f" <<'PY'
+import os, sys
+f = sys.argv[1]; k, v = os.environ["K"], os.environ["V"]
+lines = open(f).read().splitlines(True)
+out = [f"{k}={v}\n" if l.startswith(k + "=") else l for l in lines]
+open(f + ".tmp", "w").write("".join(out)); os.replace(f + ".tmp", f)
+PY
+    else
+        [ -s "$f" ] && [ "$(tail -c 1 "$f" | wc -l)" -eq 0 ] && echo >>"$f"
+        echo "$k=$v" >>"$f"
+    fi
+}
+
+cmd_init() {
+    local dir=""
+    if [ $# -gt 0 ] && [[ "$1" != --* ]]; then dir="$1"; shift; fi
+    declare -A kv=()
+    while [ $# -gt 0 ]; do
+        [ $# -ge 2 ] || die "init: $1 needs a value"
+        case "$1" in
+            --scope) [[ "$2" =~ ^(session|repo|cluster)$ ]] || die "init: --scope session|repo|cluster"; kv[POOL_SCOPE]="$2" ;;
+            --name) kv[POOL_NAME]="$2" ;;
+            --repo) kv[POOL_REPO]="$(cd "$2" 2>/dev/null && pwd -P)" || die "no such repo dir: $2" ;;
+            --max-nodes) kv[MAX_NODES]="$2" ;;
+            --slots) kv[SLOTS]="$2" ;;
+            --slot-bind) kv[SLOT_BIND]="$2" ;;
+            --gpus-per-slot) kv[GPUS_PER_SLOT]="$2" ;;
+            --alloc-args) kv[ALLOC_ARGS]="$2" ;;
+            --race) kv[RACE]="$2" ;;
+            --plugin) kv[PLUGIN]="$(readlink -f "$2")"; [ -f "$2" ] || die "no such plugin: $2" ;;
+            --min-left) kv[MIN_LEFT]="$2" ;;
+            --idle-release-min) kv[IDLE_RELEASE_MIN]="$2" ;;
+            *) die "init: unknown option $1" ;;
+        esac
+        shift 2
+    done
+    local k
+    for k in MAX_NODES SLOTS GPUS_PER_SLOT MIN_LEFT IDLE_RELEASE_MIN; do
+        [ -z "${kv[$k]+x}" ] || [[ "${kv[$k]}" =~ ^[0-9]+$ ]] || die "init: $k must be a number"
+    done
+    [ -z "${kv[SLOT_BIND]+x}" ] || [[ "${kv[SLOT_BIND]}" =~ ^(none|gpu)$ ]] || die "init: --slot-bind none|gpu"
+    [ -z "${kv[POOL_NAME]+x}" ] || [[ "${kv[POOL_NAME]}" =~ ^[A-Za-z0-9][A-Za-z0-9_+-]*$ ]] || die "init: bad name (letters, digits, _ + -)"
+    local sid scope
+    sid="$(session_id)"
+    if [ -z "$dir" ] || [ ! -f "$dir/pool.env" ]; then
+        # new pool: defaults for repo, name, dir
+        scope="${kv[POOL_SCOPE]:-session}"
+        [ -n "${kv[POOL_REPO]:-}" ] || kv[POOL_REPO]="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+        if [ -z "${kv[POOL_NAME]:-}" ]; then
+            case "$scope" in
+                session) kv[POOL_NAME]="${sid:+s-${sid:0:8}-}$(basename "${kv[POOL_REPO]}")" ;;
+                repo) kv[POOL_NAME]="$(basename "${kv[POOL_REPO]}")" ;;
+                cluster) kv[POOL_NAME]=cluster ;;
+            esac
+            kv[POOL_NAME]="$(printf '%s' "${kv[POOL_NAME]}" | tr -c 'A-Za-z0-9_+-' '-')"
+        fi
+        if [ -z "$dir" ]; then
+            load_cluster_env
+            dir="${SJOB_STAGE_DIR:-$HOME/.sjob}/pools/${kv[POOL_NAME]}"
+        fi
+    fi
+    # scope given (or new pool): session scope owns the pool for this session
+    if [ -n "${kv[POOL_SCOPE]+x}" ] || [ ! -f "$dir/pool.env" ]; then
+        if [ "${kv[POOL_SCOPE]:-session}" = session ]; then kv[POOL_OWNER]="$sid"; else kv[POOL_OWNER]=""; fi
+    fi
+    mkdir -p "$dir" || die "cannot create $dir"
+    dir="$(cd "$dir" && pwd -P)"
+    local env="$dir/pool.env" new=0
+    if [ ! -f "$env" ]; then
+        new=1
+        echo "# sjob pool settings (sjob pool init); sourced by driver, worker, watchdog" >"$env"
+    fi
+    for k in "${SUBDIRS[@]}"; do mkdir -p "$dir/$k"; done
+    kv[POOL_DIR]="$dir"
+    # keys given -> set; keys missing -> default (never overwrite an existing key not given)
+    local def_owner="$sid"
+    grep -q "^POOL_SCOPE='\?\(repo\|cluster\)" "$env" && [ -z "${kv[POOL_SCOPE]+x}" ] && def_owner=""
+    declare -A def=([POOL_SCOPE]=session [POOL_OWNER]="$def_owner" [MAX_NODES]=4 [SLOTS]=1 [SLOT_BIND]=none [GPUS_PER_SLOT]=1 [ALLOC_ARGS]=""
+        [RACE]="" [MIN_LEFT]=45 [IDLE_RELEASE_MIN]=5 [PLUGIN]="")
+    for k in "${ENV_KEYS[@]}"; do
+        if [ -n "${kv[$k]+x}" ]; then env_set "$env" "$k" "${kv[$k]}"
+        elif ! grep -q "^$k=" "$env"; then
+            [ -n "${def[$k]+x}" ] || die "init: $k missing in existing $env (pass --name and --repo)"
+            env_set "$env" "$k" "${def[$k]}"
+        fi
+    done
+    [ "$new" = 1 ] && echo "created pool $dir" || echo "updated pool $dir"
+    sed -n "/^\(POOL_NAME\|POOL_REPO\|POOL_SCOPE\|POOL_OWNER\|MAX_NODES\|SLOTS\|SLOT_BIND\|GPUS_PER_SLOT\|ALLOC_ARGS\|RACE\|MIN_LEFT\|IDLE_RELEASE_MIN\|PLUGIN\)=/p" "$env"
+}
+
+wait_pid_file() {
+    # wait_pid_file ROLE OLDPID: up to ~10 s for a new pid
+    local i p
+    for ((i = 0; i < 50; i++)); do
+        p="$(cat "$D/$1.pid" 2>/dev/null)"
+        [ -n "$p" ] && [ "$p" != "$2" ] && kill -0 "$p" 2>/dev/null && { echo "$p"; return 0; }
+        sleep 0.2
+    done
+    return 1
+}
+
+cmd_start() {
+    load_pool "${1:?start needs DIR}"
+    local h p
+    if [ -f "$D/driver.pid" ]; then
+        h="$(cat "$D/driver.host" 2>/dev/null)"; p="$(cat "$D/driver.pid")"
+        if [ "$h" = "$(host)" ]; then
+            kill -0 "$p" 2>/dev/null && die "driver already running (pid $p on $h)"
+        elif [ -f "$D/driver.hb" ]; then
+            role_alive driver "$POOL_TICK_SEC" && die "driver already running (pid $p on $h, heartbeat $(age "$D/driver.hb")s ago)"
+        else
+            die "driver.pid names pid $p on $h (no heartbeat): run start on $h, or remove $D/driver.pid once that driver has exited"
+        fi
+    fi
+    local wd_up=0
+    role_alive watchdog "$WATCH_EVERY_SEC" && wd_up=1
+    # stale pid files would make each new daemon "restart" its peer (and alert)
+    rm -f "$D/DRIVER_STOP" "$D"/workers/*.stop "$D/driver.pid"
+    [ "$wd_up" = 1 ] || rm -f "$D/watchdog.pid"
+    mkdir -p "$D/watch"
+    spawn_role driver
+    p="$(wait_pid_file driver "")" || die "driver did not start; see $D/logs/driver.out"
+    echo "driver pid $p on $(host)"
+    if [ "$wd_up" = 1 ]; then
+        echo "watchdog already running (pid $(cat "$D/watchdog.pid"))"
+    else
+        spawn_role watchdog
+        p="$(wait_pid_file watchdog "")" || die "watchdog did not start; see $D/logs/watchdog.out"
+        echo "watchdog pid $p on $(host)"
+    fi
+    local reg; reg="$(registry_file)"
+    mkdir -p "$(dirname "$reg")"
+    printf 'dir=%s\nrepo=%s\nscope=%s\nowner=%s\n' "$D" "$POOL_REPO" "$POOL_SCOPE" "$POOL_OWNER" >"$reg.tmp" && mv "$reg.tmp" "$reg"
+    echo "registry $reg"
+}
+
+cmd_stop() {
+    load_pool "${1:?stop needs DIR}"; shift
+    local drain=0 release=0 role p i f id b n
+    while [ $# -gt 0 ]; do
+        case "$1" in --drain) drain=1 ;; --release) release=1; drain=1 ;; *) die "stop: unknown arg $1" ;; esac
+        shift
+    done
+    load_cluster_env
+    touch "$D/DRIVER_STOP"
+    for role in driver watchdog; do
+        p="$(cat "$D/$role.pid" 2>/dev/null)"
+        if [ -n "$p" ] && [ "$(cat "$D/$role.host" 2>/dev/null)" = "$(host)" ]; then
+            kill "$p" 2>/dev/null
+            for ((i = 0; i < 50; i++)); do kill -0 "$p" 2>/dev/null || break; sleep 0.2; done
+            kill -0 "$p" 2>/dev/null && echo "warning: $role pid $p still alive" || echo "$role stopped"
+        elif [ -n "$p" ]; then
+            echo "$role runs on $(cat "$D/$role.host" 2>/dev/null): it exits at its next tick (DRIVER_STOP)"
+        fi
+    done
+    if [ "$drain" = 1 ]; then
+        for f in "$D"/workers/*.started; do [ -e "$f" ] && touch "${f%.started}.stop"; done
+        echo "workers told to stop claiming new items"
+    fi
+    if [ "$release" = 1 ]; then
+        local Q ids
+        Q="$(pool_jobs)" || die "squeue failed; nothing cancelled"
+        ids="$(printf '%s\n' "$Q" | awk -F'|' 'NF {print $1}')"
+        for id in $ids; do scancel "$id" && echo "scancel $id"; done
+        for ((i = 0; i < POOL_RELEASE_WAIT_SEC; i++)); do
+            n=0
+            for id in $ids; do n=$((n + $(count "$D/running/"*"@$id".*.job))); done
+            [ "$n" -eq 0 ] && break
+            sleep 1
+        done
+        for f in "$D"/running/*.job; do
+            [ -e "$f" ] || continue
+            b="$(basename "$f" .job)"; id="${b##*@}"; id="${id%%.*}"
+            printf '%s\n' "$ids" | grep -qx "$id" && mv "$f" "$D/queue/${b%@*}.job" && echo "requeued ${b%@*}"
+        done
+    fi
+    rm -f "$(registry_file)"
+}
+
+cmd_status() {
+    load_pool "${1:?status needs DIR}"; load_cluster_env
+    if [ ! -f "$D/status.md" ] || [ "$(age "$D/status.md")" -gt 300 ]; then write_status; fi
+    cat "$D/status.md"
+}
+
+cmd_add() {
+    local dir="${1:-}" name="${2:-}" src="${3:-}"
+    [ -n "$dir" ] && [ -n "$name" ] && [ -n "$src" ] || die "usage: sjob pool add DIR NAME SCRIPT|-"
+    load_pool "$dir"
+    name="${name%.job}"
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+=,-]*$ ]] || die "bad item name '$name' (letters, digits, . _ + = , -)"
+    [ -e "$D/queue/$name.job" ] && die "$name is already queued"
+    [ "$(count "$D/running/$name@"*.job)" -eq 0 ] || die "$name is running"
+    local tmp="$D/tmp/$name.job.$$"
+    if [ "$src" = - ]; then cat >"$tmp"; else [ -f "$src" ] || { die "no such script: $src"; }; cp "$src" "$tmp"; fi
+    local sid; sid="$(session_id)"
+    if [ -n "$sid" ] && ! sed -n '1,5p' "$tmp" | grep -q '^# pool-owner:'; then
+        if head -1 "$tmp" | grep -q '^#!'; then sed -i "1a # pool-owner: $sid" "$tmp"
+        else sed -i "1i # pool-owner: $sid" "$tmp"; fi
+    fi
+    mv "$tmp" "$D/queue/$name.job" && echo "queued $name"
+}
+
+cmd_alerts() {
+    load_pool "${1:?alerts needs DIR}"; shift
+    local all=0 ack=0
+    while [ $# -gt 0 ]; do
+        case "$1" in --all) all=1 ;; --ack) ack=1 ;; *) die "alerts: unknown arg $1" ;; esac
+        shift
+    done
+    python3 - "$D/alerts.jsonl" "$D/alerts.ack" "$all" "$ack" <<'PY'
+import json, os, sys
+f, ackf, show_all, do_ack = sys.argv[1], sys.argv[2], sys.argv[3] == "1", sys.argv[4] == "1"
+try:
+    off = 0 if show_all else int(open(ackf).read().strip() or 0)
+except (OSError, ValueError):
+    off = 0
+data = b""
+if os.path.exists(f):
+    with open(f, "rb") as fh:
+        size = os.fstat(fh.fileno()).st_size
+        off = min(off, size)
+        fh.seek(off)
+        data = fh.read(size - off)
+end = off + data.rfind(b"\n") + 1 if b"\n" in data else off
+n = 0
+for line in data[: end - off].decode("utf-8", "replace").splitlines():
+    try:
+        a = json.loads(line)
+    except ValueError:
+        continue
+    n += 1
+    print(f"[{a.get('ts','')}] {a.get('kind','')} {a.get('item','') or '-'}: {a.get('msg','')}")
+if n == 0:
+    print("(no unacked alerts)" if not show_all else "(no alerts)")
+if do_ack:
+    with open(ackf + ".tmp", "w") as fh:
+        fh.write(f"{end}\n")
+    os.replace(ackf + ".tmp", ackf)
+PY
+}
+
+main() {
+    local cmd="${1:-help}"; shift || true
+    case "$cmd" in
+        init) cmd_init "$@" ;;
+        start) cmd_start "$@" ;;
+        stop) cmd_stop "$@" ;;
+        status) cmd_status "$@" ;;
+        add) cmd_add "$@" ;;
+        alerts) cmd_alerts "$@" ;;
+        _driver) driver_main "$@" ;;
+        _worker) worker_main "$@" ;;
+        _watchdog) watchdog_main "$@" ;;
+        help|-h|--help) usage ;;
+        *) usage >&2; exit 2 ;;
+    esac
+}
+
+main "$@"

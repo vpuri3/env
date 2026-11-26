@@ -50,6 +50,9 @@ Inspect
 Control
   cancel JOBID [--force]          scancel; refuses the allocation you are running inside
 
+Work pools
+  pool <cmd> DIR ...              pull-based work pool: init/start/stop/status/add/alerts (sjob pool help)
+
 Config: SJOB_ACCOUNT SJOB_PARTITION SJOB_BATCH_PARTITION SJOB_TIME SJOB_NAME_PREFIX
         SJOB_ALLOC_ARGS SJOB_STAGE_DIR, read from env or $SJOB_CONFIG (~/.config/env/slurm.sh).
 EOF
@@ -334,6 +337,7 @@ main() {
         limits) cmd_limits ;;
         config) cmd_config ;;
         cancel) cmd_cancel "$@" ;;
+        pool) exec "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/sjob-pool" "$@" ;;
         help|-h|--help) usage ;;
         *) usage >&2; exit 2 ;;
     esac
