@@ -1526,6 +1526,8 @@ export async function startDeckList(hooks: DeckListHooks = {}, env: NodeJS.Proce
 	let closed = false;
 	const doReconcile = (retry = false): Promise<ReconcileResult | undefined> =>
 		serial(async () => {
+			// Queued before close() but run after it: the list is gone, leave the panes alone.
+			if (closed) return undefined;
 			if (!retry) retries = 0;
 			let r: ReconcileResult | undefined;
 			try {
