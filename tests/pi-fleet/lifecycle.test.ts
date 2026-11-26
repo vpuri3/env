@@ -14,6 +14,7 @@ import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { interactive, killPlan, queuedJobs, restoreStatus, submittedJobs, switchAction } from "../../pi/extensions/fleet/lifecycle.ts";
+import { tempRoot } from "./support/tmp.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = join(here, "../..");
@@ -73,7 +74,7 @@ let serial = 0;
 
 /** A throwaway tmux server plus temp dirs; pi children get TMUX/TMUX_PANE for its first pane. */
 class Rig {
-	readonly root = mkdtempSync(join(tmpdir(), "pfl-"));
+	readonly root = tempRoot("pfl-");
 	readonly label = `fleettest-${process.pid}-l${++serial}`;
 	readonly stub = join(this.root, "stub");
 	readonly statusDir = join(this.root, "state", "status");
