@@ -8,6 +8,8 @@
   "app.message.dequeue": "shift+up",
   "app.thinking.toggle": "ctrl+t",
   "app.model.select": [],
+  "app.model.cycleForward": [],
+  "app.model.cycleBackward": [],
   "app.session.togglePath": "ctrl+o",
   "app.session.toggleNamedFilter": "ctrl+x",
   "app.models.toggleProvider": "ctrl+o",
