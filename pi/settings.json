@@ -6,7 +6,7 @@
   "httpIdleTimeoutMs": 0,
   "hideThinkingBlock": true,
   "hideToolOutput": true,
-  "doubleEscapeAction": "fork",
+  "doubleEscapeAction": "none",
   "terminal": {
     "showTerminalProgress": true
   }

@@ -20,7 +20,11 @@
  *   o                jump to the other end of the selection
  *   y / Enter        copy to the system clipboard (and the tmux buffer inside tmux),
  *                    then leave NORMAL mode and jump to the bottom, like copy-pipe-and-cancel
- *   Esc              clear the selection; else close the search; else interrupt the agent
+ *   Esc              clear the selection; else close the search. It never interrupts the agent
+ *                    (ctrl+c does) and never rewinds (/rewind does; settings.json has
+ *                    doubleEscapeAction "none"): Esc is the INSERT/NORMAL toggle, and a stray
+ *                    second Esc must not abort a run. Idle, it still reaches pi's Esc (abort a
+ *                    running `!` command, leave `!` bash mode).
  *   q                leave NORMAL mode and jump to the bottom
  *   p                paste the last copy into the prompt (INSERT mode)
  *   i a I A          enter INSERT mode
@@ -39,6 +43,9 @@
  *
  * Both modes: ctrl+c interrupts the agent while it is working (pi's default only clears
  * the prompt); when idle it clears the prompt / exits on a double press as usual.
+ *
+ * /rewind: pick an earlier prompt and fork the session from it (pi's /fork selector, what
+ * Esc Esc did with doubleEscapeAction "fork").
  *
  * Pi has a single custom-editor slot. Instead of taking it over, this extension wraps
  * whatever editor another extension installs there (pi-subagent-manager's Left/Right
@@ -495,7 +502,9 @@ function withVim(Base: any) {
 				s.closeSearch();
 				return;
 			}
-			super.handleInput(data); // app.interrupt
+			// Never interrupt here: ctrl+c does (a second Esc after INSERT -> NORMAL must not abort the
+			// run). Idle, pi's Esc still aborts a running `!` command or leaves bash mode.
+			if (!agentBusy()) super.handleInput(data);
 			return;
 		}
 
@@ -804,6 +813,16 @@ function setSearchHighlight(tui: any): void {
 }
 
 export default function (pi: ExtensionAPI) {
+	// What Esc Esc did (doubleEscapeAction "fork"): the editor's app.session.fork handler, which pi
+	// copies onto custom editors, opens the fork-from-an-earlier-prompt selector.
+	pi.registerCommand("rewind", {
+		description: "Rewind: fork the session from an earlier prompt (was Esc Esc)",
+		handler: async (_args, ctx) => {
+			const fork = currentEditor?.actionHandlers?.get("app.session.fork");
+			if (fork) fork();
+			else ctx.ui.notify("/rewind: no editor to rewind from", "warning");
+		},
+	});
 	pi.on("session_start", (_event, ctx) => {
 		if (!ctx.hasUI) return;
 

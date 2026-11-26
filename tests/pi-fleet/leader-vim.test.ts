@@ -32,7 +32,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function setup(opts: { fleet?: boolean } = {}) {
 	const bus = createEventBus();
 	const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
-	const pi: any = { on: (name: string, fn: any) => (handlers[name] = fn), events: bus };
+	const commands: Record<string, { handler: (args: string, ctx: unknown) => Promise<void> }> = {};
+	const pi: any = { on: (name: string, fn: any) => (handlers[name] = fn), events: bus, registerCommand: (name: string, opts: any) => (commands[name] = opts) };
+	let idle = true;
 	const actions: string[] = [];
 	if (opts.fleet !== false) {
 		bus.on("pi-fleet:action", (data: any) => {
@@ -44,7 +46,7 @@ function setup(opts: { fleet?: boolean } = {}) {
 	let factory: any;
 	const ctx: any = {
 		hasUI: true,
-		isIdle: () => true,
+		isIdle: () => idle,
 		hasPendingMessages: () => false,
 		ui: {
 			getEditorComponent: () => undefined,
@@ -76,7 +78,8 @@ function setup(opts: { fleet?: boolean } = {}) {
 	const editor = factory(tui, theme, new KeybindingsManager());
 	const feed = (...keys: string[]) => keys.forEach((k) => editor.handleInput(k));
 	const label = () => editor.render(80).at(-1) as string;
-	return { editor, feed, actions, notes, label, view, tui, bus };
+	const setIdle = (v: boolean) => (idle = v);
+	return { editor, feed, actions, notes, label, view, tui, bus, commands, ctx, setIdle };
 }
 
 test("each leader map emits its pi-fleet:action from NORMAL mode", { skip }, () => {
@@ -249,4 +252,31 @@ test("without pi-fleet, a leader map says so", { skip }, () => {
 	const { feed, notes } = setup({ fleet: false });
 	feed(ESC, ",", "t");
 	assert.deepEqual(notes, ["pi-fleet not loaded"]);
+});
+
+test("Esc in NORMAL never interrupts a working agent; ctrl+c does", { skip }, () => {
+	const { editor, feed, setIdle } = setup();
+	let escapes = 0;
+	editor.onEscape = () => escapes++;
+	setIdle(false);
+	feed(ESC); // INSERT -> NORMAL
+	feed(ESC, ESC); // stray Escs in NORMAL
+	assert.equal(editor.mode, "normal");
+	assert.equal(escapes, 0, "Esc must not reach pi's interrupt while the agent works");
+	feed("\x03"); // ctrl+c
+	assert.equal(escapes, 1);
+	// Idle, Esc still reaches pi's Esc (abort a `!` command, leave bash mode).
+	setIdle(true);
+	feed(ESC);
+	assert.equal(escapes, 2);
+});
+
+test("/rewind opens pi's fork selector (the editor's app.session.fork)", { skip }, async () => {
+	const { editor, commands, ctx, notes } = setup();
+	let forks = 0;
+	editor.actionHandlers.set("app.session.fork", () => forks++);
+	assert.ok(commands.rewind, "/rewind registered");
+	await commands.rewind!.handler("", ctx);
+	assert.equal(forks, 1);
+	assert.deepEqual(notes, []);
 });
