@@ -4,11 +4,12 @@
 // support/deck-stub-pi.mjs; sessions, status, cache and runtime dirs live in one temp dir.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, renameSync } from "node:fs";
-import { hostname, tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, renameSync } from "node:fs";
+import { hostname } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { killServers } from "./tmux-cleanup.ts";
+import { tempRoot } from "./tmp.ts";
 
 const here = fileURLToPath(new URL("..", import.meta.url));
 export const repo = join(here, "../..");
@@ -57,7 +58,7 @@ export interface Pane {
 let serial = 0;
 
 export class Deck {
-	readonly root = mkdtempSync(join(tmpdir(), "pdv-"));
+	readonly root = tempRoot("pdv-");
 	readonly label = `decktest-v${process.pid}-${++serial}`;
 	readonly stub = join(this.root, "stub");
 	readonly work = join(this.root, "work");

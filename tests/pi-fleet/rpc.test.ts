@@ -5,11 +5,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeSeen } from "../../pi/extensions/fleet/status.ts";
+import { tempRoot } from "./support/tmp.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const fleetDir = join(here, "../../pi/extensions/fleet");
@@ -36,7 +37,7 @@ async function waitFor<T>(what: string, probe: () => T | undefined, timeoutMs = 
 }
 
 test("rpc pi: running → waiting, seen, ack, quit", { skip: !havePi() && "pi not on PATH", timeout: 60_000 }, async () => {
-	const root = mkdtempSync(join(tmpdir(), "pi-fleet-test-"));
+	const root = tempRoot("pi-fleet-test-");
 	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		PI_CODING_AGENT_DIR: join(root, "agent"),
@@ -142,7 +143,7 @@ test("rpc pi: running → waiting, seen, ack, quit", { skip: !havePi() && "pi no
 });
 
 test("rpc pi: a subagent session writes no status file", { skip: !havePi() && "pi not on PATH", timeout: 60_000 }, async () => {
-	const root = mkdtempSync(join(tmpdir(), "pi-fleet-test-"));
+	const root = tempRoot("pi-fleet-test-");
 	const env: NodeJS.ProcessEnv = { ...process.env, PI_CODING_AGENT_DIR: join(root, "agent"), PI_FLEET_STATE_DIR: join(root, "state"), PI_OFFLINE: "1" };
 	delete env.TMUX;
 	delete env.TMUX_PANE;

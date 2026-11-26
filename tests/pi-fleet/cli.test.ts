@@ -13,6 +13,7 @@ import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { ctlSockPath, locatePiPackages, nvimSockPath, runtimeDir } from "../../pi/extensions/fleet/cli.ts";
+import { tempRoot } from "./support/tmp.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = join(here, "../..");
@@ -48,7 +49,7 @@ async function waitFor<T>(what: string, probe: () => T | undefined | false, time
 let serial = 0;
 
 class Fleet {
-	readonly root = mkdtempSync(join(tmpdir(), "pft-"));
+	readonly root = tempRoot("pft-");
 	readonly label = `fleettest-${process.pid}-${++serial}`;
 	readonly stub = join(this.root, "stub");
 	readonly work = join(this.root, "work");

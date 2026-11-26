@@ -14,9 +14,10 @@
 //   gamma  flare refactor live question
 //          (unnamed)    not running; its first user message sits behind a >16 KB entry
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { hostname, tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { basename, join } from "node:path";
+import { tempRoot } from "./tmp.ts";
 
 export const IDS = {
 	sweep: "00000000-0000-7000-8000-00000000a001",
@@ -83,10 +84,10 @@ const registry = (root: string, threads: unknown[]) => ({
 export function buildFixture(): Fixture {
 	// Searches match cwd and repo paths too: a random suffix with a digit (e.g. `…6h…`) made the list's
 	// "closed 6h" search match every closed row now and then. No digits, then.
-	let root = mkdtempSync(join(tmpdir(), "pfs-"));
+	let root = tempRoot("pfs-");
 	while (/\d/.test(basename(root))) {
 		rmSync(root, { recursive: true, force: true });
-		root = mkdtempSync(join(tmpdir(), "pfs-"));
+		root = tempRoot("pfs-");
 	}
 	const now = Date.now();
 	const work = join(root, "work");

@@ -262,7 +262,8 @@ test("layout: repo groups with their closed sessions after the live ones, then o
 		" j/k move  ⏎/C-l open  a new  d kill  i / search  ? help  C-c detach",
 	]);
 	assert.match(lines[15]!, /^ ● working · tool bash · for 4m · \$3\.41 · subagents 2● 1? 3◐ · \/.*…$/);
-	assert.match(screen(view, 140)[15]!, /^ ● working · tool bash · for 4m · \$3\.41 · subagents 2● 1? 3◐ · \/.*\/work\/alpha$/);
+	// Wide enough for the whole path, however long the temp dir is (macOS: /private/var/folders/…).
+	assert.match(screen(view, 80 + fx.repos.alpha.length)[15]!, /^ ● working · tool bash · for 4m · \$3\.41 · subagents 2● 1? 3◐ · \/.*\/work\/alpha$/);
 });
 
 test("stable order: status changes keep rows in place; new sessions go last in their group; a closed one stays; r sorts again and keeps the selection", { skip }, async () => {
@@ -1107,14 +1108,16 @@ test("A: path prompt prefilled with the repo's parent; Tab completes; Enter open
 	for (const d of ["project-one", "project-two", "solo", ".hidden", "repo/.git"]) mkdirSync(join(root, d), { recursive: true });
 	writeFileSync(join(root, "sofile"), "");
 	const { view, clock, of } = makeView({ height: 30 });
-	const box = () => screen(view).slice(-3, -2)[0]!;
+	// Wide enough for the temp paths in full (macOS's $TMPDIR is long), so nothing is cut with `…`.
+	const width = 72 + Math.max(root.length, fx.repos.alpha.length);
+	const box = () => screen(view, width).slice(-3, -2)[0]!;
 
 	view.selectSession(IDS.sweep);
 	const repo = view.rows.find((r) => r.id === IDS.sweep)!.repo!;
 	press(view, "A");
 	assert.equal(view.mode, "path");
 	assert.equal(view.pathText, `${dirname(repo)}/`, "the repo's parent dir");
-	assert.match(screen(view).at(-4)!, /PATH/);
+	assert.match(screen(view, width).at(-4)!, /PATH/);
 	assert.ok(box().includes(`▸ ${dirname(repo)}/▏`), box());
 	// Esc: nothing happens, the query untouched.
 	press(view, "x", KEY.esc);
@@ -1130,7 +1133,7 @@ test("A: path prompt prefilled with the repo's parent; Tab completes; Enter open
 	assert.equal(view.pathText, `${root}/solo/`, "dirs only; C-w drops components");
 	// Suggestions: the git repo first, marked; hidden ones not shown.
 	press(view, "\x17");
-	const sugg = screen(view).filter((l) => l.includes(root));
+	const sugg = screen(view, width).filter((l) => l.includes(root));
 	assert.match(sugg[0]!, /repo\/  git/);
 	assert.ok(!sugg.some((l) => l.includes(".hidden")));
 	press(view, KEY.ctrlN, "\t");
@@ -1138,7 +1141,7 @@ test("A: path prompt prefilled with the repo's parent; Tab completes; Enter open
 
 	press(view, "\x15", ...`${root}/nope`, KEY.enter);
 	assert.equal(view.mode, "path");
-	assert.match(screen(view).at(-1)!, /no such directory/);
+	assert.match(screen(view, width).at(-1)!, /no such directory/);
 	assert.equal(of("open").length, 0);
 
 	press(view, "\x15", ...`${root}/solo/`, KEY.enter);

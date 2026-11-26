@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { killServers } from "./tmux-cleanup.ts";
+import { tempRoot } from "./tmp.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 export const repo = join(here, "../../..");
@@ -98,7 +99,7 @@ export interface DeckPaneRow {
 let serial = 0;
 
 export class DeckRig {
-	readonly root = mkdtempSync(join(tmpdir(), "pdk3-"));
+	readonly root = tempRoot("pdk3-");
 	readonly label = `decktest-${process.pid}-p3-${++serial}`;
 	readonly work = join(this.root, "work");
 	readonly sessions = join(this.root, "sessions");

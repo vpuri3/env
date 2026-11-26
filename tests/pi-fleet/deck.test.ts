@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { tmuxBaseArgs } from "../../pi/extensions/fleet/cli.ts";
 import { killServers } from "./support/tmux-cleanup.ts";
 import { LIST_LOOP, deckSizesFor, deckSockPath, deckTmuxArgs, inDeck, popupBorderless, slotArgs, slotSizeFor, type DeckPane } from "../../pi/extensions/fleet/deck.ts";
+import { tempRoot } from "./support/tmp.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = join(here, "../..");
@@ -95,7 +96,7 @@ after(() => {
 });
 
 class Deck {
-	readonly root = mkdtempSync(join(tmpdir(), "pdk-"));
+	readonly root = tempRoot("pdk-");
 	readonly label = `decktest-${process.pid}-${++serial}`;
 	readonly stub = join(this.root, "stub");
 	readonly work = join(this.root, "work");

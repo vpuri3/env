@@ -7,11 +7,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nvimRequest } from "../../pi/extensions/fleet/nvim.ts";
+import { tempRoot } from "./support/tmp.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const fleetDir = join(here, "../../pi/extensions/fleet");
@@ -117,7 +118,7 @@ class Rpc {
 }
 
 test("rpc pi: /view FILE:LINE, tool:N and the bare picker drive the paired nvim", { skip, timeout: 90_000 }, async () => {
-	const root = realpathSync(mkdtempSync(join(tmpdir(), "pfv-rpc-")));
+	const root = tempRoot("pfv-rpc-");
 	const work = join(root, "work");
 	const run = join(root, "run");
 	mkdirSync(join(work, "src"), { recursive: true });

@@ -25,6 +25,7 @@ import {
 import { parseUserEdit, USER_EDIT } from "../../pi/extensions/fleet/protocol.ts";
 import { pairPane } from "../../pi/extensions/fleet/cli.ts";
 import { fleetOf } from "../../pi/extensions/fleet/shared.ts";
+import { tempRoot } from "./support/tmp.ts";
 
 delete process.env.TMUX;
 delete process.env.TMUX_PANE;
@@ -96,7 +97,7 @@ interface NvimOpts {
 }
 
 class Nvim {
-	readonly root = mkdtempSync(join(tmpdir(), "pfn-"));
+	readonly root = tempRoot("pfn-");
 	sock: string;
 	readonly ctl: CtlServer;
 	readonly work = join(this.root, "work");
@@ -517,7 +518,7 @@ test("nvim.ts: user_edit is refused with ok:false \"session ending\" once edits.
 });
 
 nvimTest("nvim.ts: edit/write tool results reload the paired nvim; user_edit handler", async () => {
-	const runtime = mkdtempSync(join(tmpdir(), "pfr-"));
+	const runtime = tempRoot("pfr-");
 	const saved = process.env.PI_FLEET_RUNTIME_DIR;
 	process.env.PI_FLEET_RUNTIME_DIR = runtime;
 	// the nvim listens where nvim.ts looks outside tmux: <runtime>/<id>.nvim.sock
@@ -614,7 +615,7 @@ const haveTmux = spawnSync("tmux", ["-V"], { stdio: "ignore", timeout: 5000 }).s
 const tmuxTest = haveNvim && haveTmux ? test : test.skip;
 
 tmuxTest("nvim.ts in tmux: never pairs (start, edits); an nvim made on first use is reloaded and recorded; a dead one is not re-paired", async () => {
-	const root = mkdtempSync(join(tmpdir(), "pft5-"));
+	const root = tempRoot("pft5-");
 	const sock = join(root, "tmux.sock"); // throwaway server; never the default socket
 	const runtime = join(root, "run");
 	const init = join(root, "init.lua");

@@ -7,11 +7,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nvimRequest } from "../../pi/extensions/fleet/nvim.ts";
+import { tempRoot } from "./support/tmp.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = join(here, "../..");
@@ -76,7 +77,7 @@ function texts(messages: any[]): { role: string; text: string }[] {
 const lines = (n: number, f = (i: number) => `line ${i}`) => Array.from({ length: n }, (_, i) => f(i + 1)).join("\n") + "\n";
 
 test("rpc pi + paired nvim: :w! notes, same-file steer, :w!! steer, write guard, coalescing, cap, cleared/aborted steers", { skip, timeout: 180_000 }, async () => {
-	const root = realpathSync(mkdtempSync(join(tmpdir(), "pfe-")));
+	const root = tempRoot("pfe-");
 	const work = join(root, "work");
 	const script = join(root, "script");
 	const runtime = join(root, "rt");

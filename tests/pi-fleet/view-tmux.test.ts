@@ -7,11 +7,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nvimRequest } from "../../pi/extensions/fleet/nvim.ts";
+import { tempRoot } from "./support/tmp.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const fleetDir = join(here, "../../pi/extensions/fleet");
@@ -40,7 +41,7 @@ async function waitFor<T>(what: string, probe: () => T | undefined | false | Pro
 const SID = "0f1e2d3c-0000-4000-8000-0000000ab1ed";
 
 test("tui pi in tmux: completion, /view FILE:LINE focuses nvim, re-pair, bare picker", { skip, timeout: 120_000 }, async () => {
-	const root = realpathSync(mkdtempSync(join(tmpdir(), "pfv-tmux-")));
+	const root = tempRoot("pfv-tmux-");
 	const server = `pfv-${process.pid}`;
 	assert.notEqual(server, "default");
 	const tmux = (...args: string[]) => execFileSync("tmux", ["-L", server, ...args], { encoding: "utf8", env: { ...process.env, TMUX: "" } }).replace(/\n$/, "");
