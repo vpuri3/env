@@ -49,8 +49,8 @@ STALL_MIN NO_NODES_MIN NOTIFY_DONE_REGEX; functions pool_on_done NAME, pool_stat
 NOTIFY_DONE_REGEX (--notify-done; default empty = off): items exiting 0 whose name matches (bash =~)
 get one item_done alert per completion (msg = last PROGRESS_REGEX line of the log, else "done"),
 to wake the owner when results land.
-Alerts: DIR/alerts.jsonl (driver_restarted watchdog_restarted item_failed item_retry item_done
-log_alert stall no_nodes pool_done), each with "owners": item alerts -> the item's pool-owner; pool alerts ->
+Alerts: DIR/alerts.jsonl (driver_restarted watchdog_restarted driver_restart_failed watchdog_restart_failed
+item_failed item_retry item_done log_alert stall no_nodes pool_done), each with "owners": item alerts -> the item's pool-owner; pool alerts ->
 POOL_OWNER (session scope) else the owners of queued/running items (pool_done: of this episode).
 Session id: $PI_FLEET_SESSION, else $PI_SESSION_ID. Heartbeats: DIR/driver.hb, DIR/watchdog.hb.
 Registry: ${XDG_STATE_HOME:-~/.local/state}/sjob-pool/NAME.pool (dir= repo= scope= owner=).
@@ -102,6 +102,9 @@ load_pool() {
     : "${STALL_SEC:=$((STALL_MIN * 60))}" "${NO_NODES_SEC:=$((NO_NODES_MIN * 60))}"
     : "${IDLE_RELEASE_SEC:=$((IDLE_RELEASE_MIN * 60))}"
     : "${POOL_WORKER_GRACE_SEC:=300}" "${POOL_WORKER_HB_SEC:=60}"
+    # driver/watchdog heartbeat is stale after max(3 intervals, POOL_STALE_MIN_SEC); a restarted
+    # daemon must write its pid file within POOL_SPAWN_WAIT_SEC
+    : "${POOL_STALE_MIN_SEC:=60}" "${POOL_SPAWN_WAIT_SEC:=10}"
     : "${POOL_IDLE_FRESH_SEC:=$(max 120 $((4 * ${POOL_IDLE_SLEEP_SEC%.*})))}"
     D="$POOL_DIR"
     SJOB="$(command -v sjob || echo "$HERE/sjob")"
@@ -212,7 +215,7 @@ item_min_left() {
 # ---------------------------------------------------------------- supervision
 
 # role_state ROLE EVERY: 0 alive, 1 dead, 2 hung (pid alive on this host, heartbeat stale).
-# Same host: pid check; other host: heartbeat younger than 3 intervals (min 60 s).
+# Same host: pid check; other host: heartbeat younger than 3 intervals (min POOL_STALE_MIN_SEC).
 # pid_is ROLE PID: PID is this pool's ROLE daemon (guards against pid reuse).
 pid_is() {
     [ -n "$2" ] && [ -r "/proc/$2/cmdline" ] && tr '\0' ' ' <"/proc/$2/cmdline" | grep -qF -- "_$1 $D "
@@ -222,7 +225,7 @@ own_role() { [ "$(cat "$D/$1.pid" 2>/dev/null)" = "$$" ] && [ "$(cat "$D/$1.host
 
 role_state() {
     local role="$1" every="$2" pid h stale
-    stale="$(max $((3 * every)) 60)"
+    stale="$(max $((3 * every)) "$POOL_STALE_MIN_SEC")"
     pid="$(cat "$D/$role.pid" 2>/dev/null)"
     h="$(cat "$D/$role.host" 2>/dev/null)"
     if [ -n "$pid" ] && [ "$h" = "$(host)" ]; then
@@ -240,22 +243,45 @@ spawn_role() {
     setsid nohup bash "$SELF" "_$1" "$D" >>"$D/logs/$1.out" 2>&1 </dev/null &
 }
 
-# supervise ROLE EVERY: restart a dead peer and alert.
+hb_age() { if [ -f "$D/$1.hb" ]; then echo "heartbeat $(age "$D/$1.hb")s old"; else echo "no heartbeat"; fi; }
+
+# kill_hung ROLE PID: SIGKILL a hung (stopped, or stuck in a foreground command) daemon; TERM
+# would stay pending. Waits up to 2 s for it to go.
+kill_hung() {
+    local i
+    pid_is "$1" "$2" || return 0
+    kill -KILL "$2" 2>/dev/null
+    for ((i = 0; i < 10; i++)); do pid_is "$1" "$2" || return 0; sleep 0.2; done
+}
+
+# supervise ROLE EVERY: restart a dead, hung or (other host) silent peer and alert once.
+# A failing restart is retried every pass but alerted once (marker DIR/ROLE.restart_failed).
 supervise() {
-    local role="$1" every="$2"
+    local role="$1" every="$2" st old oldh why fail="$D/$1.restart_failed"
     [ -f "$D/DRIVER_STOP" ] && return 0
-    [ -f "$D/$role.pid" ] || return 0   # not started yet (start spawns both) or stopped cleanly
-    role_state "$role" "$every"
-    case $? in
-        0) return 0 ;;
-        2) kill "$(cat "$D/$role.pid")" 2>/dev/null; plog "$role heartbeat stale: killed" ;;   # pid_is checked
-    esac
-    local old oldh
-    old="$(cat "$D/$role.pid" 2>/dev/null)"; oldh="$(cat "$D/$role.host" 2>/dev/null)"
+    old="$(cat "$D/$role.pid" 2>/dev/null)"
+    [ -n "$old" ] || return 0   # not started yet (start spawns both) or stopped cleanly
+    oldh="$(cat "$D/$role.host" 2>/dev/null)"
+    role_state "$role" "$every"; st=$?
+    [ "$st" = 0 ] && { rm -f "$fail"; return 0; }
+    [ "$(cat "$D/$role.pid" 2>/dev/null)" = "$old" ] || return 0   # another copy just took over
+    if [ "$st" = 2 ]; then
+        why="hung ($(hb_age "$role"))"
+        kill_hung "$role" "$old"; plog "$role pid $old $why: killed"
+    elif [ "$oldh" = "$(host)" ]; then why="not running"
+    else why="silent ($(hb_age "$role"))"; fi
     spawn_role "$role"
-    wait_pid_file "$role" "$old" >/dev/null   # so the next pass doesn't spawn a second copy
-    plog "restarted $role"
-    alert "${role}_restarted" "" "$role was not running (pid ${old:-none} on ${oldh:-?}); restarted on $(host)"
+    if wait_pid_file "$role" "$old" >/dev/null; then   # so the next pass doesn't spawn a second copy
+        rm -f "$fail"
+        plog "restarted $role"
+        alert "${role}_restarted" "" "$role pid ${old:-none} on ${oldh:-?} was $why; restarted on $(host)"
+        return 0
+    fi
+    role_state "$role" "$every" && return 0   # a copy elsewhere came back
+    plog "restart of $role failed; see $D/logs/$role.out"
+    [ -f "$fail" ] && return 0
+    touch "$fail"
+    alert "${role}_restart_failed" "" "$role pid ${old:-none} on ${oldh:-?} was $why; restart on $(host) failed (retrying each pass); see $D/logs/$role.out"
 }
 
 claim_role() {
@@ -269,7 +295,8 @@ claim_role() {
     # killed by `stop` (DRIVER_STOP set): drop the pid file; otherwise keep it so the peer restarts us
     trap '[ -f "$D/DRIVER_STOP" ] && release_role '"$role"'; exit 0' TERM INT
 }
-release_role() { [ "$(cat "$D/$1.pid" 2>/dev/null)" = "$$" ] && rm -f "$D/$1.pid"; return 0; }
+# clean exit (stop): drop pid + heartbeat files, if still ours
+release_role() { [ "$(cat "$D/$1.pid" 2>/dev/null)" = "$$" ] && rm -f "$D/$1.pid" "$D/$1.hb"; return 0; }
 nap() { sleep "$1" & wait $!; }
 
 # ---------------------------------------------------------------- driver
@@ -850,9 +877,9 @@ cmd_init() {
 }
 
 wait_pid_file() {
-    # wait_pid_file ROLE OLDPID: up to ~10 s for a new pid
+    # wait_pid_file ROLE OLDPID: up to POOL_SPAWN_WAIT_SEC for a new pid
     local i p
-    for ((i = 0; i < 50; i++)); do
+    for ((i = 0; i < 5 * POOL_SPAWN_WAIT_SEC; i++)); do
         p="$(cat "$D/$1.pid" 2>/dev/null)"
         [ -n "$p" ] && [ "$p" != "$2" ] && pid_is "$1" "$p" && { echo "$p"; return 0; }
         sleep 0.2
@@ -877,24 +904,38 @@ cmd_start() {
         die "refusing to start inside Slurm allocation $SLURM_JOB_ID (driver and watchdog would die with it); run on a login node or pass --force"
     fi
     local other; other="$(registry_conflict)" && die "pool name $POOL_NAME is already registered for $other"
-    local h p
+    local h p hung="" stopping=""
+    [ -f "$D/DRIVER_STOP" ] && stopping=" and is still stopping (DRIVER_STOP: it exits at its next tick; retry start then)"
     if [ -f "$D/driver.pid" ]; then
         h="$(cat "$D/driver.host" 2>/dev/null)"; p="$(cat "$D/driver.pid")"
         if [ "$h" = "$(host)" ]; then
-            pid_is driver "$p" && die "driver already running (pid $p on $h)"
-            if [ -r "/proc/$p/cmdline" ] && tr '\0' ' ' <"/proc/$p/cmdline" | grep -qF -- "$D/"; then
+            if pid_is driver "$p"; then
+                role_state driver "$POOL_TICK_SEC"
+                [ $? = 2 ] || die "driver already running (pid $p on $h)$stopping"
+                hung+=" driver:$p"   # heartbeat stale: killed below, after the other checks
+            elif [ -r "/proc/$p/cmdline" ] && tr '\0' ' ' <"/proc/$p/cmdline" | grep -qF -- "$D/"; then
                 die "pid $p ($(tr '\0' ' ' <"/proc/$p/cmdline" | cut -c1-120)) still runs from $D: stop it first (e.g. touch $D/DRIVER_STOP)"
             fi
         elif [ -f "$D/driver.hb" ]; then
-            role_alive driver "$POOL_TICK_SEC" && die "driver already running (pid $p on $h, heartbeat $(age "$D/driver.hb")s ago)"
+            role_alive driver "$POOL_TICK_SEC" && die "driver already running (pid $p on $h, $(hb_age driver))$stopping"
         else
             die "driver.pid names pid $p on $h (no heartbeat): run start on $h, or remove $D/driver.pid once that driver has exited"
         fi
     fi
     local wd_up=0
-    role_alive watchdog "$WATCH_EVERY_SEC" && wd_up=1
+    role_state watchdog "$WATCH_EVERY_SEC"
+    case $? in
+        0)  # a watchdog told to stop may be exiting right now: never adopt it
+            [ -n "$stopping" ] && die "watchdog (pid $(cat "$D/watchdog.pid") on $(cat "$D/watchdog.host" 2>/dev/null), $(hb_age watchdog)) has not exited since stop$stopping"
+            wd_up=1 ;;
+        2) hung+=" watchdog:$(cat "$D/watchdog.pid")" ;;
+    esac
+    local x
+    for x in $hung; do
+        kill_hung "${x%%:*}" "${x#*:}"; echo "${x%%:*} pid ${x#*:} was hung ($(hb_age "${x%%:*}")): killed"
+    done
     # stale pid files would make each new daemon "restart" its peer (and alert)
-    rm -f "$D/DRIVER_STOP" "$D"/workers/*.stop "$D/driver.pid"
+    rm -f "$D/DRIVER_STOP" "$D"/workers/*.stop "$D/driver.pid" "$D"/*.restart_failed
     [ "$wd_up" = 1 ] || rm -f "$D/watchdog.pid"
     mkdir -p "$D/watch"
     spawn_role driver

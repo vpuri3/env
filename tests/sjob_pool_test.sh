@@ -354,6 +354,92 @@ check "stop then immediate start: watchdog running" wait_for 10 bash -c 'p=$(cat
 check "stop then immediate start: driver running" bash -c 'p=$(cat "$1/driver.pid" 2>/dev/null) && kill -0 "$p"' _ "$C"
 bash "$POOL" stop "$C" >/dev/null
 
+# ------------------------------------------------------------------ pool E: driver/watchdog supervision
+# Empty pool; heartbeats stale after 3 s; a restart must show its pid file within 2 s.
+export POOL_STALE_MIN_SEC=3 POOL_SPAWN_WAIT_SEC=2
+E="$W/pools/e"; H=$(hostname -s)
+bash "$POOL" init "$E" --scope repo --name tpe --repo "$REPO" >/dev/null
+mkdir -p "$W/otherhost"; printf '#!/bin/sh\necho otherhost\n' >"$W/otherhost/hostname"; chmod +x "$W/otherhost/hostname"
+pid_of() { cat "$1/$2.pid" 2>/dev/null; }
+nprocs() { pgrep -f "sjob-pool _$2 $1\$" | grep -c .; }   # nprocs DIR ROLE: live (or stopped) daemons
+local_up() { # local_up DIR ROLE [NOT_PID]: exactly one ROLE daemon, on this host, named by its pid file
+    local p; p=$(pid_of "$1" "$2") && [ -n "$p" ] && [ "$p" != "${3:-}" ] && [ "$(cat "$1/$2.host")" = "$H" ] &&
+        tr '\0' ' ' <"/proc/$p/cmdline" | grep -qF "_$2 $1 " && [ "$(nprocs "$1" "$2")" = 1 ]
+}
+both_up() { local_up "$1" driver && local_up "$1" watchdog; }
+restarts_are() { [ "$(nalerts "$1" driver_restarted)" = "$2" ] && [ "$(nalerts "$1" watchdog_restarted)" = "$3" ]; }
+toucher() { (while :; do touch "$1"; sleep 0.3; done) >/dev/null 2>&1 & echo $!; }   # a remote daemon's heartbeat
+export -f nprocs local_up both_up pid_of restarts_are alerts_is
+export H
+
+bash "$POOL" start "$E" >/dev/null
+check "E: start runs one driver + one watchdog" both_up "$E"
+# task: hung daemon (pid alive, heartbeat stale) -> its peer kills it, restarts it, alerts once
+dp=$(pid_of "$E" driver); kill -STOP "$dp"
+check "hung driver: watchdog kills it, starts a new one, alerts" wait_for 15 bash -c '! kill -0 "$2" 2>/dev/null && local_up "$1" driver "$2" && alerts_is "$1" driver_restarted 1' _ "$E" "$dp"
+wp=$(pid_of "$E" watchdog); kill -STOP "$wp"
+check "hung watchdog: driver kills it, starts a new one, alerts" wait_for 15 bash -c '! kill -0 "$2" 2>/dev/null && local_up "$1" watchdog "$2" && alerts_is "$1" watchdog_restarted 1' _ "$E" "$wp"
+sleep 2
+check "hung daemons: one restart alert each, no more" restarts_are "$E" 1 1
+check "hung alert says hung" bash -c 'grep driver_restarted "$1/alerts.jsonl" | grep -q "was hung (heartbeat"' _ "$E"
+# task: driver on another host (pid/host files name it), fresh heartbeat -> alive
+dp=$(pid_of "$E" driver); echo otherhost >"$E/driver.host"; tp=$(toucher "$E/driver.hb")
+check "local driver yields when driver.host names another host" wait_for 5 bash -c '! kill -0 "$1" 2>/dev/null' _ "$dp"
+sleep 3.5   # > stale: only the heartbeat keeps the remote driver alive
+check "remote driver with a fresh heartbeat: not restarted here" bash -c '[ "$(nprocs "$1" driver)" = 0 ] && [ "$(cat "$1/driver.host")" = otherhost ] && restarts_are "$1" 1 1' _ "$E"
+check "remote driver with a fresh heartbeat: start refuses" sh -c 'bash "$1" start "$2" 2>&1 | grep -q "driver already running (pid [0-9]* on otherhost"' _ "$POOL" "$E"
+# ... stale heartbeat -> restarted on this host, one alert
+kill "$tp"
+check "remote driver with a stale heartbeat: restarted here" wait_for 15 bash -c 'local_up "$1" driver && alerts_is "$1" driver_restarted 2' _ "$E"
+sleep 2
+check "remote driver restart: one alert" bash -c 'restarts_are "$1" 2 1 && grep driver_restarted "$1/alerts.jsonl" | tail -1 | grep -q "on otherhost was silent (heartbeat"' _ "$E"
+# task: stop while the watchdog runs on another host: start refuses until it has exited
+wp=$(pid_of "$E" watchdog); echo otherhost >"$E/watchdog.host"; tp=$(toucher "$E/watchdog.hb")
+wait_for 5 bash -c '! kill -0 "$1" 2>/dev/null' _ "$wp"
+out=$(bash "$POOL" stop "$E" 2>&1)
+check "stop: local driver stopped, remote watchdog told" bash -c 'grep -qx "driver stopped" <<<"$1" && grep -q "watchdog runs on otherhost: it exits at its next tick" <<<"$1"' _ "$out"
+check "start refuses while the remote watchdog has not exited since stop" sh -c 'bash "$1" start "$2" 2>&1 | grep -q "has not exited since stop"' _ "$POOL" "$E"
+check "refused start changed nothing" bash -c '[ -f "$1/DRIVER_STOP" ] && [ "$(nprocs "$1" driver)" = 0 ]' _ "$E"
+kill "$tp"; rm -f "$E/watchdog.pid" "$E/watchdog.hb"   # the remote watchdog exits (release_role)
+bash "$POOL" start "$E" >/dev/null
+check "start after the remote watchdog exited: both run here" both_up "$E"
+# real daemons on "another host" (hostname stub): stop here -> they exit at their next tick
+bash "$POOL" stop "$E" >/dev/null
+PATH="$W/otherhost:$PATH" bash "$POOL" start "$E" >/dev/null
+check "daemons started on otherhost" bash -c '[ "$(cat "$1/driver.host")" = otherhost ] && [ "$(cat "$1/watchdog.host")" = otherhost ]' _ "$E"
+check "start here refuses while they run on otherhost" sh -c '! bash "$1" start "$2" 2>/dev/null' _ "$POOL" "$E"
+out=$(bash "$POOL" stop "$E" 2>&1)
+check "stop names the other host for both" bash -c '[ "$(grep -c "runs on otherhost" <<<"$1")" = 2 ]' _ "$out"
+check "remote daemons exit on DRIVER_STOP and drop pid + heartbeat files" wait_for 10 bash -c '[ "$(nprocs "$1" driver)" = 0 ] && [ "$(nprocs "$1" watchdog)" = 0 ] && ! ls "$1"/driver.pid "$1"/watchdog.pid "$1"/*.hb' _ "$E"
+bash "$POOL" start "$E" >/dev/null
+check "then start here: both run here" both_up "$E"
+# a restart that keeps failing alerts once, then once more when it succeeds
+echo "[ -e '$W/broken' ] && exit 3" >>"$E/pool.env"; touch "$W/broken"
+wp=$(pid_of "$E" watchdog); kill -KILL "$wp"
+check "failing restart: watchdog_restart_failed alert" wait_for 10 alerts_is "$E" watchdog_restart_failed 1
+check "failing restart: retried, alerted once" wait_for 10 bash -c '[ "$(grep -c "restart of watchdog failed" "$1/logs/driver.log")" -ge 2 ] && alerts_is "$1" watchdog_restart_failed 1' _ "$E"
+rm -f "$W/broken"
+check "restart succeeds once possible" wait_for 10 bash -c 'local_up "$1" watchdog "$2" && alerts_is "$1" watchdog_restarted 2' _ "$E" "$wp"
+sleep 2
+check "failing restart: one restarted alert at the end" bash -c 'restarts_are "$1" 2 2 && alerts_is "$1" watchdog_restart_failed 1' _ "$E"
+# both hung (nobody supervises): start kills and replaces them
+dp=$(pid_of "$E" driver); wp=$(pid_of "$E" watchdog); kill -STOP "$dp" "$wp"; sleep 4.5
+out=$(bash "$POOL" start "$E" 2>&1)
+check "start replaces hung driver + watchdog" bash -c 'grep -q "driver pid $2 was hung" <<<"$1" && ! kill -0 "$2" 2>/dev/null && ! kill -0 "$3" 2>/dev/null && local_up "$4" driver "$2" && local_up "$4" watchdog "$3"' _ "$out" "$dp" "$wp" "$E"
+# kill -9 of both, then start; start twice; stop twice
+kill -KILL "$(pid_of "$E" driver)" "$(pid_of "$E" watchdog)"
+bash "$POOL" start "$E" >/dev/null
+check "kill -9 both, then start: both run" both_up "$E"
+check "start twice: refused" sh -c '! bash "$1" start "$2" 2>/dev/null' _ "$POOL" "$E"
+sleep 2
+check "no duplicates, no extra restart alerts" bash -c 'both_up "$1" && restarts_are "$1" 2 2' _ "$E"
+bash "$POOL" stop "$E" >/dev/null; bash "$POOL" stop "$E" >/dev/null
+check "stop twice: nothing runs, no pid files" bash -c '[ "$(nprocs "$1" driver)" = 0 ] && [ "$(nprocs "$1" watchdog)" = 0 ] && [ ! -e "$1/driver.pid" ] && [ ! -e "$1/watchdog.pid" ]' _ "$E"
+bash "$POOL" start "$E" >/dev/null
+sleep 2
+check "stop, stop, start: both run, no restart alerts" bash -c 'both_up "$1" && restarts_are "$1" 2 2' _ "$E"
+bash "$POOL" stop "$E" >/dev/null
+
 check "no forbidden Slurm command was called" test ! -e "$S/forbidden.log"
 if [ "$failed" -eq 0 ]; then echo "all sjob-pool tests passed"; else echo "$failed sjob-pool test(s) FAILED"; fi
 [ "$failed" -eq 0 ]
