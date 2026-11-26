@@ -925,7 +925,8 @@ cmd_stop() {
             pid_is "$role" "$p" || { echo "$role not running"; continue; }
             kill "$p" 2>/dev/null
             for ((i = 0; i < 50; i++)); do pid_is "$role" "$p" || break; sleep 0.2; done
-            pid_is "$role" "$p" && echo "warning: $role pid $p still alive" || echo "$role stopped"
+            if pid_is "$role" "$p"; then echo "warning: $role pid $p still alive"
+            else echo "$role stopped"; rm -f "$D/$role.hb"; fi   # a fresh hb would make start skip it
         elif [ -n "$p" ]; then
             echo "$role runs on $(cat "$D/$role.host" 2>/dev/null): it exits at its next tick (DRIVER_STOP)"
         fi

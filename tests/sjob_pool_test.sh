@@ -348,6 +348,11 @@ check "idle node released after IDLE_RELEASE" wait_for 15 grep -qx "$idc" "$S/sc
 check "adopt: existing log content not alerted" bash -c '[ $(nalerts "$1" log_alert) = 0 ]' _ "$C"
 check "stale race .out ignored: no refused log, no retry marker" bash -c '! grep -q "g009.*refused" "$1/logs/driver.log" && ! ls "$1"/races/g009*.retry 2>/dev/null' _ "$C"
 bash "$POOL" stop "$C" >/dev/null
+# restart right after a stop (fresh heartbeats): both daemons must come back
+bash "$POOL" start "$C" >/dev/null
+check "stop then immediate start: watchdog running" wait_for 10 bash -c 'p=$(cat "$1/watchdog.pid" 2>/dev/null) && kill -0 "$p"' _ "$C"
+check "stop then immediate start: driver running" bash -c 'p=$(cat "$1/driver.pid" 2>/dev/null) && kill -0 "$p"' _ "$C"
+bash "$POOL" stop "$C" >/dev/null
 
 check "no forbidden Slurm command was called" test ! -e "$S/forbidden.log"
 if [ "$failed" -eq 0 ]; then echo "all sjob-pool tests passed"; else echo "$failed sjob-pool test(s) FAILED"; fi
