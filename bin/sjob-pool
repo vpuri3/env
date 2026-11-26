@@ -230,6 +230,7 @@ role_state() {
         [ -f "$D/$role.hb" ] && [ "$(age "$D/$role.hb")" -gt "$stale" ] && return 2
         return 0
     fi
+    [ -z "$pid" ] && return 1   # no pid file: stopped or never started (a lone fresh hb proves nothing)
     [ -f "$D/$role.hb" ] && [ "$(age "$D/$role.hb")" -le "$stale" ] && return 0
     return 1
 }
