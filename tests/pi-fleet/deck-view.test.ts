@@ -221,19 +221,19 @@ test("layout: repo groups with their closed sessions after the live ones, then o
 	const lines = screen(view);
 	assert.equal(lines.length, 20);
 	assert.deepEqual(lines.slice(0, 13), [
-		" ▾ gamma (1, 1 closed)",
-		"  ? flare refactor                 question 12m       $0.80           1?",
-		"  ◌ what does gamma do?            2d ago",
-		" ▾ beta (2, 1 closed)",
-		"  ✕ crashy                         crashed just now         1◌",
-		"  ⇢ notes                          live on other-n…",
-		"  ◌ forked idea                    1d ago",
-		" ▾ alpha (2, 1 closed)",
-		"  ◐ ckpt restart                   done 2m ago        $0.40",
-		"▌› ● physicsnemo sweep              bash 4m            $3.41     2● 1? 3◐",
-		"  ◌ start the old run              3h ago                   1◐ 1◌",
+		` ▾ gamma (1, 1 closed)  ${fx.repos.gamma}`,
+		"  ? flare refactor                     question 12m       $0.80       1?",
+		"  ◌ what does gamma do?                2d ago",
+		` ▾ beta (2, 1 closed)  ${fx.repos.beta}`,
+		"  ✕ crashy                             crashed just now               1◌",
+		"  ⇢ notes                              live on other-n…",
+		"  ◌ forked idea                        1d ago",
+		` ▾ alpha (2, 1 closed)  ${fx.repos.alpha}`,
+		"  ◐ ckpt restart                       done 2m ago        $0.40",
+		"▌› ● physicsnemo sweep                  bash 4m            $3.41 2● 1? 3◐",
+		"  ◌ start the old run                  3h ago                      1◐ 1◌",
 		" ▾ outside (your tmux) (1)",
-		"  ◐ notes outside ⇱ win 3          done 5m ago",
+		"  ◐ notes outside ⇱ win 3              done 5m ago",
 	]);
 	// Rows span the pane: the counts column ends at the right edge (right-aligned, as wide as the widest
 	// counts), the name takes the rest; at 140 columns every count shows in full.
@@ -261,9 +261,9 @@ test("layout: repo groups with their closed sessions after the live ones, then o
 		`╰─ ○ active  ● working  ◐ done  ? needs input  ✕ error  » auto ${"─".repeat(8)}╯`,
 		" j/k move  ⏎/C-l open  a new  d kill  i / search  ? help  C-c detach",
 	]);
-	assert.match(lines[15]!, /^ ● working · tool bash · for 4m · \$3\.41 · subagents 2● 1? 3◐ · \/.*…$/);
+	assert.match(lines[15]!, /^ ● working · tool bash · for 4m · \$3\.41 · subagents 2● 1\? 3◐ · \/.*…$/);
 	// Wide enough for the whole path, however long the temp dir is (macOS: /private/var/folders/…).
-	assert.match(screen(view, 80 + fx.repos.alpha.length)[15]!, /^ ● working · tool bash · for 4m · \$3\.41 · subagents 2● 1? 3◐ · \/.*\/work\/alpha$/);
+	assert.match(screen(view, 80 + fx.repos.alpha.length)[15]!, /^ ● working · tool bash · for 4m · \$3\.41 · subagents 2● 1\? 3◐ · \/.*\/work\/alpha$/);
 });
 
 test("stable order: status changes keep rows in place; new sessions go last in their group; a closed one stays; r sorts again and keeps the selection", { skip }, async () => {
@@ -599,7 +599,7 @@ test("closed sessions: under their repo after its live rows, the newest 3 then `
 	const { view, clock, of } = makeView({ source: new Source(fx.env), height: 30 });
 	const names = () => screen(view, 72).filter((l) => l && !/^( j\/k|[╭│╰])/.test(l)).slice(0, -1);
 	let lines = names();
-	const alpha = lines.indexOf(" ▾ alpha (2, 6 closed)");
+	const alpha = lines.indexOf(` ▾ alpha (2, 6 closed)  ${fx.repos.alpha}`);
 	assert.ok(alpha >= 0, lines.join("\n"));
 	assert.deepEqual(lines.slice(alpha + 1, alpha + 7).map((l) => l.slice(0, 26).trimEnd()), [
 		"  ◐ ckpt restart",
@@ -610,7 +610,7 @@ test("closed sessions: under their repo after its live rows, the newest 3 then `
 		"  ⋯ +3 closed",
 	]);
 	// The closed-only repo comes after every group with live sessions (outside included), folded.
-	assert.equal(lines.at(-1), " ▸ delta (2 closed)");
+	assert.equal(lines.at(-1), " ▸ delta (2 closed)  /w/delta");
 	assert.ok(lines.indexOf(" ▾ outside (your tmux) (1)") < lines.length - 1);
 	// Enter on `+3 closed`: all of alpha's closed sessions, the selection on the first one it showed.
 	selectLine(view, "+3 closed");
@@ -631,11 +631,11 @@ test("closed sessions: under their repo after its live rows, the newest 3 then `
 	selectLine(view, "delta (2 closed)");
 	press(view, KEY.space);
 	lines = names();
-	assert.deepEqual(lines.slice(-3).map((l) => l.slice(0, 26).trimEnd()), ["▌›▾ delta (2 closed)", "  ◌ delta one", "  ◌ delta two"]);
+	assert.deepEqual(lines.slice(-3).map((l) => l.slice(0, 26).trimEnd()), ["▌›▾ delta (2 closed)  /w/d", "  ◌ delta one", "  ◌ delta two"]);
 	press(view, KEY.space);
 	// A search shows every match, folded or not; Enter resumes it into the deck.
 	press(view, "/", "c", "l", "o", "s", "e", "d", " ", "6", "h");
-	assert.deepEqual(names().slice(0, 2).map((l) => l.trimEnd()), [" ▾ alpha (1 closed)", "▌› ◌ alpha closed 6h                             6h ago"]);
+	assert.deepEqual(names().slice(0, 2).map((l) => l.trimEnd()), [` ▾ alpha (1 closed)  ${fx.repos.alpha}`, "▌› ◌ alpha closed 6h                             6h ago"]);
 	press(view, KEY.esc, KEY.esc, "/", "t", "w", "o");
 	assert.ok(names().some((l) => l.startsWith("▌› ◌ delta two")), names().join("\n"));
 	press(view, KEY.enter);
