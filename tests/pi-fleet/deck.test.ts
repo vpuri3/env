@@ -692,6 +692,83 @@ test("a pi exiting 0 leaves the pool and the slot falls back to the holder; a de
 	}
 });
 
+/** A tmux wrapper that fails the deck's pane reads (list-panes with DECK_PANE_FORMAT) while `<dir>/fail` exists. */
+function failingPaneReads(): { dir: string; arm(): void; disarm(): void; failures(): number } {
+	const dir = tempRoot("pdkf-");
+	const flag = join(dir, "fail");
+	const log = join(dir, "failed.log");
+	writeFileSync(log, "");
+	writeFileSync(
+		join(dir, "tmux"),
+		`#!/bin/sh\ncase "$*" in *list-panes*@pi_fleet_closing*) if [ -e '${flag}' ]; then echo x >> '${log}'; echo 'tmux: injected failure' >&2; exit 1; fi;; esac\nexec '${realTmux}' "$@"\n`,
+	);
+	chmodSync(join(dir, "tmux"), 0o755);
+	return {
+		dir,
+		arm: () => writeFileSync(flag, ""),
+		disarm: () => rmSync(flag, { force: true }),
+		failures: () => readFileSync(log, "utf8").split("\n").filter(Boolean).length,
+	};
+}
+
+test("reconcile: a failed pane read is an error, not an empty deck; the list reconciles again once tmux answers", { skip: skipTmux, timeout: 90_000 }, async () => {
+	const fail = failingPaneReads();
+	const d = new Deck({ pathPrefix: fail.dir });
+	try {
+		d.start();
+		await d.open();
+		const b = await d.open();
+		// One pass on its own: a failed read rejects (a no-op pass would leave b's exit unhandled).
+		fail.arm();
+		assert.equal(d.deckCall(`d.reconcile().then(() => "resolved", (e) => "rejected")`), "rejected");
+		// The list: b exits while every pane read fails, so the passes its exit wakes all fail.
+		writeFileSync(join(d.stub, `${b.id}.exit`), "0\n");
+		await waitFor("the list's passes failing on the pane read", () => fail.failures() >= 3);
+		// No signal is left to wake the list once tmux answers again: only its own retry repairs the deck.
+		let last = -1;
+		let since = Date.now();
+		await waitFor("the failing passes to stop coming in", () => {
+			const n = fail.failures();
+			if (n !== last) [last, since] = [n, Date.now()];
+			return Date.now() - since >= 300;
+		});
+		fail.disarm();
+		// By then the list may have moved its selection to a: the slots show a's panes or the holders.
+		await waitFor("b's pi, nvim and shell gone; a's panes or the holders in the slots", () =>
+			!d.panes().some((p) => p.session === b.id) &&
+			["preview", "pi"].includes(d.slot().role) &&
+			["nvim-holder", "nvim"].includes(d.nvimSlot().role) &&
+			["term-holder", "term"].includes(d.termSlot().role),
+		);
+	} finally {
+		fail.disarm();
+		d.close();
+		rmSync(fail.dir, { recursive: true, force: true });
+	}
+});
+
+test("reconcile: a pi that exits during a pass is replaced in the pi slot, never just killed there", { skip: skipTmux, timeout: 90_000 }, async () => {
+	const d = new Deck();
+	try {
+		d.start();
+		await d.open();
+		const b = await d.open();
+		const nvim = d.nvimSlot();
+		assert.deepEqual([d.slot().pane, nvim.role, nvim.session], [b.pane, "nvim", b.id]);
+		// b's nvim is closed by its exiting pi (marked as POOL_WRAP does, without waking the list): the pass below
+		// replaces it, and b's pi exits right after the pass's first read of the panes.
+		d.tmux(["set-option", "-p", "-t", nvim.pane, "@pi_fleet_closing", "1", ";", "set-option", "-p", "-t", nvim.pane, "@pi_fleet_exited", "0"]);
+		const exitB = `async (round) => { if (round === 0) await d.deckTmux(["set-option", "-p", "-t", ${JSON.stringify(b.pane)}, "@pi_fleet_exited", "0"]); }`;
+		const r = d.deckCall(`d.reconcile(process.env, { afterRead: ${exitB} })`) as { slotReplaced?: { dead: string } };
+		assert.equal(d.slot()?.role, "preview", "the holder in the pi slot");
+		assert.equal(d.nvimSlot().role, "nvim-holder");
+		assert.equal(r.slotReplaced?.dead, b.pane);
+		assert.ok(!d.panes().some((p) => p.pane === b.pane), "b's pi killed once out of the slot");
+	} finally {
+		d.close();
+	}
+});
+
 test("the holders: a default shell and nvim in $HOME you can type into, kept across rows, respawned after a clean exit", { skip: skipTmux, timeout: 90_000 }, async () => {
 	const d = new Deck();
 	try {

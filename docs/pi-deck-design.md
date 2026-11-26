@@ -237,7 +237,10 @@ A 15 s timer re-derives liveness from cached data (`kill(pid,0)` for local pids,
 a 60 s timer re-stats the sessions dir for the closed list and remote heartbeats (NFS gives no
 events for other hosts). `pane-died` in the deck config runs `run-shell -b 'kill -USR2
 #{@deck_tui_pid}'` (an sh, only when a pane dies) and the TUI reconciles: a dead pane in the
-slot is replaced by the next row (or the holder) and killed.
+slot is replaced by the next row (or the holder) and killed. A pass repairs one slot per read of
+the panes and kills only from a read that needs no repair, so a pane dying mid-pass is replaced,
+never killed in its slot; a pass whose tmux calls fail (never read as "no panes") or that does not
+settle runs again after 100 ms, 200 ms, … 1.6 s.
 
 **Outer bar.** On any state change the TUI computes `π 1? 2◐ 1✕` (in the list's colors: `#[fg=colour208,bold]`, `colour78`, `colour196`) and,
 debounced 500 ms, runs one `tmux -S <outer socket> set -g @pi_deck_bar '…'` (outer socket from

@@ -383,11 +383,16 @@ function parseDeckPane(line: string): DeckPane {
 /** Every pane of the deck server (deck and pool); [] if it does not run. */
 export async function deckPanes(env: NodeJS.ProcessEnv = process.env): Promise<DeckPane[]> {
 	try {
-		const out = await deckTmux(["list-panes", "-a", "-F", DECK_PANE_FORMAT], env);
-		return out ? out.split("\n").map(parseDeckPane) : [];
+		return await readDeckPanes(env);
 	} catch {
 		return [];
 	}
+}
+
+/** deckPanes, but a failed tmux call throws instead of reading as "no panes" (for code that acts on the list). */
+async function readDeckPanes(env: NodeJS.ProcessEnv): Promise<DeckPane[]> {
+	const out = await deckTmux(["list-panes", "-a", "-F", DECK_PANE_FORMAT], env);
+	return out ? out.split("\n").map(parseDeckPane) : [];
 }
 
 /** One deck pane by id, or undefined. */
@@ -713,7 +718,8 @@ export async function ensureLayout(env: NodeJS.ProcessEnv = process.env): Promis
 
 async function ensureSlotHolder(name: SlotName, env: NodeJS.ProcessEnv): Promise<string> {
 	const h = HOLDERS[name];
-	const holder = (await deckPanes(env)).find((p) => p.role === h.role);
+	// A failed read must not look like "no holder": that would make a second one.
+	const holder = (await readDeckPanes(env)).find((p) => p.role === h.role);
 	if (holder) return holder.pane;
 	const sizes = name === "pi" ? undefined : await currentSizes(env);
 	const spawn = holderSpawn(name, env);
@@ -1110,7 +1116,15 @@ export interface ReconcileResult {
 	nvimSlotReplaced?: { dead: string; session: string; by: string };
 	/** The terminal slot's pane that went (dead, or its session's pi is gone), and its holder. */
 	termSlotReplaced?: { dead: string; session: string; by: string };
+	/** The slots kept changing under the pass (or the layout repair failed): reconcile again soon. */
+	unsettled?: boolean;
 }
+
+/** Backoff of the list's retries after a failed or unsettled reconcile pass (then the next signal). */
+const RECONCILE_RETRY_MS = [100, 200, 400, 800, 1600];
+
+/** Slot repairs one pass makes at most before it gives up for now (three slots, each may die again). */
+const RECONCILE_ROUNDS = 6;
 
 /**
  * Clean up dead panes: a dead pi-slot pane is replaced (`replacement(session)` may name the pi to show,
@@ -1119,18 +1133,78 @@ export interface ReconcileResult {
  * show makes a new one); a session's terminal goes once it is dead or its pi is (§17: killed with
  * whatever runs in it, never waited for; in the terminal slot the terminal holder takes its place); a
  * dead holder or anchor is respawned. Also repairs the deck window's panes.
+ *
+ * One slot repair per read of the panes, then a fresh read, until a read needs none: the cleanup acts on
+ * that one snapshot, so a pane that died during the pass (a pi exiting after the first read) is replaced in
+ * its slot by the next round, never killed there. A failed tmux call throws (never "no panes"): the caller
+ * reconciles again. `afterRead` is a test hook, called after each read.
  */
 export async function reconcile(
 	env: NodeJS.ProcessEnv = process.env,
-	opts: { replacement?: (deadSession: string) => Promise<string | undefined> | string | undefined } = {},
+	opts: { replacement?: (deadSession: string) => Promise<string | undefined> | string | undefined; afterRead?: (round: number) => Promise<void> | void } = {},
 ): Promise<ReconcileResult> {
 	const result: ReconcileResult = { killed: [], respawned: [] };
-	await ensureLayout(env).catch(() => {});
-	let panes = await deckPanes(env);
+	await ensureLayout(env).catch(() => {
+		result.unsettled = true;
+	});
+	let panes: DeckPane[] = [];
+	let settled = false;
+	for (let round = 0; round < RECONCILE_ROUNDS && !settled; round++) {
+		panes = await readDeckPanes(env);
+		await opts.afterRead?.(round);
+		settled = !(await repairOneSlot(panes, result, env, opts.replacement));
+	}
+	if (!settled) {
+		panes = await readDeckPanes(env);
+		result.unsettled = true;
+	}
+	// A terminal outlives nothing: dead, or its session's pi gone (exited, killed) → it goes.
+	const piAlive = (session: string) => panes.some((q) => q.role === "pi" && q.session === session && !q.gone);
+	const orphan = (p: DeckPane) => p.role === "term" && (p.gone || !piAlive(p.session));
+	const holderRole = (p: DeckPane) => p.role === "preview" || p.role === "nvim-holder" || p.role === "term-holder" || p.role === "anchor";
+	const cmds: string[][] = [];
+	for (const p of panes) {
+		if (p.isList) continue;
+		// Slot panes are repaired above, never killed in place (only an unsettled pass can still see one).
+		if ((p.inSlot || p.inNvimSlot || p.inTermSlot) && !holderRole(p)) {
+			if (p.gone || orphan(p)) result.unsettled = true;
+			continue;
+		}
+		if (orphan(p)) {
+			cmds.push(["kill-pane", "-t", p.pane]);
+			result.killed.push(p.pane);
+			continue;
+		}
+		if (!p.gone) continue;
+		if (holderRole(p)) {
+			// A holder's nvim or shell the user quit (:qa, exit) comes back fresh in place, in the slot or the pool.
+			cmds.push(respawnHolderArgs(p, env));
+			result.respawned.push(p.pane);
+			continue;
+		}
+		if (p.role === "nvim") {
+			// Its live pi loses the peer; a dead one is killed in this same chain (unsetting first would fail it).
+			const pi = panes.find((q) => q.pane === p.peer && q.peer === p.pane);
+			if (pi && !pi.gone) cmds.push(["set-option", "-pu", "-t", pi.pane, "@pi_fleet_peer"]);
+		}
+		cmds.push(["kill-pane", "-t", p.pane]);
+		result.killed.push(p.pane);
+	}
+	if (cmds.length) await deckTmux(chain(cmds), env);
+	return result;
+}
+
+/** The first slot `panes` shows needing a repair (pi, nvim, terminal), repaired. False if none did. */
+async function repairOneSlot(
+	panes: DeckPane[],
+	result: ReconcileResult,
+	env: NodeJS.ProcessEnv,
+	replacement?: (deadSession: string) => Promise<string | undefined> | string | undefined,
+): Promise<boolean> {
 	const slot = panes.find((p) => p.inSlot);
 	if (slot?.gone && slot.role !== "preview") {
 		// The replacement must be a live pane outside the slot (a caller's stale view may name the dead pane itself).
-		const want = await opts.replacement?.(slot.session);
+		const want = await replacement?.(slot.session);
 		const byPane = want ? panes.find((p) => p.pane === want) : undefined;
 		let by: string;
 		if (byPane && !byPane.gone && !byPane.inSlot && byPane.role === "pi" && byPane.session) {
@@ -1141,7 +1215,7 @@ export async function reconcile(
 			await showPane(by, env);
 		} else by = await showHolder(env);
 		result.slotReplaced = { dead: slot.pane, session: slot.session, by };
-		panes = await deckPanes(env);
+		return true;
 	}
 	const nvimSlot = panes.find((p) => p.inNvimSlot);
 	if (nvimSlot?.gone && nvimSlot.role !== "nvim-holder") {
@@ -1162,47 +1236,22 @@ export async function reconcile(
 				by = undefined;
 			}
 		}
-		if (!by || !(await deckPanes(env)).some((p) => p.pane === by && p.inNvimSlot)) {
+		if (!by || !(await readDeckPanes(env)).some((p) => p.pane === by && p.inNvimSlot)) {
 			by = await ensureNvimHolder(env);
 			await showPane(by, env);
 		}
 		result.nvimSlotReplaced = { dead: nvimSlot.pane, session: nvimSlot.session, by };
-		panes = await deckPanes(env);
+		return true;
 	}
-	// A terminal outlives nothing: dead, or its session's pi gone (exited, killed) → it goes.
 	const piAlive = (session: string) => panes.some((q) => q.role === "pi" && q.session === session && !q.gone);
-	const orphan = (p: DeckPane) => p.role === "term" && (p.gone || !piAlive(p.session));
 	const termSlot = panes.find((p) => p.inTermSlot);
-	if (termSlot && orphan(termSlot)) {
+	if (termSlot && termSlot.role !== "term-holder" && (termSlot.gone || (termSlot.role === "term" && !piAlive(termSlot.session)))) {
 		const by = await ensureTermHolder(env);
 		await showPane(by, env);
 		result.termSlotReplaced = { dead: termSlot.pane, session: termSlot.session, by };
-		panes = await deckPanes(env);
+		return true;
 	}
-	const cmds: string[][] = [];
-	for (const p of panes) {
-		if (p.isList) continue;
-		if (orphan(p) && !p.inTermSlot) {
-			cmds.push(["kill-pane", "-t", p.pane]);
-			result.killed.push(p.pane);
-			continue;
-		}
-		if (!p.gone) continue;
-		if (p.role === "preview" || p.role === "nvim-holder" || p.role === "term-holder" || p.role === "anchor") {
-			// A holder's nvim or shell the user quit (:qa, exit) comes back fresh in place, in the slot or the pool.
-			cmds.push(respawnHolderArgs(p, env));
-			result.respawned.push(p.pane);
-			continue;
-		}
-		if (p.role === "nvim") {
-			const pi = panes.find((q) => q.pane === p.peer && q.peer === p.pane);
-			if (pi) cmds.push(["set-option", "-pu", "-t", pi.pane, "@pi_fleet_peer"]);
-		}
-		cmds.push(["kill-pane", "-t", p.pane]);
-		result.killed.push(p.pane);
-	}
-	if (cmds.length) await deckTmux(chain(cmds), env);
-	return result;
+	return false;
 }
 
 // ---------------------------------------------------------------- deck.sock
@@ -1470,10 +1519,31 @@ export async function startDeckList(hooks: DeckListHooks = {}, env: NodeJS.Proce
 			const r = await applySizes(env);
 			if (r?.changed) hooks.onChange?.("resize");
 		});
-	const doReconcile = () =>
+	// A pass that failed (a tmux call: the server busy, a pane gone mid-command) or did not settle runs
+	// again after RECONCILE_RETRY_MS[n]: nothing else would wake the list for the panes it left.
+	let retryTimer: NodeJS.Timeout | undefined;
+	let retries = 0;
+	let closed = false;
+	const doReconcile = (retry = false): Promise<ReconcileResult | undefined> =>
 		serial(async () => {
-			const r = await reconcile(env, { replacement: hooks.replacement });
-			hooks.onChange?.("reconcile");
+			if (!retry) retries = 0;
+			let r: ReconcileResult | undefined;
+			try {
+				r = await reconcile(env, { replacement: hooks.replacement });
+			} catch {
+				r = undefined;
+			}
+			if (r && !r.unsettled) {
+				retries = 0;
+				if (retryTimer) clearTimeout(retryTimer);
+				retryTimer = undefined;
+			} else if (!closed && !retryTimer && retries < RECONCILE_RETRY_MS.length) {
+				retryTimer = setTimeout(() => {
+					retryTimer = undefined;
+					void doReconcile(true);
+				}, RECONCILE_RETRY_MS[retries++]);
+			}
+			if (r) hooks.onChange?.("reconcile");
 			return r;
 		}).catch(() => undefined);
 	let winchTimer: NodeJS.Timeout | undefined;
@@ -1497,6 +1567,8 @@ export async function startDeckList(hooks: DeckListHooks = {}, env: NodeJS.Proce
 			process.off("SIGWINCH", onWinch);
 			process.off("SIGUSR2", onUsr2);
 			if (winchTimer) clearTimeout(winchTimer);
+			closed = true;
+			if (retryTimer) clearTimeout(retryTimer);
 			sock.close();
 			const pid = await deckTmux(["show-options", "-gqv", "@deck_tui_pid"], env).catch(() => "");
 			if (pid === String(process.pid)) await deckTmux(["set-option", "-gu", "@deck_tui_pid", ";", "set-option", "-gu", "@deck_sock"], env).catch(() => "");
