@@ -116,6 +116,23 @@ sjob pool status DIR; sjob pool alerts DIR [--ack]; sjob pool stop DIR [--drain|
   (subagents share its session id but never receive alerts), which wakes it; it resumes the operator
   or handles them itself: `sjob pool alerts DIR`, `sjob pool status DIR`, act, `--ack`.
 
+### Adopt an existing pool dir
+
+A hand-rolled pool with the same layout (`queue/ running/<name>@<jobid>.<slot>.job done/ failed/
+retries/ workers/ logs/ races/`) can be adopted in place:
+
+1. Stop its old driver (`touch DIR/DRIVER_STOP`, wait until its pid is gone). Its running workers
+   keep going; the new driver doesn't start a second worker on an allocation that has
+   `workers/<id>.started`.
+2. `sjob pool init DIR --race '...' [--plugin ...]`. The pool name must equal the old one (Slurm
+   job names `<prefix><name>.gNNN`); old `POOLNAME=`, `REPO=`, `GPUS=` (→ `SLOTS`, `--slot-bind gpu`)
+   and `MIN_LEFT_TRAIN=` are taken over unless you pass `--name/--repo/--slots/--slot-bind/--min-left`.
+   Other old lines stay, so old helper scripts that source `pool.env` keep working.
+3. Short items that used a suffix rule for less time left need the header `# pool: min_left=N`.
+   Per-item env the old worker set (e.g. `NGPU=1`) is now the item's job: add it to queued items
+   (write to `tmp/`, then `mv` over) and to whatever generates them.
+4. `sjob pool start DIR` from a login node, on the old driver's host if its `driver.pid` remains.
+
 ## Delegate to a `slurm-operator` subagent
 
 Hand these to a `slurm-operator` (pi subagent type from `~/env/pi/agents`), not the

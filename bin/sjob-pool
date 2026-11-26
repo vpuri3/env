@@ -24,13 +24,15 @@ Usage: sjob pool <command> DIR [args]
                           id); repo / cluster: a standing pool. Defaults: REPO = git root of cwd,
                           NAME = s-<session8>-<repo> | <repo> | cluster,
                           DIR = $SJOB_STAGE_DIR/pools/NAME
-  start DIR               start driver + watchdog detached (refuses a second copy)
+  start DIR [--force]     start driver + watchdog detached (refuses a second copy, a pool name
+                          registered for another dir, and running inside an allocation w/o --force)
   stop DIR [--drain] [--release]
                           stop driver + watchdog; --drain: workers stop claiming (running items
                           finish); --release: also scancel the pool's allocations, requeue items
   status DIR              print DIR/status.md (regenerated if older than 5 min)
   add DIR NAME SCRIPT|-   enqueue SCRIPT as queue/NAME.job (atomic); NAME order = claim order;
-                          records the adding session as `# pool-owner: <id>` after the shebang
+                          records the adding session as `# pool-owner: <id>` after the shebang; re-adding
+                          a name clears its failed/ and retries/ state
   alerts DIR [--all] [--ack]
                           print unacked alerts (--all: all); --ack marks them read
 
@@ -64,9 +66,13 @@ ENV_KEYS=(POOL_NAME POOL_DIR POOL_REPO POOL_SCOPE POOL_OWNER MAX_NODES SLOTS SLO
 # ---------------------------------------------------------------- environment
 
 load_cluster_env() {
-    # The env convention: SJOB_* settings live in the bash block of ~/.config/env/cluster.md.
+    # The env convention: SJOB_* settings live in the bash block of ~/.config/env/cluster.md;
+    # then $SJOB_CONFIG, which sjob itself sources last, so job names match what sjob submits.
     local f="$HOME/.config/env/cluster.md"
     [ -f "$f" ] && eval "$(sed -n '/^```bash/,/^```/{/^```/d;p}' "$f")"
+    f="${SJOB_CONFIG:-$HOME/.config/env/slurm.sh}"
+    # shellcheck source=/dev/null
+    [ -f "$f" ] && . "$f"
     return 0
 }
 
@@ -91,6 +97,8 @@ load_pool() {
     : "${POOL_RACE_RETRY_SEC:=90}" "${POOL_STATUS_EVERY:=3}" "${POOL_RELEASE_WAIT_SEC:=30}"
     : "${STALL_SEC:=$((STALL_MIN * 60))}" "${NO_NODES_SEC:=$((NO_NODES_MIN * 60))}"
     : "${IDLE_RELEASE_SEC:=$((IDLE_RELEASE_MIN * 60))}"
+    : "${POOL_WORKER_GRACE_SEC:=300}" "${POOL_WORKER_HB_SEC:=60}"
+    : "${POOL_IDLE_FRESH_SEC:=$(max 120 $((4 * ${POOL_IDLE_SLEEP_SEC%.*})))}"
     D="$POOL_DIR"
     SJOB="$(command -v sjob || echo "$HERE/sjob")"
     USER="${USER:-$(id -un)}"
@@ -159,12 +167,35 @@ mins() {
     echo $((10#$d * 1440 + 10#$h * 60 + 10#$m))
 }
 
-# This pool's allocations: id|name|partition|state|left|nodes|reason. Fails if squeue fails.
+# This pool's allocations: id|name|partition|state|left|nodes|reason. Fails if squeue fails, or
+# if none match the expected name but some end in <POOL_NAME>.gNNN (job-name prefix mismatch).
 pool_jobs() {
-    local out
+    local out mine loose
     out="$(squeue -u "$USER" -h -o '%i|%j|%P|%T|%L|%N|%r')" || return 1
-    printf '%s\n' "$out" | awk -F'|' -v p="${SJOB_NAME_PREFIX:-}${POOL_NAME}.g" \
-        'index($2, p) == 1 && substr($2, length(p) + 1) ~ /^[0-9]+$/'
+    mine="$(printf '%s\n' "$out" | awk -F'|' -v p="${SJOB_NAME_PREFIX:-}${POOL_NAME}.g" \
+        'index($2, p) == 1 && substr($2, length(p) + 1) ~ /^[0-9]+$/')"
+    if [ -z "$mine" ]; then
+        loose="$(printf '%s\n' "$out" | awk -F'|' -v p="${POOL_NAME}.g" \
+            '{k = index($2, p)} k > 0 && substr($2, k + length(p)) ~ /^[0-9]+$/ &&
+             (k == 1 || substr($2, k - 1, 1) !~ /[A-Za-z0-9]/) {print $2; exit}')"
+        if [ -n "$loose" ]; then
+            echo "sjob pool: job $loose looks like this pool's but SJOB_NAME_PREFIX='${SJOB_NAME_PREFIX:-}'; refusing to act" >&2
+            return 1
+        fi
+    fi
+    [ -n "$mine" ] && printf '%s\n' "$mine"
+    return 0
+}
+
+# job_gone ID: true only if Slurm says the job is gone (invalid id / purged / ended state).
+# Any other squeue error -> not gone (never reclaim on doubt).
+job_gone() {
+    local out rc st
+    out="$(squeue -h -j "$1" -o %T 2>&1)"; rc=$?
+    if [ "$rc" -ne 0 ]; then printf '%s' "$out" | grep -qi 'invalid job id'; return; fi
+    st="$(printf '%s\n' "$out" | head -1 | tr -d ' ')"
+    case "$st" in RUNNING|COMPLETING|SUSPENDED|CONFIGURING|STAGE_OUT|RESIZING|PENDING|REQUEUED) return 1 ;; esac
+    return 0
 }
 
 count() { local n=0 f; for f in "$@"; do [ -e "$f" ] && n=$((n + 1)); done; echo "$n"; }
@@ -178,13 +209,20 @@ item_min_left() {
 
 # role_state ROLE EVERY: 0 alive, 1 dead, 2 hung (pid alive on this host, heartbeat stale).
 # Same host: pid check; other host: heartbeat younger than 3 intervals (min 60 s).
+# pid_is ROLE PID: PID is this pool's ROLE daemon (guards against pid reuse).
+pid_is() {
+    [ -n "$2" ] && [ -r "/proc/$2/cmdline" ] && tr '\0' ' ' <"/proc/$2/cmdline" | grep -qF -- "_$1 $D "
+}
+# own_role ROLE: the pid/host files still name this process (else another copy took over).
+own_role() { [ "$(cat "$D/$1.pid" 2>/dev/null)" = "$$" ] && [ "$(cat "$D/$1.host" 2>/dev/null)" = "$(host)" ]; }
+
 role_state() {
     local role="$1" every="$2" pid h stale
     stale="$(max $((3 * every)) 60)"
     pid="$(cat "$D/$role.pid" 2>/dev/null)"
     h="$(cat "$D/$role.host" 2>/dev/null)"
     if [ -n "$pid" ] && [ "$h" = "$(host)" ]; then
-        kill -0 "$pid" 2>/dev/null || return 1
+        pid_is "$role" "$pid" || return 1
         [ -f "$D/$role.hb" ] && [ "$(age "$D/$role.hb")" -gt "$stale" ] && return 2
         return 0
     fi
@@ -205,7 +243,7 @@ supervise() {
     role_state "$role" "$every"
     case $? in
         0) return 0 ;;
-        2) kill "$(cat "$D/$role.pid")" 2>/dev/null; plog "$role heartbeat stale: killed" ;;
+        2) kill "$(cat "$D/$role.pid")" 2>/dev/null; plog "$role heartbeat stale: killed" ;;   # pid_is checked
     esac
     local old oldh
     old="$(cat "$D/$role.pid" 2>/dev/null)"; oldh="$(cat "$D/$role.host" 2>/dev/null)"
@@ -250,25 +288,53 @@ launch_racer() {
 
 start_worker() {
     local id="$1"
-    rm -f "$D/workers/$id.exited"
-    "$SJOB" run "$id" --bg --log "$D/logs/worker_$id.log" -- bash "$SELF" _worker "$D" >>"$D/logs/driver.log" 2>&1
-    touch "$D/workers/$id.started"
+    rm -f "$D/workers/$id.exited" "$D/workers/$id.hb"
+    if "$SJOB" run "$id" --bg --log "$D/logs/worker_$id.log" -- bash "$SELF" _worker "$D" >>"$D/logs/driver.log" 2>&1; then
+        touch "$D/workers/$id.started"
+    else
+        plog "sjob run failed for $id; retrying next tick"; return 1
+    fi
 }
 
+# Idle slot files touched recently (a dead worker's stale .idle files are not supply).
+fresh_idle() {
+    local n=0 f
+    for f in "$D/workers/$1".*.idle; do [ -e "$f" ] && [ "$(age "$f")" -lt "$POOL_IDLE_FRESH_SEC" ] && n=$((n + 1)); done
+    echo "$n"
+}
+
+# worker_dead ID: worker started > grace ago, not exited/stopped, and either its heartbeat is
+# stale or (worker without heartbeat, e.g. an older worker script) it shows no sign of life.
+worker_dead() {
+    local id="$1" w="$D/workers/$1"
+    [ -f "$w.started" ] && [ ! -f "$w.exited" ] && [ ! -f "$w.stop" ] || return 1
+    [ "$(age "$w.started")" -ge "$POOL_WORKER_GRACE_SEC" ] || return 1
+    if [ -f "$w.hb" ]; then [ "$(age "$w.hb")" -ge "$POOL_WORKER_GRACE_SEC" ]; return; fi
+    [ "$(fresh_idle "$id")" -eq 0 ] && [ "$(count "$D/running/"*"@$id".*.job)" -eq 0 ]
+}
+
+in_use() { [ -f "$D/workers/$1.started" ] || [ "$(count "$D/running/"*"@$1".*.job)" -gt 0 ]; }
+
 release_alloc() {
-    touch "$D/workers/$1.stop"
+    touch "$D/workers/$1.release" "$D/workers/$1.stop"
     scancel "$1" && plog "released $2 node job $1 ($3)"
 }
 
 driver_tick() {
     local Q run_ids r b j n f g G line id nm part st left nodes win wrank rk o spec
-    Q="$(pool_jobs)" || { plog "squeue failed; skipping tick"; return; }
+    Q="$(pool_jobs 2>>"$D/logs/driver.log")" || { plog "squeue failed; skipping tick"; return; }
     run_ids="$(printf '%s\n' "$Q" | awk -F'|' '$4 == "RUNNING" {print $1}')"
-    # 1. reclaim orphans: running items whose allocation is gone
+    # 1. reclaim orphans: running items whose allocation is gone (confirmed per job id)
+    local gone="" alive=""
     for r in "$D"/running/*.job; do
         [ -e "$r" ] || continue
         b="$(basename "$r" .job)"; n="${b%@*}"; j="${b##*@}"; j="${j%%.*}"
         printf '%s\n' "$run_ids" | grep -qx "$j" && continue
+        case " $alive " in *" $j "*) continue ;; esac
+        case " $gone " in
+            *" $j "*) ;;
+            *) if job_gone "$j"; then gone+=" $j"; else alive+=" $j"; plog "job $j missing from squeue snapshot but not gone; not reclaiming"; continue; fi ;;
+        esac
         mv "$r" "$D/queue/$n.job" 2>/dev/null && plog "reclaimed $n from dead job $j"
     done
     # 2. refused racers -> retry marker
@@ -293,18 +359,27 @@ driver_tick() {
         while IFS='|' read -r id nm part st left nodes _; do
             [ "$st" = RUNNING ] || continue
             rk="$(race_rank "$part")"
+            in_use "$id" && rk=-1   # an allocation already working always wins
             if [ "$rk" -lt "$wrank" ]; then win="$id"; wrank="$rk"; fi
         done <<<"$G"
         if [ -n "$win" ]; then
             for o in $(printf '%s\n' "$G" | awk -F'|' -v w="$win" '$1 != w {print $1}'); do
+                if in_use "$o"; then winners+="$(printf '%s\n' "$G" | awk -F'|' -v w="$o" '$1 == w')"$'\n'; continue; fi
                 scancel "$o" && plog "group $g: $win won, cancelled racer $o"
             done
             touch "$D/races/$g.won"; rm -f "$D/races/$g".*.retry
             line="$(printf '%s\n' "$G" | awk -F'|' -v w="$win" '$1 == w')"
             winners+="$line"$'\n'
             if [ ! -f "$D/workers/$win.started" ] || { [ -f "$D/workers/$win.exited" ] && [ ! -f "$D/workers/$win.stop" ]; }; then
+                start_worker "$win" && plog "group $g: started worker on $win ($(echo "$line" | cut -d'|' -f6))"
+            elif worker_dead "$win"; then
+                for r in "$D/running/"*"@$win".*.job; do
+                    [ -e "$r" ] || continue
+                    b="$(basename "$r" .job)"
+                    mv "$r" "$D/queue/${b%@*}.job" 2>/dev/null && plog "reclaimed ${b%@*} from dead worker on $win"
+                done
+                plog "group $g: worker on $win is dead; restarting it"
                 start_worker "$win"
-                plog "group $g: started worker on $win ($(echo "$line" | cut -d'|' -f6))"
             elif [ -f "$D/workers/$win.exited" ] && [ -f "$D/workers/$win.stop" ]; then
                 scancel "$win" && plog "group $g: worker stopped, released $win"
             fi
@@ -340,13 +415,13 @@ driver_tick() {
     while IFS='|' read -r id nm part st left nodes _; do
         [ -n "$id" ] || continue
         lm="$(mins "$left")"
-        nidle="$(count "$D/workers/$id".*.idle)"
+        nidle="$(fresh_idle "$id")"
         nrun="$(count "$D/running/"*"@$id".*.job)"
         if [ $((nidle + nrun)) -eq 0 ] && [ "$(age "$D/workers/$id.started")" -lt "$(max 120 $((3 * POOL_TICK_SEC)))" ]; then
             nidle="$SLOTS"   # worker still coming up
         fi
         if [ "$lm" -ge "$MIN_LEFT" ]; then supply=$((supply + nidle)); else demand=$((demand + nrun)); fi
-        if [ "$nrun" -eq 0 ] && [ "$(count "$D/workers/$id".*.idle)" -eq "$SLOTS" ]; then
+        if [ "$nrun" -eq 0 ] && [ "$(fresh_idle "$id")" -eq "$SLOTS" ]; then
             if [ "$lm" -lt "$MIN_LEFT" ] && { [ "$nq" -eq 0 ] || [ "$lm" -lt "$minq" ]; }; then
                 release_alloc "$id" "expiring idle" "$nodes, $lm min left"; continue
             fi
@@ -382,6 +457,7 @@ driver_main() {
     local tick=0
     while :; do
         [ -f "$D/DRIVER_STOP" ] && { plog "DRIVER_STOP found, exiting"; break; }
+        own_role driver || { plog "driver.pid/host name another driver; pid $$ exiting"; exit 0; }
         touch "$D/driver.hb"
         supervise watchdog "$WATCH_EVERY_SEC"
         driver_tick
@@ -398,9 +474,12 @@ worker_main() {
     ROLE=worker
     load_pool "$1"
     JOB="${SLURM_JOB_ID:?worker must run inside an allocation}"; NODE="$(host)"
-    local i
-    for ((i = 0; i < SLOTS; i++)); do slot_loop "$i" & done
-    wait
+    local i pids=() hb
+    (while :; do touch "$D/workers/$JOB.hb"; sleep "$POOL_WORKER_HB_SEC"; done) &
+    hb=$!
+    for ((i = 0; i < SLOTS; i++)); do slot_loop "$i" & pids+=($!); done
+    wait "${pids[@]}"
+    kill "$hb" 2>/dev/null
     rm -f "$D/workers/$JOB".*.idle; touch "$D/workers/$JOB.exited"
 }
 
@@ -411,7 +490,7 @@ left_min() {
 event() { echo "[$(ts)] $*" >>"$D/logs/events.log"; }
 
 slot_loop() {
-    local i="$1" word=slot idle f name r rc lm env
+    local i="$1" word=slot idle f name r rc lm env owner hook
     [ "$SLOT_BIND" = gpu ] && word=gpu
     idle="$D/workers/$JOB.$i.idle"
     env=(POOL_DIR="$D" POOL_SLOTS="$SLOTS" POOL_SLOT="$i")
@@ -431,17 +510,25 @@ slot_loop() {
         done
         if [ -z "$r" ]; then touch "$idle"; sleep "$POOL_IDLE_SLEEP_SEC"; continue; fi
         rm -f "$idle"; touch "$r"
+        # the item (and its follow-up `pool add`s) act for the session that added it
+        owner="$(sed -n '1,5{s/^# pool-owner:[[:space:]]*//p}' "$r" | head -1)"
         event "$NODE $word$i job$JOB start $name"
-        (cd "$POOL_REPO" && env "${env[@]}" POOL_ITEM="$name" bash "$r") >>"$D/logs/$name.log" 2>&1 </dev/null
+        (cd "$POOL_REPO" && env "${env[@]}" POOL_ITEM="$name" PI_FLEET_SESSION="$owner" PI_SESSION_ID="$owner" \
+            bash "$r") >>"$D/logs/$name.log" 2>&1 </dev/null
         rc=$?
-        [ -f "$D/workers/$JOB.stop" ] && [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ] && rc=75   # killed by release
+        [ -f "$D/workers/$JOB.release" ] && [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ] && rc=75   # killed by release
+        hook=""
+        [ "$rc" -eq 0 ] && declare -F pool_on_done >/dev/null && hook="$D/workers/$JOB.$i.hook"
+        [ -n "$hook" ] && touch "$hook"   # watchdog: pool not empty while the hook runs
         if [ "$rc" -eq 0 ]; then mv "$r" "$D/done/$name.job"
         elif [ "$rc" -eq 75 ]; then mv "$r" "$D/queue/$name.job"
         elif [ ! -f "$D/retries/$name" ]; then echo "$rc $(ts)" >"$D/retries/$name"; mv "$r" "$D/queue/$name.job"
         else mv "$r" "$D/failed/$name.job"; fi
         event "$NODE $word$i job$JOB end $name rc=$rc"
-        if [ "$rc" -eq 0 ] && declare -F pool_on_done >/dev/null; then
-            (cd "$POOL_REPO" && export POOL_DIR="$D" POOL_ITEM="$name" && pool_on_done "$name") >>"$D/logs/$name.log" 2>&1 </dev/null
+        if [ -n "$hook" ]; then
+            (cd "$POOL_REPO" && export POOL_DIR="$D" POOL_ITEM="$name" PI_FLEET_SESSION="$owner" PI_SESSION_ID="$owner" &&
+                pool_on_done "$name") >>"$D/logs/$name.log" 2>&1 </dev/null
+            rm -f "$hook"
         fi
     done
     rm -f "$idle"
@@ -488,6 +575,13 @@ scan_log() {
     alert log_alert "$n" "$(printf '%s\n' "$m" | head -1 | cut -c1-300)$([ "$nm" -gt 1 ] && echo " (+$((nm - 1)) more)")"
 }
 
+# pool_on_done hooks in progress (markers older than an hour are from dead workers)
+hooks_running() {
+    local n=0 f
+    for f in "$D"/workers/*.hook; do [ -e "$f" ] && [ "$(age "$f")" -lt 3600 ] && n=$((n + 1)); done
+    echo "$n"
+}
+
 watch_pass() {
     local init="$1" r b n log t nq nrun Q nalloc
     if [ "$init" = 1 ]; then
@@ -520,6 +614,7 @@ watch_pass() {
         [ "$(count "$D/running/$n@"*.job)" -eq 0 ] && rm -f "$r"
     done
     nrun="$(count "$D"/running/*.job)"; nq="$(count "$D"/queue/*.job)"
+    nrun=$((nrun + $(hooks_running)))
     if Q="$(pool_jobs)"; then
         nalloc="$(printf '%s\n' "$Q" | awk -F'|' '$4 == "RUNNING"' | grep -c .)"
         if [ "$nq" -gt 0 ] && [ "$nalloc" -eq 0 ]; then
@@ -536,7 +631,7 @@ watch_pass() {
         mv "$D/watch/episode.owners.tmp" "$D/watch/episode.owners"
     elif [ -f "$D/watch/had_items" ]; then
         sleep 1   # an item may be between queue/ and running/: confirm
-        if [ "$(count "$D"/running/*.job "$D"/queue/*.job)" -eq 0 ]; then
+        if [ $(( $(count "$D"/running/*.job "$D"/queue/*.job) + $(hooks_running) )) -eq 0 ]; then
             rm -f "$D/watch/had_items"
             alert pool_done "" "queue and running empty: done=$(count "$D"/done/*.job) failed=$(count "$D"/failed/*.job)"
             rm -f "$D/watch/episode.owners"
@@ -555,6 +650,7 @@ watchdog_main() {
     [ -f "$D/watch/.init" ] || init=1
     while :; do
         [ -f "$D/DRIVER_STOP" ] && { plog "DRIVER_STOP found, exiting"; break; }
+        own_role watchdog || { plog "watchdog.pid/host name another watchdog; pid $$ exiting"; exit 0; }
         touch "$D/watchdog.hb"
         supervise driver "$POOL_TICK_SEC"
         watch_pass "$init"; init=0
@@ -689,6 +785,23 @@ cmd_init() {
     for k in "${SUBDIRS[@]}"; do mkdir -p "$dir/$k"; done
     kv[POOL_DIR]="$dir"
     # keys given -> set; keys missing -> default (never overwrite an existing key not given)
+    # adopt a reference-style pool.env: POOLNAME, REPO, GPUS (gpu slots), MIN_LEFT_TRAIN
+    local lv
+    legacy() { ( . "$env" >/dev/null 2>&1; eval "printf '%s' \"\${$1:-}\"" ); }
+    if [ "$new" = 0 ]; then
+        for lv in POOL_NAME:POOLNAME POOL_REPO:REPO SLOTS:GPUS MIN_LEFT:MIN_LEFT_TRAIN; do
+            k="${lv%%:*}"
+            [ -z "${kv[$k]+x}" ] && ! grep -q "^$k=" "$env" && [ -n "$(legacy "${lv#*:}")" ] && kv[$k]="$(legacy "${lv#*:}")"
+        done
+        [ -z "${kv[SLOT_BIND]+x}" ] && ! grep -q "^SLOT_BIND=" "$env" && [ -n "$(legacy GPUS)" ] && kv[SLOT_BIND]=gpu
+    fi
+    # one dir per pool name
+    local name="${kv[POOL_NAME]:-$(legacy POOL_NAME)}"
+    if [ -n "$name" ]; then
+        local reg="${XDG_STATE_HOME:-$HOME/.local/state}/sjob-pool/$name.pool" od
+        od="$(sed -n 's/^dir=//p' "$reg" 2>/dev/null)"
+        [ -n "$od" ] && [ "$od" != "$dir" ] && [ -f "$od/pool.env" ] && die "pool name $name is already registered for $od"
+    fi
     local def_owner="$sid"
     grep -q "^POOL_SCOPE='\?\(repo\|cluster\)" "$env" && [ -z "${kv[POOL_SCOPE]+x}" ] && def_owner=""
     declare -A def=([POOL_SCOPE]=session [POOL_OWNER]="$def_owner" [MAX_NODES]=4 [SLOTS]=1 [SLOT_BIND]=none [GPUS_PER_SLOT]=1 [ALLOC_ARGS]=""
@@ -709,19 +822,37 @@ wait_pid_file() {
     local i p
     for ((i = 0; i < 50; i++)); do
         p="$(cat "$D/$1.pid" 2>/dev/null)"
-        [ -n "$p" ] && [ "$p" != "$2" ] && kill -0 "$p" 2>/dev/null && { echo "$p"; return 0; }
+        [ -n "$p" ] && [ "$p" != "$2" ] && pid_is "$1" "$p" && { echo "$p"; return 0; }
         sleep 0.2
     done
     return 1
 }
 
+# registry_conflict: another dir already registered under this POOL_NAME
+registry_conflict() {
+    local reg d
+    reg="$(registry_file)"
+    [ -f "$reg" ] || return 1
+    d="$(sed -n 's/^dir=//p' "$reg")"
+    [ -n "$d" ] && [ "$d" != "$D" ] && [ -f "$d/pool.env" ] && echo "$d"
+}
+
 cmd_start() {
-    load_pool "${1:?start needs DIR}"
+    local dir="" force=0 a
+    for a in "$@"; do case "$a" in --force) force=1 ;; *) dir="$a" ;; esac; done
+    load_pool "${dir:?start needs DIR}"
+    if [ -n "${SLURM_JOB_ID:-}" ] && [ "$force" = 0 ]; then
+        die "refusing to start inside Slurm allocation $SLURM_JOB_ID (driver and watchdog would die with it); run on a login node or pass --force"
+    fi
+    local other; other="$(registry_conflict)" && die "pool name $POOL_NAME is already registered for $other"
     local h p
     if [ -f "$D/driver.pid" ]; then
         h="$(cat "$D/driver.host" 2>/dev/null)"; p="$(cat "$D/driver.pid")"
         if [ "$h" = "$(host)" ]; then
-            kill -0 "$p" 2>/dev/null && die "driver already running (pid $p on $h)"
+            pid_is driver "$p" && die "driver already running (pid $p on $h)"
+            if [ -r "/proc/$p/cmdline" ] && tr '\0' ' ' <"/proc/$p/cmdline" | grep -qF -- "$D/"; then
+                die "pid $p ($(tr '\0' ' ' <"/proc/$p/cmdline" | cut -c1-120)) still runs from $D: stop it first (e.g. touch $D/DRIVER_STOP)"
+            fi
         elif [ -f "$D/driver.hb" ]; then
             role_alive driver "$POOL_TICK_SEC" && die "driver already running (pid $p on $h, heartbeat $(age "$D/driver.hb")s ago)"
         else
@@ -762,9 +893,10 @@ cmd_stop() {
     for role in driver watchdog; do
         p="$(cat "$D/$role.pid" 2>/dev/null)"
         if [ -n "$p" ] && [ "$(cat "$D/$role.host" 2>/dev/null)" = "$(host)" ]; then
+            pid_is "$role" "$p" || { echo "$role not running"; continue; }
             kill "$p" 2>/dev/null
-            for ((i = 0; i < 50; i++)); do kill -0 "$p" 2>/dev/null || break; sleep 0.2; done
-            kill -0 "$p" 2>/dev/null && echo "warning: $role pid $p still alive" || echo "$role stopped"
+            for ((i = 0; i < 50; i++)); do pid_is "$role" "$p" || break; sleep 0.2; done
+            pid_is "$role" "$p" && echo "warning: $role pid $p still alive" || echo "$role stopped"
         elif [ -n "$p" ]; then
             echo "$role runs on $(cat "$D/$role.host" 2>/dev/null): it exits at its next tick (DRIVER_STOP)"
         fi
@@ -777,7 +909,7 @@ cmd_stop() {
         local Q ids
         Q="$(pool_jobs)" || die "squeue failed; nothing cancelled"
         ids="$(printf '%s\n' "$Q" | awk -F'|' 'NF {print $1}')"
-        for id in $ids; do scancel "$id" && echo "scancel $id"; done
+        for id in $ids; do touch "$D/workers/$id.release" "$D/workers/$id.stop"; scancel "$id" && echo "scancel $id"; done
         for ((i = 0; i < POOL_RELEASE_WAIT_SEC; i++)); do
             n=0
             for id in $ids; do n=$((n + $(count "$D/running/"*"@$id".*.job))); done
@@ -807,6 +939,12 @@ cmd_add() {
     [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+=,-]*$ ]] || die "bad item name '$name' (letters, digits, . _ + = , -)"
     [ -e "$D/queue/$name.job" ] && die "$name is already queued"
     [ "$(count "$D/running/$name@"*.job)" -eq 0 ] || die "$name is running"
+    # re-adding a name starts it fresh: forget its failure, retry mark and watchdog seen state
+    rm -f "$D/failed/$name.job" "$D/retries/$name"
+    local sf
+    for sf in "$D/watch/failed.seen" "$D/watch/retries.seen"; do
+        [ -f "$sf" ] && grep -vxF -- "$name" "$sf" >"$sf.$$" ; [ -f "$sf.$$" ] && mv "$sf.$$" "$sf"
+    done
     local tmp="$D/tmp/$name.job.$$"
     if [ "$src" = - ]; then cat >"$tmp"; else [ -f "$src" ] || { die "no such script: $src"; }; cp "$src" "$tmp"; fi
     local sid; sid="$(session_id)"
