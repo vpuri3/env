@@ -19,6 +19,7 @@ Usage: sjob pool <command> DIR [args]
   init [DIR] [--scope session|repo|cluster] [--name NAME] [--repo REPO] [--max-nodes 4] [--slots 1]
        [--slot-bind none|gpu] [--gpus-per-slot 1] [--alloc-args '...'] [--race 'part:walltime ...']
        [--plugin FILE] [--min-left 45] [--idle-release-min 5]
+       [--notify-done REGEX]
                           create DIR (or, if it exists, update only the given pool.env keys).
                           Scope (default session): one pool per agent session (POOL_OWNER = session
                           id); repo / cluster: a standing pool. Defaults: REPO = git root of cwd,
@@ -44,9 +45,12 @@ Header line `# pool: min_left=MIN` overrides MIN_LEFT (allocation minutes left n
 Items needing a different node shape go in a different pool (slots are homogeneous).
 
 Plugin (pool.env PLUGIN, sourced; all optional): ALERT_REGEX ALERT_IGNORE_REGEX PROGRESS_REGEX
-STALL_MIN NO_NODES_MIN; functions pool_on_done NAME, pool_status_extra.
-Alerts: DIR/alerts.jsonl (driver_restarted watchdog_restarted item_failed item_retry log_alert
-stall no_nodes pool_done), each with "owners": item alerts -> the item's pool-owner; pool alerts ->
+STALL_MIN NO_NODES_MIN NOTIFY_DONE_REGEX; functions pool_on_done NAME, pool_status_extra.
+NOTIFY_DONE_REGEX (--notify-done; default empty = off): items exiting 0 whose name matches (bash =~)
+get one item_done alert per completion (msg = last PROGRESS_REGEX line of the log, else "done"),
+to wake the owner when results land.
+Alerts: DIR/alerts.jsonl (driver_restarted watchdog_restarted item_failed item_retry item_done
+log_alert stall no_nodes pool_done), each with "owners": item alerts -> the item's pool-owner; pool alerts ->
 POOL_OWNER (session scope) else the owners of queued/running items (pool_done: of this episode).
 Session id: $PI_FLEET_SESSION, else $PI_SESSION_ID. Heartbeats: DIR/driver.hb, DIR/watchdog.hb.
 Registry: ${XDG_STATE_HOME:-~/.local/state}/sjob-pool/NAME.pool (dir= repo= scope= owner=).
@@ -61,7 +65,7 @@ mtime() { stat -c %Y "$1" 2>/dev/null || echo 0; }
 age() { echo $(( $(now) - $(mtime "$1") )); }
 max() { if [ "$1" -gt "$2" ]; then echo "$1"; else echo "$2"; fi; }
 SUBDIRS=(queue running done failed retries workers logs races tmp staging watch)
-ENV_KEYS=(POOL_NAME POOL_DIR POOL_REPO POOL_SCOPE POOL_OWNER MAX_NODES SLOTS SLOT_BIND GPUS_PER_SLOT ALLOC_ARGS RACE MIN_LEFT IDLE_RELEASE_MIN PLUGIN)
+ENV_KEYS=(POOL_NAME POOL_DIR POOL_REPO POOL_SCOPE POOL_OWNER MAX_NODES SLOTS SLOT_BIND GPUS_PER_SLOT ALLOC_ARGS RACE MIN_LEFT IDLE_RELEASE_MIN PLUGIN NOTIFY_DONE_REGEX)
 
 # ---------------------------------------------------------------- environment
 
@@ -87,7 +91,7 @@ load_pool() {
     : "${POOL_REPO:=}" "${POOL_SCOPE:=session}" "${POOL_OWNER:=}" "${MAX_NODES:=4}" "${SLOTS:=1}" "${SLOT_BIND:=none}" "${GPUS_PER_SLOT:=1}"
     : "${ALLOC_ARGS:=}" "${RACE:=}" "${MIN_LEFT:=45}" "${IDLE_RELEASE_MIN:=5}" "${PLUGIN:=}"
     ALERT_REGEX="${ALERT_REGEX-Traceback|CUDA error|out of memory|NaN|Inf\\b}"
-    : "${ALERT_IGNORE_REGEX:=}" "${PROGRESS_REGEX:=}" "${STALL_MIN:=30}" "${NO_NODES_MIN:=60}"
+    : "${ALERT_IGNORE_REGEX:=}" "${PROGRESS_REGEX:=}" "${STALL_MIN:=30}" "${NO_NODES_MIN:=60}" "${NOTIFY_DONE_REGEX:=}"
     if [ -n "$PLUGIN" ]; then
         # shellcheck source=/dev/null
         if [ -f "$PLUGIN" ]; then . "$PLUGIN"; else echo "sjob pool: plugin not found: $PLUGIN" >&2; fi
@@ -337,12 +341,20 @@ driver_tick() {
         esac
         mv "$r" "$D/queue/$n.job" 2>/dev/null && plog "reclaimed $n from dead job $j"
     done
-    # 2. refused racers -> retry marker
+    # 2. refused racers -> retry marker (only for live groups: in squeue or freshly launched;
+    # leftovers of old groups, e.g. after adoption, are set aside silently)
+    local groups grace
+    groups="$(printf '%s\n' "$Q" | awk -F'|' 'NF {n = $2; sub(/.*\.g/, "g", n); print n}' | sort -u)"
+    grace="$(max 30 $((2 * POOL_TICK_SEC)))"
     for f in "$D"/races/g*.out; do
         [ -e "$f" ] || continue
         grep -q 'JOBID=' "$f" && continue
         grep -qi 'error\|allocation failed' "$f" || continue
         b="$(basename "$f" .out)"; g="${b%%.*}"; part="${b#*.}"
+        if ! printf '%s\n' "$groups" | grep -qx "$g" &&
+            ! { [ -f "$D/races/$g.launched" ] && [ "$(age "$D/races/$g.launched")" -lt "$grace" ]; }; then
+            mv "$f" "$f.stale.$(now)"; continue
+        fi
         if [ ! -f "$D/races/$g.won" ]; then
             [ -f "$D/races/$g.$part.retry" ] || plog "group $g: $part refused: $(grep -im1 error "$f" | cut -c1-200)"
             touch "$D/races/$g.$part.retry"
@@ -350,8 +362,7 @@ driver_tick() {
         mv "$f" "$f.refused.$(now)"
     done
     # 3. groups: keep the highest-listed RUNNING racer, cancel the rest, start its worker
-    local groups winners="" npend=0 ngroups=0
-    groups="$(printf '%s\n' "$Q" | awk -F'|' 'NF {n = $2; sub(/.*\.g/, "g", n); print n}' | sort -u)"
+    local winners="" npend=0 ngroups=0
     for g in $groups; do
         ngroups=$((ngroups + 1))
         G="$(printf '%s\n' "$Q" | awk -F'|' -v s=".$g" 'substr($2, length($2) - length(s) + 1) == s')"
@@ -396,8 +407,6 @@ driver_tick() {
         fi
     done
     # groups launched moments ago may not be in squeue yet: count them as pending
-    local grace
-    grace="$(max 30 $((2 * POOL_TICK_SEC)))"
     for f in "$D"/races/g*.launched; do
         [ -e "$f" ] || continue
         g="$(basename "$f" .launched)"
@@ -552,6 +561,23 @@ seen_diff() {
     printf '%s\n' "$cur" | sed '/^$/d' >"$seen"
 }
 
+done_diff() {
+    # item_done for done/ entries new since the last pass; key NAME@MTIME so a re-added item
+    # (fresh job file) alerts again when it completes again
+    local seen="$D/watch/done.seen" cur k n msg
+    cur="$(for f in "$D"/done/*.job; do [ -e "$f" ] && echo "$(basename "$f" .job)@$(mtime "$f")"; done | sort)"
+    if [ -n "$NOTIFY_DONE_REGEX" ]; then
+        for k in $(comm -13 <(sort "$seen" 2>/dev/null) <(printf '%s\n' "$cur" | sed '/^$/d')); do
+            n="${k%@*}"
+            [[ "$n" =~ $NOTIFY_DONE_REGEX ]] || continue
+            msg=""
+            [ -n "$PROGRESS_REGEX" ] && msg="$(tail -c 16384 "$D/logs/$n.log" 2>/dev/null | tr '\r' '\n' | grep -aE -- "$PROGRESS_REGEX" | tail -1 | cut -c1-300)"
+            alert item_done "$n" "${msg:-done}"
+        done
+    fi
+    printf '%s\n' "$cur" | sed '/^$/d' >"$seen"
+}
+
 scan_log() {
     # scan_log NAME: alert on ALERT_REGEX matches in complete lines added since the last scan
     local n="$1" log="$D/logs/$1.log" off_f="$D/watch/$1.off" off size tmp nl part complete m nm
@@ -588,6 +614,7 @@ watch_pass() {
         # first run on this dir: don't alert on history
         ls "$D/failed" 2>/dev/null | sed 's/\.job$//' | sort >"$D/watch/failed.seen"
         ls "$D/retries" 2>/dev/null | sort >"$D/watch/retries.seen"
+        NOTIFY_DONE_REGEX="" done_diff
         for log in "$D"/logs/*.log; do
             [ -e "$log" ] || continue
             stat -c %s "$log" >"$D/watch/$(basename "$log" .log).off"
@@ -596,6 +623,7 @@ watch_pass() {
     fi
     seen_diff failed item_failed
     seen_diff retries item_retry
+    done_diff
     for r in "$D"/running/*.job; do
         [ -e "$r" ] || continue
         b="$(basename "$r" .job)"; n="${b%@*}"; log="$D/logs/$n.log"
@@ -742,6 +770,7 @@ cmd_init() {
             --plugin) kv[PLUGIN]="$(readlink -f "$2")"; [ -f "$2" ] || die "no such plugin: $2" ;;
             --min-left) kv[MIN_LEFT]="$2" ;;
             --idle-release-min) kv[IDLE_RELEASE_MIN]="$2" ;;
+            --notify-done) kv[NOTIFY_DONE_REGEX]="$2" ;;
             *) die "init: unknown option $1" ;;
         esac
         shift 2
@@ -805,7 +834,7 @@ cmd_init() {
     local def_owner="$sid"
     grep -q "^POOL_SCOPE='\?\(repo\|cluster\)" "$env" && [ -z "${kv[POOL_SCOPE]+x}" ] && def_owner=""
     declare -A def=([POOL_SCOPE]=session [POOL_OWNER]="$def_owner" [MAX_NODES]=4 [SLOTS]=1 [SLOT_BIND]=none [GPUS_PER_SLOT]=1 [ALLOC_ARGS]=""
-        [RACE]="" [MIN_LEFT]=45 [IDLE_RELEASE_MIN]=5 [PLUGIN]="")
+        [RACE]="" [MIN_LEFT]=45 [IDLE_RELEASE_MIN]=5 [PLUGIN]="" [NOTIFY_DONE_REGEX]="")
     for k in "${ENV_KEYS[@]}"; do
         if [ -n "${kv[$k]+x}" ]; then env_set "$env" "$k" "${kv[$k]}"
         elif ! grep -q "^$k=" "$env"; then
@@ -814,7 +843,7 @@ cmd_init() {
         fi
     done
     [ "$new" = 1 ] && echo "created pool $dir" || echo "updated pool $dir"
-    sed -n "/^\(POOL_NAME\|POOL_REPO\|POOL_SCOPE\|POOL_OWNER\|MAX_NODES\|SLOTS\|SLOT_BIND\|GPUS_PER_SLOT\|ALLOC_ARGS\|RACE\|MIN_LEFT\|IDLE_RELEASE_MIN\|PLUGIN\)=/p" "$env"
+    sed -n "/^\(POOL_NAME\|POOL_REPO\|POOL_SCOPE\|POOL_OWNER\|MAX_NODES\|SLOTS\|SLOT_BIND\|GPUS_PER_SLOT\|ALLOC_ARGS\|RACE\|MIN_LEFT\|IDLE_RELEASE_MIN\|PLUGIN\|NOTIFY_DONE_REGEX\)=/p" "$env"
 }
 
 wait_pid_file() {

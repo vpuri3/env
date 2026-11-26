@@ -150,7 +150,7 @@ pool_on_done() {
 }
 EOF
 bash "$POOL" init "$A" --scope repo --name tpa --repo "$REPO" --max-nodes 1 --race "interactive:2:00:00 batch:4:00:00" \
-    --plugin "$W/plugin.sh" --min-left 45 >/dev/null
+    --plugin "$W/plugin.sh" --min-left 45 --notify-done '^(20_|40_|50_)' >/dev/null
 check "init creates the layout" bash -c 'for d in queue running done failed retries workers logs races tmp staging; do [ -d "$1/$d" ] || exit 1; done' _ "$A"
 check "init writes pool.env keys" grep -q "^POOL_NAME='tpa'" "$A/pool.env"
 check "repo scope: no owner" bash -c 'grep -qx "POOL_SCOPE='"'"'repo'"'"'" "$1" && grep -qx "POOL_OWNER='"'"''"'"'" "$1"' _ "$A/pool.env"
@@ -228,6 +228,10 @@ bash "$POOL" add "$A" 40_fail "$W/src/40_fail" >/dev/null
 check "re-add clears failed/ and retries/" test ! -e "$A/failed/40_fail.job" -a ! -e "$A/retries/40_fail"
 check "re-added item fails again" wait_for 15 test -f "$A/failed/40_fail.job"
 check "re-added failure alerts again" wait_for 5 bash -c '[ $(nalerts "$1" item_failed 40_fail) = 2 ] && [ $(nalerts "$1" item_retry 40_fail) = 2 ]' _ "$A"
+check "item_done once per matching success, with the last progress line" bash -c '[ $(nalerts "$1" item_done) = 2 ] && [ $(nalerts "$1" item_done 20_resume) = 1 ] && [ $(nalerts "$1" item_done 50_log) = 1 ] && grep item_done "$1/alerts.jsonl" | grep 20_resume | grep -q "step 2"' _ "$A"
+check "item_done routed to the item's owner" [ "$(owners_of "$A" item_done 20_resume)" = sessA ]
+bash "$POOL" add "$A" 20_resume "$W/src/20_resume" >/dev/null
+check "re-added + re-completed item_done alerts again" wait_for 15 alerts_is "$A" item_done 2 20_resume
 check "no no_nodes / restart alerts in a healthy pool" bash -c '[ $(nalerts "$1" no_nodes) = 0 ] && [ $(nalerts "$1" driver_restarted) = 0 ] && [ $(nalerts "$1" watchdog_restarted) = 0 ]' _ "$A"
 check "alerts.jsonl is valid JSON lines with spec keys" python3 -c 'import json,sys
 for l in open(sys.argv[1]):
@@ -333,6 +337,7 @@ check "adopt: keys added" bash -c 'grep -qx "POOL_NAME='"'"'tpc'"'"'" "$1/pool.e
 check "adopt: queue, logs, files untouched" test -f "$C/queue/c1.job" -a -f "$C/driver.sh" -a -d "$C/watch"
 bash "$POOL" init "$C" --max-nodes 2 >/dev/null
 check "re-init updates only the given key" bash -c 'grep -qx "MAX_NODES='"'"'2'"'"'" "$1/pool.env" && grep -qx "SLOTS='"'"'2'"'"'" "$1/pool.env" && [ $(grep -c "^MAX_NODES=" "$1/pool.env") = 1 ]' _ "$C"
+printf 'error: Job/step already completing\n' >"$C/races/g009.batch.out"   # stale leftover, no such group
 touch "$S/run_fail"
 IDLE_RELEASE_SEC=1 bash "$POOL" start "$C" >/dev/null
 check "failed sjob run: no .started, retried" wait_for 10 bash -c '[ $(grep -c "^run " "$1/run.log") -ge "$2" ] && ! ls "$3"/workers/*.started' _ "$S" "$(( $(grep -c '^run ' "$S/run.log") + 2 ))" "$C"
@@ -341,6 +346,7 @@ check "adopted pool runs its queue" wait_for 20 test -f "$C/done/c1.job"
 idc=$(job_of tpc.g001 batch)
 check "idle node released after IDLE_RELEASE" wait_for 15 grep -qx "$idc" "$S/scancel.log"
 check "adopt: existing log content not alerted" bash -c '[ $(nalerts "$1" log_alert) = 0 ]' _ "$C"
+check "stale race .out ignored: no refused log, no retry marker" bash -c '! grep -q "g009.*refused" "$1/logs/driver.log" && ! ls "$1"/races/g009*.retry 2>/dev/null' _ "$C"
 bash "$POOL" stop "$C" >/dev/null
 
 check "no forbidden Slurm command was called" test ! -e "$S/forbidden.log"

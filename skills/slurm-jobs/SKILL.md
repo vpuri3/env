@@ -107,6 +107,8 @@ sjob pool status DIR; sjob pool alerts DIR [--ack]; sjob pool stop DIR [--drain|
   session as `# pool-owner: <id>`.
 - **Plugin** (repo file, `--plugin`): `ALERT_REGEX`, `ALERT_IGNORE_REGEX`, `PROGRESS_REGEX`,
   `STALL_MIN`, `NO_NODES_MIN`; functions `pool_on_done NAME`, `pool_status_extra`.
+- **Wake the parent when results land:** `--notify-done REGEX` (pool.env/plugin `NOTIFY_DONE_REGEX`)
+  adds one `item_done` alert (msg = last `PROGRESS_REGEX` line) per exit-0 item whose name matches.
 - **Alerts:** the watchdog (every 150 s; driver and watchdog restart each other) appends to
   `DIR/alerts.jsonl`: `item_failed`, `item_retry`, `log_alert`, `stall`, `no_nodes`, `pool_done`,
   `driver_restarted`, `watchdog_restarted`, each with `owners` (item alerts: the item's owner; pool
