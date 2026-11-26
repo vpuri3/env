@@ -323,8 +323,19 @@ test("guards: deck calls refuse the default and pifleet sockets under PI_FLEET_T
 		rmSync(run, { recursive: true, force: true });
 	}
 	assert.equal(inDeck({ PI_FLEET_DECK: "1" }), true);
-	assert.equal(inDeck({ TMUX: `${socketDir}/decktest-q,1,0`, PI_FLEET_DECK_SOCKET: "decktest-q" }), true);
-	assert.equal(inDeck({ TMUX: `${socketDir}/default,1,0`, PI_FLEET_DECK_SOCKET: "decktest-q" }), false);
+	// $TMUX names the socket dir by its real path; $TMUX_TMPDIR may go through a symlink (macOS: /var).
+	const base = tempRoot("pdkt-");
+	try {
+		const link = join(base, "link");
+		symlinkSync(base, link);
+		const real = `${base}/tmux-${process.getuid?.() ?? 0}`;
+		const q = { TMUX_TMPDIR: link, PI_FLEET_DECK_SOCKET: "decktest-q" };
+		assert.equal(inDeck({ ...q, TMUX: `${real}/decktest-q,1,0` }), true);
+		assert.equal(inDeck({ ...q, TMUX: `${real}/default,1,0` }), false);
+		assert.equal(inDeck({ ...q, TMUX_TMPDIR: base, TMUX: `${real}/decktest-q,1,0` }), true);
+	} finally {
+		rmSync(base, { recursive: true, force: true });
+	}
 });
 
 // ---------------------------------------------------------------- server

@@ -145,7 +145,15 @@ export function deckSocketName(env: NodeJS.ProcessEnv = process.env): string {
 export function deckSocketPath(env: NodeJS.ProcessEnv = process.env): string {
 	const name = deckSocketName(env);
 	if (name.includes("/")) return resolve(name);
-	return join(env.TMUX_TMPDIR || "/tmp", `tmux-${uid()}`, name);
+	// By its real path, as tmux names it in $TMUX: on macOS $TMUX_TMPDIR (vars.sh: $TMPDIR) is under the
+	// /var -> /private/var symlink, and a mismatch made deck pis "outside" rows and inDeck() false.
+	let base = env.TMUX_TMPDIR || "/tmp";
+	try {
+		base = realpathSync(base);
+	} catch {
+		// not there yet: as given
+	}
+	return join(base, `tmux-${uid()}`, name);
 }
 
 /** `-L name` / `-S path` for the deck server. PI_FLEET_TMUX_GUARD refuses `default` and `pifleet`. */
