@@ -651,7 +651,11 @@ test("a pi exiting 0 leaves the pool and the slot falls back to the holder; a de
 		await waitFor("b's pane killed", () => !d.panes().some((p) => p.pane === b.pane));
 		assert.equal(d.slot().role, "preview");
 		await waitFor("b's nvim gone, the nvim holder below the list", () => d.nvimSlot().role === "nvim-holder");
-		await waitFor("b's shell gone, the terminal holder in its slot", () => d.termSlot().role === "term-holder" && !d.panes().some((p) => p.role === "term" && p.session === b.id));
+		// Seen once under load, not reproduced since: on a timeout, say what the panes were.
+		await waitFor("b's shell gone, the terminal holder in its slot", () => d.termSlot().role === "term-holder" && !d.panes().some((p) => p.role === "term" && p.session === b.id)).catch((error) => {
+			const seen = d.panes().map((p) => `${p.pane} ${p.where} ${p.role || "-"} ${p.session.slice(0, 8) || "-"}${p.dead ? " dead" : ""}`);
+			throw new Error(`${(error as Error).message} (b ${b.id.slice(0, 8)}; panes: ${seen.join(", ")})`);
+		});
 		// a's shell runs a foreground job: it goes with a anyway (killed, never waited for).
 		const aTerm = d.panes().find((p) => p.role === "term" && p.session === a.id)!;
 		d.tmux(["send-keys", "-t", aTerm.pane, "sleep 1000", "Enter"]);
@@ -662,11 +666,13 @@ test("a pi exiting 0 leaves the pool and the slot falls back to the holder; a de
 		// The list crashes: restarted in place.
 		const pid = d.tmux(["show", "-gv", "@deck_tui_pid"]);
 		process.kill(Number(pid), "SIGKILL");
-		const pid2 = await waitFor("a new list", () => {
+		// The new list publishes @deck_tui_pid (initDeck) before it binds deck.sock: wait for its answer.
+		const pid2 = await waitFor("a new list answering on deck.sock", () => {
 			const p = d.tryTmux(["show", "-gv", "@deck_tui_pid"]);
-			return p && p !== pid ? p : undefined;
+			if (!p || p === pid) return undefined;
+			const r = d.request({ type: "ping" });
+			return r.ok === true && r.pid === Number(p) ? p : undefined;
 		});
-		assert.deepEqual(d.request({ type: "ping" }), { ok: true, pid: Number(pid2) });
 		// The list pane's process itself dies: the pane-died hook respawns it. (tmux 3.2a sometimes loses the
 		// SIGCHLD of a pane until the next child exits; a run-shell provides one.)
 		const list = d.list();
@@ -680,7 +686,7 @@ test("a pi exiting 0 leaves the pool and the slot falls back to the holder; a de
 			return !d.list().dead && p && p !== pid2;
 		});
 		assert.equal(d.list().pane, list.pane, "same pane, respawned");
-		assert.equal(d.request({ type: "ping" }).ok, true);
+		await waitFor("the respawned list answering on deck.sock", () => d.request({ type: "ping" }).ok === true);
 	} finally {
 		d.close();
 	}
