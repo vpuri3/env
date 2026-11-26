@@ -387,33 +387,43 @@ export function rowDetail(row: SessionRow, now: number): string {
 	}
 }
 
-/** Subagent counts: `2w 1◐ 3✓ 1✕ 2 interrupted`. */
+/** Subagent counts in the rows' glyphs and colors: `2● 1? 3◐ 1✕ 2◌` (working, paused, done, failed, interrupted). */
 export function countsText(c: SubagentCounts, style: ViewStyle): string {
 	const parts: string[] = [];
-	if (c.working) parts.push(style.fg("working", `${c.working}w`));
-	if (c.waiting) parts.push(style.fg("input", `${c.waiting}◐`));
-	if (c.done) parts.push(style.fg("done", `${c.done}✓`));
-	if (c.error) parts.push(style.fg("error", `${c.error}✕`));
-	if (c.interrupted) parts.push(style.fg("warning", `${c.interrupted} interrupted`));
-	if (c.unknown) parts.push(style.fg("dim", `${c.unknown}?`));
+	if (c.working) parts.push(toned("working", `${c.working}${GLYPHS.running}`, style));
+	if (c.waiting) parts.push(toned("input", `${c.waiting}${GLYPHS.question}`, style));
+	if (c.done) parts.push(toned("done", `${c.done}${GLYPHS.waiting}`, style));
+	if (c.error) parts.push(toned("error", `${c.error}${GLYPHS.error}`, style));
+	if (c.interrupted) parts.push(toned("closed", `${c.interrupted}${CLOSED_GLYPH}`, style));
+	if (c.unknown) parts.push(style.fg("dim", `${c.unknown} unknown`));
 	return parts.join(" ");
 }
 
-export function threadGlyph(thread: FoldedThread, live: boolean, style: ViewStyle): { glyph: string; word: string } {
+/**
+ * A subagent in the main rows' glyphs and colors (LEGEND): running ● working, paused ? needs
+ * input, completed/stopped ◐ done, failed ✕ error, running in a pi that is gone ◌ closed
+ * ("interrupted"). `word` names the state for the status line; the list row shows only the glyph.
+ */
+export function threadTone(thread: FoldedThread, live: boolean): { tone: Tone; char: string; word: string } {
 	switch (thread.state) {
 		case "starting":
 		case "running":
-			return live ? { glyph: style.fg("working", "●"), word: thread.state } : { glyph: style.fg("warning", "◌"), word: "interrupted" };
+			return live ? { tone: "working", char: GLYPHS.running, word: thread.state } : { tone: "closed", char: CLOSED_GLYPH, word: "interrupted" };
 		case "paused":
-			return { glyph: style.fg("input", "◐"), word: "paused" };
+			return { tone: "input", char: GLYPHS.question, word: "paused" };
 		case "completed":
 		case "stopped":
-			return { glyph: style.fg("done", "✓"), word: thread.state };
+			return { tone: "done", char: GLYPHS.waiting, word: thread.state };
 		case "failed":
-			return { glyph: style.fg("error", "✕"), word: "failed" };
+			return { tone: "error", char: GLYPHS.error, word: "failed" };
 		default:
-			return { glyph: style.fg("dim", "?"), word: thread.state };
+			return { tone: "closed", char: "?", word: thread.state };
 	}
+}
+
+export function threadGlyph(thread: FoldedThread, live: boolean, style: ViewStyle): { glyph: string; word: string; tone: Tone } {
+	const t = threadTone(thread, live);
+	return { glyph: toned(t.tone, t.char, style), word: t.word, tone: t.tone };
 }
 
 /**

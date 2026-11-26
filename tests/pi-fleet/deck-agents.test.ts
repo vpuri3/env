@@ -74,7 +74,7 @@ test("§16: a live deck session's subagent row shows its agent view in the pi sl
 	};
 
 	// The list selects the session open showed; Space shows its subagents (alpha, the newer, first).
-	await waitFor("the session selected in the list", () => / 2✓/.test(selected()), 30_000, listScreen);
+	await waitFor("the session selected in the list", () => / 2◐/.test(selected()), 30_000, listScreen);
 	d.tmux(["select-pane", "-t", list]);
 	await key("Space");
 	await waitFor("its subagents", () => /\/root\/alpha/.test(listScreen()) && /\/root\/beta/.test(listScreen()), 15_000, listScreen);
@@ -99,7 +99,7 @@ test("§16: a live deck session's subagent row shows its agent view in the pi sl
 	}, 20_000);
 	await waitFor("the main conversation again", mainShown, 15_000, piScreen);
 	assert.equal(mark(), "");
-	await waitFor("the session selected in the new list", () => / 2✓/.test(selected()), 15_000, listScreen);
+	await waitFor("the session selected in the new list", () => / 2◐/.test(selected()), 15_000, listScreen);
 	await key("Space");
 	await waitFor("its subagents", () => /\/root\/beta/.test(listScreen()), 15_000, listScreen);
 	await key("j", "j");

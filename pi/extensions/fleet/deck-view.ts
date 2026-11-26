@@ -1802,6 +1802,7 @@ export class DeckView implements Component {
 			const live = row.live === "live" || row.live === "remote";
 			const { glyph: g, word } = threadGlyph(item.thread, live, style);
 			const parts = [`${g} ${word}`, oneLine(`${item.thread.type ?? "?"} ${item.thread.path}`), `of ${oneLine(row.name)}`];
+			if (item.thread.costUsd) parts.push(`$${item.thread.costUsd.toFixed(2)}`);
 			if (item.thread.task) parts.push(style.fg("dim", oneLine(item.thread.task)));
 			return fit(` ${parts.join(sep)}`, width);
 		}
@@ -1858,7 +1859,10 @@ export class DeckView implements Component {
 			const { live, closed } = item;
 			const n = closed ? (live ? `(${live}, ${closed} closed)` : `(${closed} closed)`) : `(${live})`;
 			const label = style.bold(style.fg("accent", item.group.label));
-			return fit(`${marker}${style.fg("dim", item.collapsed ? "▸" : "▾")} ${label} ${style.fg("dim", n)}`, width);
+			// The repo's full path after the count (not for special groups, or when the label is the path).
+			const path = item.special || !item.group.repo ? "" : tilde(oneLine(item.group.repo));
+			const where = path && path !== item.group.label ? `  ${style.fg("dim", path)}` : "";
+			return fit(`${marker}${style.fg("dim", item.collapsed ? "▸" : "▾")} ${label} ${style.fg("dim", n)}${where}`, width);
 		}
 		if (item.kind === "note") return fit(`       ${style.fg("dim", item.text)}`, width);
 		if (item.kind === "more") {
@@ -1869,12 +1873,29 @@ export class DeckView implements Component {
 		const row = item.row;
 		if (item.kind === "sub") {
 			const live = row.live === "live" || row.live === "remote";
-			const { glyph: g, word } = threadGlyph(item.thread, live, style);
+			const { glyph: g, tone: subTone } = threadGlyph(item.thread, live, style);
 			const label = oneLine(`${item.thread.type ?? "?"} ${item.thread.path}`);
-			const labelW = Math.min(Math.max(30, Math.floor(width / 2)), Math.max(10, width - 24));
-			let text = `${pad(selected ? style.bold(label) : label, labelW)} ${pad(style.fg("muted", word), 11)}`;
+			const tone = rowTone(row);
+			const avail = Math.max(10, width - 4);
+			const wide = avail >= 60;
+			const detailW = wide ? 16 : 13;
+			const room = avail - detailW - 1 - (wide ? 8 : 0);
+			const minName = Math.min(wide ? 30 : 16, Math.max(8, room - 8));
+			const countsFit = Math.max(0, Math.min(countsW, room - minName - 1));
+			const countsCol = countsFit ? countsFit + 1 : 0;
+			const cost = item.thread.costUsd ? `$${item.thread.costUsd.toFixed(2)}` : "";
+			const costCol = wide ? 8 : 0;
+			// Everything before the cost column (same right edge as the main rows' cost).
+			const body = Math.max(10, width - countsCol - costCol - 7);
+			const labelW = Math.min(Math.max(30, Math.floor(body / 2)), Math.max(10, body - 24));
+			// Glyph and label in the thread's state color, as main rows; no state word (the glyph says it).
+			let labelText = toned(subTone, label, style);
+			if (selected && subTone !== "input") labelText = style.bold(labelText);
+			let text = pad(labelText, labelW);
 			if (item.thread.task) text += ` ${style.fg("dim", oneLine(item.thread.task))}`;
-			return fit(`${marker}    ${g} ${text}`, width);
+			const head = `${marker}    ${g} ${wide ? pad(fit(text, body), body) : text}`;
+			const costText = wide ? ` ${padRight(style.fg(tone === "closed" || tone === "remote" ? "dim" : "muted", cost), 7)}` : "";
+			return fit(`${head}${costText}`, width);
 		}
 		const tone = rowTone(row);
 		const avail = Math.max(10, width - 4);

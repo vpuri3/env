@@ -155,6 +155,13 @@ test("threads carry their session file (full records and deltas)", () => {
 	assert.equal(new RegistryFold().update([reg(), delta]).threads.get("/a")?.sessionFile, "/s/b.jsonl");
 });
 
+test("threads carry costUsd (full records and deltas)", () => {
+	const reg = { type: "custom", customType: REGISTRY_ENTRY, id: "r1", parentId: null, data: { version: 1, rootSessionId: "x", threads: [{ view: { path: "/a", type: "t", state: "running", costUsd: 0.5 } }] } };
+	assert.equal(new RegistryFold().update([reg]).threads.get("/a")?.costUsd, 0.5);
+	const delta = { type: "custom", customType: REGISTRY_DELTA_ENTRY, id: "r2", parentId: "r1", data: { version: 1, rootSessionId: "x", changes: [{ path: "/a", view: { costUsd: 1.25 } }] } };
+	assert.equal(new RegistryFold().update([reg, delta]).threads.get("/a")?.costUsd, 1.25);
+});
+
 test("transcript tails: bounded read, a cut first line dropped, cached by size and mtime", async () => {
 	const fixtureText = readFileSync(new URL("./fixtures/subagent-transcript.jsonl", import.meta.url), "utf8");
 	const all = transcriptItems(fixtureText, false);

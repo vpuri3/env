@@ -222,16 +222,16 @@ test("layout: repo groups with their closed sessions after the live ones, then o
 	assert.equal(lines.length, 20);
 	assert.deepEqual(lines.slice(0, 13), [
 		" ▾ gamma (1, 1 closed)",
-		"  ? flare refactor                 question 12m       $0.80           1◐",
+		"  ? flare refactor                 question 12m       $0.80           1?",
 		"  ◌ what does gamma do?            2d ago",
 		" ▾ beta (2, 1 closed)",
-		"  ✕ crashy                         crashed just now         1 interrupt…",
+		"  ✕ crashy                         crashed just now         1◌",
 		"  ⇢ notes                          live on other-n…",
 		"  ◌ forked idea                    1d ago",
 		" ▾ alpha (2, 1 closed)",
 		"  ◐ ckpt restart                   done 2m ago        $0.40",
-		"▌› ● physicsnemo sweep              bash 4m            $3.41     2w 1◐ 3✓",
-		"  ◌ start the old run              3h ago                   1✓ 1 interr…",
+		"▌› ● physicsnemo sweep              bash 4m            $3.41     2● 1? 3◐",
+		"  ◌ start the old run              3h ago                   1◐ 1◌",
 		" ▾ outside (your tmux) (1)",
 		"  ◐ notes outside ⇱ win 3          done 5m ago",
 	]);
@@ -241,10 +241,10 @@ test("layout: repo groups with their closed sessions after the live ones, then o
 		const wide = screen(view, w);
 		const flare = wide.find((l) => l.includes("flare refactor"))!;
 		assert.equal(flare.length, w, `flare ends at the edge (${w})`);
-		assert.ok(flare.endsWith(" 1◐"), flare);
+		assert.ok(flare.endsWith(" 1?"), flare);
 		const crashy = wide.find((l) => l.includes("crashy"))!;
 		assert.equal(crashy.length, w);
-		if (w === 140) assert.ok(crashy.endsWith("1 interrupted"), crashy);
+		if (w === 140) assert.ok(crashy.endsWith("1◌"), crashy);
 		// Columns line up: every detail starts where flare's does.
 		const at = flare.indexOf("question 12m");
 		assert.equal(wide.find((l) => l.includes("ckpt restart"))!.indexOf("done 2m ago"), at);
@@ -261,8 +261,8 @@ test("layout: repo groups with their closed sessions after the live ones, then o
 		`╰─ ○ active  ● working  ◐ done  ? needs input  ✕ error  » auto ${"─".repeat(8)}╯`,
 		" j/k move  ⏎/C-l open  a new  d kill  i / search  ? help  C-c detach",
 	]);
-	assert.match(lines[15]!, /^ ● working · tool bash · for 4m · \$3\.41 · subagents 2w 1◐ 3✓ · \/.*…$/);
-	assert.match(screen(view, 140)[15]!, /^ ● working · tool bash · for 4m · \$3\.41 · subagents 2w 1◐ 3✓ · \/.*\/work\/alpha$/);
+	assert.match(lines[15]!, /^ ● working · tool bash · for 4m · \$3\.41 · subagents 2● 1? 3◐ · \/.*…$/);
+	assert.match(screen(view, 140)[15]!, /^ ● working · tool bash · for 4m · \$3\.41 · subagents 2● 1? 3◐ · \/.*\/work\/alpha$/);
 });
 
 test("stable order: status changes keep rows in place; new sessions go last in their group; a closed one stays; r sorts again and keeps the selection", { skip }, async () => {
@@ -366,7 +366,7 @@ test("wide list: the name column takes the width the other columns leave; counts
 	const wide = screen(view, 140).find((l) => l.includes("physicsnemo sweep"))!;
 	assert.ok(wide.indexOf("bash 4m") > narrow.indexOf("bash 4m") + 50, "detail column moves right in a wide list");
 	assert.ok(wide.length > 120, "the row spans the pane");
-	assert.ok(screen(view, 140).some((l) => l.includes("1 interrupted") && !l.includes("…")), "counts no longer cut");
+	assert.ok(screen(view, 140).some((l) => l.includes("1◌") && !l.includes("…")), "counts no longer cut");
 });
 
 // ---------------------------------------------------------------- modes and search
@@ -380,7 +380,8 @@ test("modes: i and / enter INSERT; fuzzy terms filter live; Esc back to NORMAL k
 	assert.match(screen(view)[19]!, /type to search/);
 	press(view, "f", "l", "r"); // a subsequence of "flare refactor"
 	let lines = screen(view).filter((l) => l);
-	assert.deepEqual(lines.slice(0, 2), [" ▾ gamma (1)", "▌› ? flare refactor                           question 12m       $0.80 1◐"]);
+	assert.match(lines[0]!, /^ ▾ gamma \(1\)  \S/); // the repo's path after the count
+	assert.equal(lines[1], "▌› ? flare refactor                           question 12m       $0.80 1?");
 	assert.match(screen(view)[16]!, /^╭─ INSERT ─+ 1\/9 ─╮$/);
 	assert.match(screen(view)[17]!, /^│ ⌕ flr▏ +│$/);
 	// Every term must match (name, repo, cwd or last message).
@@ -398,7 +399,8 @@ test("modes: i and / enter INSERT; fuzzy terms filter live; Esc back to NORMAL k
 	// `/` too; a closed session is found under its repo; Enter in INSERT is NORMAL Enter.
 	press(view, "/", "o", "l", "d", " ", "r", "u", "n");
 	lines = screen(view).filter((l) => l);
-	assert.deepEqual(lines.slice(0, 2), [" ▾ alpha (1 closed)", "▌› ◌ start the old run              3h ago                   1✓ 1 interr…"]);
+	assert.match(lines[0]!, /^ ▾ alpha \(1 closed\)  \S/);
+	assert.equal(lines[1], "▌› ◌ start the old run                     3h ago                   1◐ 1◌");
 	press(view, KEY.enter);
 	assert.equal(view.mode, "normal");
 	await clock.advance(50);
@@ -666,6 +668,26 @@ test("expanded subagents: unfinished ones first, then completed/stopped/failed; 
 		.filter(Boolean);
 	assert.deepEqual(subs, ["/run-new", "/paused", "/waiting", "/run-old", "/starting", "/failed", "/done-new", "/stopped", "/done-old"]);
 	assert.deepEqual(threads.map((x) => x.path)[0], "/done-old", "the source's list is not reordered in place");
+});
+
+test("subagent rows show their cost in the main rows' cost column", { skip }, () => {
+	type Thread = import("../../pi/extensions/fleet/registry.ts").FoldedThread;
+	const threads: Thread[] = [{ path: "/costly", type: "coder", state: "running", costUsd: 1.234 }, { path: "/free", type: "coder", state: "running" }];
+	class Source extends dv.DeckSource {
+		override threads(row: Row) {
+			return row.id === IDS.sweep ? threads : super.threads(row);
+		}
+	}
+	const { view } = makeView({ source: new Source(fx.env), height: 40 });
+	view.selectSession(IDS.sweep);
+	press(view, KEY.space);
+	const lines = screen(view, 100);
+	const sub = lines.find((l) => l.includes("coder /costly"))!;
+	assert.match(sub, /\$1\.23/);
+	assert.ok(!/\$/.test(lines.find((l) => l.includes("coder /free"))!));
+	const edge = (l: string) => l.indexOf("$", 0) + /\$\d+\.\d\d/.exec(l.slice(l.indexOf("$")))![0].length;
+	const main = lines.find((l) => /\$\d+\.\d\d/.test(l) && !l.includes("coder /"))!;
+	assert.equal(edge(sub), edge(main));
 });
 
 // ---------------------------------------------------------------- keys that act

@@ -177,11 +177,11 @@ The dashboard shows the list with a preview pane on the right (decided; below th
 ```
  pi-fleet  login-eos02   4 live · 1 waiting   ● working ● auto ◐ needs you ? question ✕ error ○ idle
  ▾ physicsnemo-runner (3)                       │ ── preview: physicsnemo sweep (%12) ─────────
-   ● physicsnemo sweep  bash 4m   $3.41 2w 1◐ 3✓│ ● bash  squeue -u $USER
+   ● physicsnemo sweep  bash 4m   $3.41 2● 1? 3◐│ ● bash  squeue -u $USER
    ◐ ckpt restart       done 2m ago     $0.40   │   8812345 RUNNING 1:02:11 …
-   ○ elas mixer seeds   3h ago      2 interrupted│ ── ⠴ Working ──────────────────────────────
+   ○ elas mixer seeds   3h ago      2◌           │ ── ⠴ Working ──────────────────────────────
  ▾ FLARE-dev.py (1)                             │ >
-   ? flare refactor     question 12m   $0.80 1◐ │
+   ? flare refactor     question 12m   $0.80 1? │
  ▸ env (1)                                      │
    ⇢ notes              live on login-eos01     │
 ```

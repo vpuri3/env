@@ -146,9 +146,9 @@ with the caller's environment plus the stable `SSH_AUTH_SOCK` link, like tmux.co
 ```
 ┌ list (50%) ──────────────────────────────────────┬ right slot ───────────────────────────────┐
 │ ▾ physicsnemo-runner (3, 5 closed)                │  (the real pi pane of "sweep")            │
-│ › ● sweep            bash 4m    $3.41  2w 1◐      │  ● bash  squeue -u $USER                  │
+│ › ● sweep            bash 4m    $3.41  2● 1?         │  ● bash  squeue -u $USER                  │
 │   ◐ ckpt restart     done 2m                      │  ── ⠴ Working ─────────────────────────── │
-│   ○ seeds            3h ago     2 interrupted     │  > _                                      │
+│   ○ seeds            3h ago     2◌            │  > _                                      │
 │   ◌ old sweep        1d ago                       │                                           │
 │   ◌ data prep        2d ago                       │                                           │
 │   ◌ lr search        3d ago                       │                                           │

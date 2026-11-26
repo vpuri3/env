@@ -68,6 +68,8 @@ export interface FoldedThread {
 	state: string;
 	task?: string;
 	updatedAt?: number;
+	/** The thread's accumulated cost in USD (view.costUsd), when reported. */
+	costUsd?: number;
 	/** The thread's own session JSONL (pi-subagent-manager's view.sessionFile), once it has one. */
 	sessionFile?: string;
 }
@@ -97,6 +99,7 @@ function threadFrom(record: unknown): FoldedThread | undefined {
 		state: typeof view.state === "string" ? view.state : "?",
 		task: typeof view.task === "string" ? view.task : undefined,
 		updatedAt: typeof view.updatedAt === "number" ? view.updatedAt : undefined,
+		costUsd: typeof view.costUsd === "number" ? view.costUsd : undefined,
 		sessionFile: typeof view.sessionFile === "string" && view.sessionFile ? view.sessionFile : undefined,
 	};
 }
@@ -225,6 +228,7 @@ export class RegistryFold {
 				if (typeof view.type === "string") next.type = view.type;
 				if (typeof view.task === "string") next.task = view.task;
 				if (typeof view.updatedAt === "number") next.updatedAt = view.updatedAt;
+				if (typeof view.costUsd === "number") next.costUsd = view.costUsd;
 				if (typeof view.sessionFile === "string" && view.sessionFile) next.sessionFile = view.sessionFile;
 				this.threads.set(current.path, next);
 			}
