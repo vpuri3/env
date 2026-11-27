@@ -13,7 +13,7 @@ after(() => {
 	for (const r of rigs) r.close();
 });
 
-test("vim-mode in a real pi: , is the leader, Space selects, v toggles char <-> line", { skip: skipDeck, timeout: 120_000 }, async () => {
+test("vim-mode in a real pi: Space is the leader, v selects and toggles char <-> line", { skip: skipDeck, timeout: 120_000 }, async () => {
 	const d = new DeckRig();
 	rigs.push(d);
 	await d.harness();
@@ -27,16 +27,16 @@ test("vim-mode in a real pi: , is the leader, Space selects, v toggles char <-> 
 	await waitFor("typed text", () => d.editor(pane, "outer")?.includes("x ,e"), 5_000, show);
 	await d.keys(pane, ["C-u"], "outer");
 
-	// NORMAL: , is the pending leader; an unmapped key cancels it.
+	// NORMAL: Space is the pending leader; an unmapped key cancels it.
 	await d.keys(pane, ["Escape"], "outer");
 	await waitFor("NORMAL mode", () => / NORMAL\s*$/m.test(show()), 5_000, show);
-	await d.keys(pane, [","], "outer");
-	await waitFor("the pending leader", () => / ,…\s*$/m.test(show()), 5_000, show);
+	await d.keys(pane, ["Space"], "outer");
+	await waitFor("the pending leader", () => / ␣…\s*$/m.test(show()), 5_000, show);
 	await d.keys(pane, ["e"], "outer");
 	await waitFor("leader cancelled", () => / NORMAL\s*$/m.test(show()), 5_000, show);
 
-	// Space: a selection, not a leader; v: whole lines, v again: characters.
-	await d.keys(pane, ["Space"], "outer");
+	// v: a character selection; v again: whole lines, v again: characters.
+	await d.keys(pane, ["v"], "outer");
 	await waitFor("VISUAL", () => / VISUAL\s*$/m.test(show()), 5_000, show);
 	await d.keys(pane, ["v"], "outer");
 	await waitFor("V-LINE", () => / V-LINE\s*$/m.test(show()), 5_000, show);

@@ -92,54 +92,54 @@ test("each leader map emits its pi-fleet:action from NORMAL mode", { skip }, () 
 		[["g", "s"], "git-status"],
 		[["t"], "tool-output"],
 	];
-	assert.equal(vim.LEADER_KEY, ",");
+	assert.equal(vim.LEADER_KEY, " ");
 	assert.deepEqual(Object.keys(vim.LEADER_MAPS).sort(), expected.map(([k]) => k.join("")).sort());
 	const { editor, feed, actions } = setup();
 	feed(ESC);
 	assert.equal(editor.mode, "normal");
-	for (const [keys] of expected) feed(",", ...keys);
+	for (const [keys] of expected) feed(" ", ...keys);
 	assert.deepEqual(actions, expected.map(([, name]) => name));
 	assert.equal(editor.mode, "normal");
 	assert.equal(editor.leader, undefined);
 	assert.equal(editor.anchor, undefined);
 });
 
-test("removed maps: , e / , E / , v do nothing (the deck list and nvim are always on screen)", { skip }, () => {
+test("removed maps: Space e / Space E / Space v do nothing (the deck list and nvim are always on screen)", { skip }, () => {
 	const { editor, feed, actions } = setup();
 	feed(ESC);
 	const cursor = { ...editor.cursor };
-	for (const k of ["e", "E", "v"]) feed(",", k);
+	for (const k of ["e", "E", "v"]) feed(" ", k);
 	assert.deepEqual(actions, []);
 	assert.equal(editor.anchor, undefined);
 	assert.deepEqual(editor.cursor, cursor);
 });
 
-test("mode line shows ,… while pending; a count is dropped, not applied", { skip }, () => {
+test("mode line shows ␣… while pending; a count is dropped, not applied", { skip }, () => {
 	const { editor, feed, actions, label } = setup();
 	feed(ESC);
 	assert.match(label(), / NORMAL $/);
-	feed("3", ",");
-	assert.match(label(), / ,… $/);
+	feed("3", " ");
+	assert.match(label(), / ␣… $/);
 	feed("f");
-	assert.match(label(), / ,f… $/);
+	assert.match(label(), / ␣f… $/);
 	feed("f");
 	assert.deepEqual(actions, ["files"]);
 	assert.match(label(), / NORMAL $/);
 	assert.equal(editor.count, "");
 });
 
-test(", j does nothing: no action, no move, no selection, j dropped", { skip }, () => {
+test("Space j does nothing: no action, no move, no selection, j dropped", { skip }, () => {
 	const { editor, feed, actions, label } = setup();
 	feed(ESC);
 	const cursor = { ...editor.cursor };
-	feed(",", "j");
+	feed(" ", "j");
 	assert.deepEqual(actions, []);
 	assert.deepEqual(editor.cursor, cursor);
 	assert.equal(editor.anchor, undefined);
 	assert.equal(editor.leader, undefined);
 	assert.match(label(), / NORMAL $/);
 	// A prefix followed by a non-matching key cancels too (the key is not replayed).
-	feed(",", "f", "j");
+	feed(" ", "f", "j");
 	assert.deepEqual(actions, []);
 	assert.deepEqual(editor.cursor, cursor);
 	// Afterwards keys work normally again.
@@ -152,7 +152,7 @@ test("Esc cancels the leader without interrupting or leaving NORMAL", { skip }, 
 	let interrupted = 0;
 	feed(ESC);
 	editor.onEscape = () => interrupted++;
-	feed(",", ESC);
+	feed(" ", ESC);
 	assert.equal(editor.leader, undefined);
 	assert.equal(editor.mode, "normal");
 	assert.equal(interrupted, 0);
@@ -160,27 +160,18 @@ test("Esc cancels the leader without interrupting or leaving NORMAL", { skip }, 
 	assert.deepEqual(actions, []);
 });
 
-test("Space starts a character selection; Space j extends it", { skip }, () => {
-	const { editor, feed, label, actions } = setup();
+test("Space never selects in NORMAL; a CSI-u Space is the leader too", { skip }, () => {
+	const { editor, feed, actions, label } = setup();
 	feed(ESC);
-	const row = editor.cursor.row;
-	feed("k", " ", "j");
-	assert.deepEqual(editor.anchor, { row: row - 1, col: 0 });
-	assert.equal(editor.lineSelect, false);
-	assert.equal(editor.cursor.row, row);
+	feed(" ");
+	assert.equal(editor.anchor, undefined);
+	assert.equal(editor.leader, "");
+	feed(ESC);
 	assert.equal(editor.leader, undefined);
-	assert.match(label(), / VISUAL $/);
-	assert.deepEqual(actions, []);
-	// Space again restarts the selection at the cursor (tmux copy-mode-vi begin-selection).
-	feed("l", " ");
-	assert.deepEqual(editor.anchor, editor.cursor);
-	// Esc clears it.
-	feed(ESC);
+	feed("\x1b[32u", "t");
+	assert.deepEqual(actions, ["tool-output"]);
 	assert.equal(editor.anchor, undefined);
 	assert.match(label(), / NORMAL $/);
-	// Space as a CSI-u key (kitty keyboard protocol) is Space too.
-	feed("\x1b[32u");
-	assert.ok(editor.anchor);
 });
 
 test("v toggles the selection between characters and lines (anchor kept); without one it starts a character selection", { skip }, () => {
@@ -199,9 +190,7 @@ test("v toggles the selection between characters and lines (anchor kept); withou
 	assert.deepEqual(editor.anchor, { row: row - 1, col: 0 });
 	assert.equal(editor.lineSelect, false);
 	assert.match(label(), / VISUAL $/);
-	// From a Space selection too; V still starts a line selection at the cursor.
-	feed(ESC, " ", "v");
-	assert.equal(editor.lineSelect, true);
+	// V starts a line selection at the cursor.
 	feed(ESC, "V");
 	assert.deepEqual(editor.anchor, editor.cursor);
 	assert.equal(editor.lineSelect, true);
@@ -210,7 +199,7 @@ test("v toggles the selection between characters and lines (anchor kept); withou
 
 test("the leader works with a selection active and leaves it alone", { skip }, () => {
 	const { editor, feed, actions } = setup();
-	feed(ESC, " ", "k", ",", "t");
+	feed(ESC, "v", "k", " ", "t");
 	assert.deepEqual(actions, ["tool-output"]);
 	assert.ok(editor.anchor);
 });
@@ -219,7 +208,7 @@ test("the leader times out after 1000 ms; the next key is a normal key", { skip,
 	assert.equal(vim.LEADER_TIMEOUT_MS, 1000);
 	const { editor, feed, actions, label } = setup();
 	feed(ESC);
-	feed(",");
+	feed(" ");
 	await sleep(600);
 	feed("f"); // a prefix re-arms the timeout
 	await sleep(600);
@@ -240,7 +229,7 @@ test("INSERT mode never sees the leader: Space, comma and f are typed", { skip }
 	assert.equal(editor.getText(), " , ff,t");
 	assert.deepEqual(actions, []);
 	// `i` while the leader is pending is dropped, so it does not enter INSERT.
-	feed(ESC, ",", "i");
+	feed(ESC, " ", "i");
 	assert.equal(editor.mode, "normal");
 	feed("i");
 	assert.equal(editor.mode, "insert");
@@ -250,7 +239,7 @@ test("INSERT mode never sees the leader: Space, comma and f are typed", { skip }
 
 test("without pi-fleet, a leader map says so", { skip }, () => {
 	const { feed, notes } = setup({ fleet: false });
-	feed(ESC, ",", "t");
+	feed(ESC, " ", "t");
 	assert.deepEqual(notes, ["pi-fleet not loaded"]);
 });
 

@@ -479,6 +479,8 @@ window in the user's tmux and no `fleet` session.
    (`V` still starts line select). The leader moves to `,`: `,ff ,fg ,fb ,fs ,fh ,gs ,t`.
    `Space e`, `Space E`, `Space v` are removed (no `,` equivalents): the list and nvim are always
    visible. `/sessions` stays.
+   *Superseded:* `,` did not work as a leader; the leader is `Space` again
+   (`Space ff`, ...), and NORMAL-mode Space no longer selects (only `v`/`V` do).
 7. **Entry.** `pf` outside tmux: ensure the deck and attach directly (no new session; `a` in the
    list makes one). `pf DIR [-- ARGS]` / `pf -- ARGS` (cwd): also `open` a new session, selected.
    Inside tmux: same, in the full-window popup (`prefix g` too); `prefix d`/`prefix g` detach.

@@ -184,19 +184,19 @@ finish.
 | `C-d` | kill every deck session and the deck (asks first: `y`/`Enter`/`C-d` kill, `n`/`Esc` cancel; nvims with unsaved changes keep it up and are named) |
 
 **vim-mode** (`pi/extensions/vim-mode.ts`, `Esc` enters NORMAL mode). Leader
-keys (`,`) work in NORMAL mode only. The mode line shows `,…` while one is
+keys (`Space`) work in NORMAL mode only. The mode line shows `␣…` while one is
 pending. Any other key, or 1 s with no key, cancels it.
 
 | NORMAL mode | Does |
 | --- | --- |
-| `Space` | start a selection; `v` toggles it between characters and whole lines (`V` starts a line selection); `y` copies |
-| `, f f` | file picker (session files, then the repo), opening in the session's nvim |
-| `, f g` | git files only |
-| `, f b` | files touched in this session |
-| `, f s` | grep (`Grep >` prompt, ripgrep), opening the hit at its line |
-| `, f h` | slash commands; the chosen one goes into the prompt |
-| `, g s` | `:Git` (fugitive) in the session's nvim, then focus it |
-| `, t` | tool output picker |
+| `v` / `V` | start a character / line selection; `v` toggles an existing one between characters and whole lines; `y` copies |
+| `Space f f` | file picker (session files, then the repo), opening in a new tab of the session's nvim (or the tab already showing the file) |
+| `Space f g` | git files only |
+| `Space f b` | files touched in this session |
+| `Space f s` | grep (`Grep >` prompt, ripgrep), opening the hit at its line in a new tab |
+| `Space f h` | slash commands; the chosen one goes into the prompt |
+| `Space g s` | `:Git` (fugitive) in the session's nvim, then focus it |
+| `Space t` | tool output picker |
 
 | INSERT mode | Does |
 | --- | --- |

@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nvimRequest } from "../../pi/extensions/fleet/nvim.ts";
+import { piPackages, usePackages } from "./support/view-support.ts";
 import { tempRoot } from "./support/tmp.ts";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -233,4 +234,37 @@ test("rpc pi: /view FILE:LINE, tool:N and the bare picker drive the paired nvim"
 		rmSync(root, { recursive: true, force: true });
 	}
 	assert.equal(pi.stderr.match(/error/i), null, pi.stderr);
+});
+
+test("nvimOpen tab: a fresh empty window is reused, then each new file gets a tab, an open one is jumped to; /view stays in place", { skip: skip || (!piPackages() && "pi's packages not found"), timeout: 30_000 }, async () => {
+	await usePackages(piPackages()!);
+	const { nvimOpen } = await import("../../pi/extensions/fleet/view.ts");
+	const root = tempRoot("pfv-tab-");
+	const files = ["a.py", "b.py", "c.py", "d.py"].map((n) => join(root, n));
+	for (const f of files) writeFileSync(f, "1\n2\n3\n");
+	const sock = join(root, "nvim.sock");
+	const nvim = spawn("nvim", ["--clean", "--headless", "-n", "--listen", sock], {
+		cwd: root,
+		env: { PATH: process.env.PATH, HOME: join(root, "home"), XDG_STATE_HOME: join(root, "xs"), XDG_CACHE_HOME: join(root, "xc"), XDG_CONFIG_HOME: join(root, "xcfg"), LANG: "C.UTF-8" },
+		stdio: "ignore",
+	});
+	const state = () =>
+		nvimRequest(sock, "nvim_exec_lua", ["return { #vim.api.nvim_list_tabpages(), vim.fn.tabpagenr(), vim.api.nvim_buf_get_name(0), vim.api.nvim_win_get_cursor(0)[1], #vim.fn.getbufinfo({ buflisted = 1 }) } -- listed count includes the first [No Name]", []], 5000) as Promise<any[]>;
+	try {
+		await waitFor("nvim ready", () => existsSync(sock) && nvimRequest(sock, "nvim_exec_lua", ["return 1", []], 2000).then(() => true, () => false));
+		await nvimOpen(sock, { kind: "file", path: files[0], tab: true });
+		assert.deepEqual(await state(), [1, 1, files[0], 1, 2], "the empty first window is reused");
+		await nvimOpen(sock, { kind: "file", path: files[1], line: 2, tab: true });
+		assert.deepEqual(await state(), [2, 2, files[1], 2, 3]);
+		await nvimOpen(sock, { kind: "file", path: files[2], tab: true });
+		assert.deepEqual(await state(), [3, 3, files[2], 1, 4]);
+		await nvimOpen(sock, { kind: "file", path: files[0], line: 3, tab: true });
+		assert.deepEqual(await state(), [3, 1, files[0], 3, 4], "already open: its tab, no new one");
+		await nvimOpen(sock, { kind: "file", path: files[3] });
+		assert.deepEqual(await state(), [3, 1, files[3], 1, 5], "without tab: replaces the current window");
+	} finally {
+		await nvimRequest(sock, "nvim_command", ["qa!"], 2000).catch(() => {});
+		if (nvim.exitCode === null) nvim.kill("SIGKILL");
+		rmSync(root, { recursive: true, force: true });
+	}
 });

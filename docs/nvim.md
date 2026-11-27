@@ -134,7 +134,7 @@ normally. In a paired nvim:
 
 Saves of one file within 2 s go to pi as one diff. pi blocks the agent's
 `edit` and `write` on a file you saved until the agent has read it again.
-`/view` and the pi leader keys (`, f f` …) open files here and then focus this
+`/view` and the pi leader keys (`Space f f` …) open files here and then focus this
 pane. In the deck `Ctrl+l` goes to the pi and `Ctrl+k` to the session list
 (nvim maps nothing to `Ctrl+h/j/k/l`).
 

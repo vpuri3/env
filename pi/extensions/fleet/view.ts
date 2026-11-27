@@ -19,9 +19,9 @@
  * place of the TUI until nvim quits ($PAGER when there is no nvim).
  *
  * Exports for phase 8 (leader.ts; `pi` is the extension's pi, `ctx` a UI context):
- *   openFilePicker(pi, ctx, { scope: "all" | "git" | "session", query? })   , f f / f g / f b
- *   openToolPicker(pi, ctx)                                                   , t
- *   openGrepPicker(pi, ctx, pattern?)                                         , f s
+ *   openFilePicker(pi, ctx, { scope: "all" | "git" | "session", query? })   Space f f / f g / f b
+ *   openToolPicker(pi, ctx)                                                   Space t
+ *   openGrepPicker(pi, ctx, pattern?)                                         Space f s
  *   viewFile(pi, ctx, "path[:line]"), viewTool(pi, ctx, n), viewPicker(pi, ctx)
  * All dialogs run inside ownPrompt(); everything is a no-op without ctx.hasUI.
  * No module-level mutable state (per-session state: files.ts's filesOf(pi), register()'s closure).
@@ -80,14 +80,36 @@ local function target_win()
   return cur
 end`;
 
-/** args: absolute path, line (or nil). Returns {buffer name, cursor line}. */
+/**
+ * args: absolute path, line (or nil), tab (bool). Returns {buffer name, cursor line}.
+ * tab: a window already showing the file (any tab) is reused; else a new tab, except that an
+ * empty unnamed buffer in the target window (a fresh nvim) is replaced rather than left behind.
+ */
 export const OPEN_FILE_LUA = `${TARGET_WIN_LUA}
-local path, line = ...
+local path, line, tab = ...
 if vim.fn.mode() == 'i' then vim.cmd('stopinsert') end
-local win = target_win()
-vim.api.nvim_set_current_win(win)
 local buf = vim.fn.bufadd(path)
 vim.bo[buf].buflisted = true
+local win
+if tab then
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(w) == buf and vim.api.nvim_win_get_config(w).relative == '' then win = w break end
+  end
+  if not win then
+    local cur = target_win()
+    local cb = vim.api.nvim_win_get_buf(cur)
+    local empty = vim.api.nvim_buf_get_name(cb) == '' and vim.bo[cb].buftype == '' and not vim.bo[cb].modified
+      and vim.api.nvim_buf_line_count(cb) == 1 and vim.api.nvim_buf_get_lines(cb, 0, 1, false)[1] == ''
+    if empty then win = cur else
+      vim.api.nvim_set_current_win(cur)
+      vim.cmd('tab sbuffer ' .. buf)
+      win = vim.api.nvim_get_current_win()
+    end
+  end
+else
+  win = target_win()
+end
+vim.api.nvim_set_current_win(win)
 vim.api.nvim_win_set_buf(win, buf)
 if type(line) == 'number' then
   local l = math.max(1, math.min(line, vim.api.nvim_buf_line_count(buf)))
@@ -124,7 +146,7 @@ vim.api.nvim_win_set_cursor(win, { 1, 0 })
 return vim.api.nvim_buf_get_name(buf)`;
 
 export type OpenOp =
-	| { kind: "file"; path: string; line?: number }
+	| { kind: "file"; path: string; line?: number; /** open in a new tab (Space f pickers) */ tab?: boolean }
 	| { kind: "scratch"; name: string; text: string; ftname: string };
 
 function textLines(text: string): string[] {
@@ -135,7 +157,7 @@ function textLines(text: string): string[] {
 
 /** Run one OpenOp in the nvim at `sock`. */
 export function nvimOpen(sock: string, op: OpenOp, timeoutMs = NVIM_OPEN_TIMEOUT_MS): Promise<unknown> {
-	if (op.kind === "file") return nvimRequest(sock, "nvim_exec_lua", [OPEN_FILE_LUA, [op.path, op.line ?? null]], timeoutMs);
+	if (op.kind === "file") return nvimRequest(sock, "nvim_exec_lua", [OPEN_FILE_LUA, [op.path, op.line ?? null, op.tab ?? false]], timeoutMs);
 	return nvimRequest(sock, "nvim_exec_lua", [OPEN_SCRATCH_LUA, [op.name, textLines(op.text), op.ftname]], timeoutMs);
 }
 
@@ -253,8 +275,11 @@ function notifyError(ctx: ExtensionContext, error: unknown): void {
 	ctx.ui.notify(`/view: ${(error as Error)?.message ?? String(error)}`, "error");
 }
 
-/** Open `target` (`path`, `path:LINE`) in the paired nvim. Returns false if the file is missing. */
-export async function viewFile(pi: ExtensionAPI, ctx: ExtensionContext, target: string): Promise<boolean> {
+/**
+ * Open `target` (`path`, `path:LINE`) in the paired nvim; `tab`: in a new tab (or the tab already
+ * showing it). Returns false if the file is missing.
+ */
+export async function viewFile(pi: ExtensionAPI, ctx: ExtensionContext, target: string, opts: { tab?: boolean } = {}): Promise<boolean> {
 	if (!ctx.hasUI) return false;
 	let { path, line } = parseTarget(target);
 	let abs = absPath(path, ctx.cwd);
@@ -266,7 +291,7 @@ export async function viewFile(pi: ExtensionAPI, ctx: ExtensionContext, target: 
 	}
 	filesOf(pi).touched.touch(abs);
 	try {
-		if (await openInPaired(pi, ctx, { kind: "file", path: abs, line })) return true;
+		if (await openInPaired(pi, ctx, { kind: "file", path: abs, line, tab: opts.tab })) return true;
 		const notice = await openExternal(ctx, abs, line, displayPath(abs, ctx.cwd));
 		ctx.ui.notify(notice ?? "/view: no paired nvim and no terminal to open it in", notice ? "info" : "error");
 	} catch (error) {
@@ -496,7 +521,7 @@ const SCOPE_TITLES: Record<FileScope, string> = {
 	session: "Open session file",
 };
 
-/** File picker for `, f f` (all), `f g` (git/repo files), `f b` (session files). */
+/** File picker for `Space f f` (all), `f g` (git/repo files), `f b` (session files); opens in a new tab. */
 export async function openFilePicker(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
@@ -513,14 +538,14 @@ export async function openFilePicker(
 		source: (q) => fileItems(pi, ctx.cwd, scope, parseTarget(q).path, PICKER_LIMIT),
 	});
 	if (!item) return;
-	if (!(await viewFile(pi, ctx, item.value))) ctx.ui.notify(`/view: ${item.value} no longer exists`, "error");
+	if (!(await viewFile(pi, ctx, item.value, { tab: true }))) ctx.ui.notify(`/view: ${item.value} no longer exists`, "error");
 }
 
 function toolItems(calls: ToolCall[], cwd: string, limit: number): PickItem[] {
 	return calls.slice(0, limit).map((c, i) => ({ value: `tool:${i + 1}`, label: displayText(callLabel(c, i + 1, cwd)) }));
 }
 
-/** Tool output picker for `, t`: every call on the branch, newest first. */
+/** Tool output picker for `Space t`: every call on the branch, newest first. */
 export async function openToolPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	if (!ctx.hasUI) return;
 	const calls = callsOf(ctx);
@@ -548,7 +573,7 @@ export async function viewPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 	if (!(await viewFile(pi, ctx, item.value))) ctx.ui.notify(`/view: ${item.value} no longer exists`, "error");
 }
 
-/** `, f s`: a `Grep >` input, then `rg --vimgrep` hits; the chosen hit opens at its line. */
+/** `Space f s`: a `Grep >` input, then `rg --vimgrep` hits; the chosen hit opens at its line, in a new tab. */
 export async function openGrepPicker(pi: ExtensionAPI, ctx: ExtensionContext, pattern?: string): Promise<void> {
 	if (!ctx.hasUI) return;
 	const pat = pattern ?? (await ownPrompt(pi, () => ctx.ui.input("Grep >", "rg pattern")));
@@ -564,7 +589,7 @@ export async function openGrepPicker(pi: ExtensionAPI, ctx: ExtensionContext, pa
 		title: `Grep: ${pat}`,
 		source: (q) => filterItems(all, q, (it) => `${it.label} ${it.description ?? ""}`),
 	});
-	if (item && !(await viewFile(pi, ctx, item.value))) ctx.ui.notify(`/view: ${item.value} no longer exists`, "error");
+	if (item && !(await viewFile(pi, ctx, item.value, { tab: true }))) ctx.ui.notify(`/view: ${item.value} no longer exists`, "error");
 }
 
 // ---------------------------------------------------------------- completion

@@ -1,17 +1,17 @@
 /**
- * fleet/leader: runs vim-mode's `,` leader maps (design §12; phase 8; pi-deck-design.md §15).
+ * fleet/leader: runs vim-mode's Space leader maps (design §12; phase 8; pi-deck-design.md §15).
  *
  * vim-mode (NORMAL mode only) emits `pi.events.emit("pi-fleet:action", { name, handled })`; this
  * module sets `handled = true` synchronously when it takes the action (vim-mode shows
  * "pi-fleet not loaded" otherwise) and runs it with the UI context saved at session_start.
  *
- *   files           , f f   file picker: session files, then the repo
- *   git-files       , f g   repo (git) files only
- *   session-files   , f b   files touched in this session only
- *   grep            , f s   `Grep >` input, then rg hits
- *   commands        , f h   select a slash command; it goes into the prompt
- *   git-status      , g s   :Git (fugitive) in the paired nvim, then focus it
- *   tool-output     , t     tool output picker
+ *   files           Space f f   file picker: session files, then the repo
+ *   git-files       Space f g   repo (git) files only
+ *   session-files   Space f b   files touched in this session only
+ *   grep            Space f s   `Grep >` input, then rg hits
+ *   commands        Space f h   select a slash command; it goes into the prompt
+ *   git-status      Space g s   :Git (fugitive) in the paired nvim, then focus it
+ *   tool-output     Space t     tool output picker
  *
  * The deck list and the session's nvim are always on screen in the deck (§15), so there are no
  * leader maps for them; `/sessions` (sessions-view.ts) still opens the deck.
@@ -66,7 +66,7 @@ export const BUILTIN_COMMANDS: ReadonlyArray<{ name: string; description: string
 	{ name: "quit", description: "Quit pi" },
 ];
 
-/** Select-list entries for `, f h`: extension commands, prompts and skills, then built-ins (first name wins). */
+/** Select-list entries for `Space f h`: extension commands, prompts and skills, then built-ins (first name wins). */
 export function commandChoices(commands: ReadonlyArray<{ name: string; description?: string }>): { label: string; name: string }[] {
 	const seen = new Set<string>();
 	const out: { label: string; name: string }[] = [];
@@ -129,7 +129,7 @@ export async function gitStatus(pi: ExtensionAPI, ctx: ExtensionContext): Promis
 
 // ---------------------------------------------------------------- actions
 
-/** `, f h`: pick a slash command and put it into the prompt. */
+/** `Space f h`: pick a slash command and put it into the prompt. */
 export async function pickCommand(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	const choices = commandChoices(pi.getCommands());
 	const label = await ownPrompt(pi, () => ctx.ui.select("Slash command", choices.map((c) => c.label)));
